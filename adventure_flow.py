@@ -168,9 +168,15 @@ class FlowMixin:
             color = G if status == 'ready' else retro.RED if status == 'failed' else M
             self.text(f'{mark}  {name}', 365 + (index % 2) * 300, 414 + (index // 2) * 39, color, self.small)
         if settled == total and ready < total:
+            failed_ids = [ident for ident, status in zip(self.asset_loading_ids, statuses) if status == 'failed']
+            first_error = self.pokedex.media_errors.get(failed_ids[0], '') if failed_ids else ''
+            if failed_ids:
+                failed_name = (self.pokemon_data(failed_ids[0]) or {}).get('name', f'#{failed_ids[0]}').title()
+                detail = f'{failed_name}: {first_error}'[:112]
+                self.text(detail, 640, 526, retro.RED, self.tiny, True)
             self.text(self.words('Sebagian sprite gagal dimuat. Coba lagi atau lanjut tanpa sprite tersebut.',
                                  'Some sprites failed to load. Retry or continue without them.'),
-                      640, 565, retro.GOLD, self.small, True)
+                      640, 557, retro.GOLD, self.small, True)
         self.button(self.words('Coba lagi', 'Retry'), (330, 640, 260, 56), self.retry_missing_sprites,
                     settled == total and ready < total)
         self.button(self.words('Lewati dan mulai', 'Skip and start'), (690, 640, 260, 56),

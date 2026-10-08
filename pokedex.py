@@ -26,6 +26,7 @@ class PokedexClient:
         self.results = queue.Queue()
         self.requested = set()
         self.media_status = {}
+        self.media_errors = {}
         self.requested_animation = set()
         self.requested_species = set()
         self.requested_evolution = set()
@@ -62,6 +63,7 @@ class PokedexClient:
             return
         self.requested.add(pokemon_id)
         self.media_status[pokemon_id] = "loading"
+        self.media_errors.pop(pokemon_id, None)
         self.jobs.put(("pokemon", pokemon_id))
 
     def request_animation(self, pokemon_id):
@@ -210,20 +212,34 @@ class PokedexClient:
                         tmp.write_text(json.dumps(detail), encoding="utf-8")
                         tmp.replace(detail_path)
                     image = sprite_path.read_bytes() if sprite_path.exists() else None
+                    if image is not None and not image.startswith(b"\x89PNG\r\n\x1a\n"):
+                        image = None
                     if image is None:
                         sprites = detail.get("sprites", {})
-                        image_url = (sprites.get("other", {}).get("official-artwork", {}).get("front_default")
-                                     or sprites.get("front_default"))
-                        if image_url:
+                        image_urls = (
+                            sprites.get("other", {}).get("official-artwork", {}).get("front_default"),
+                            sprites.get("front_default"),
+                            f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/{pokemon_id}.png",
+                            f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{pokemon_id}.png",
+                        )
+                        errors = []
+                        for image_url in dict.fromkeys(url for url in image_urls if url):
                             try:
                                 image = self._get(image_url)
+                                if not image.startswith(b"\x89PNG\r\n\x1a\n"):
+                                    raise ValueError("server returned data that is not a PNG image")
                                 tmp = sprite_path.with_suffix(".tmp")
                                 tmp.write_bytes(image)
                                 tmp.replace(sprite_path)
-                            except Exception:
-                                # Cached detail remains useful when only its artwork is offline.
+                                break
+                            except Exception as exc:
+                                errors.append(f"{type(exc).__name__}: {exc}")
                                 image = None
-                    self.results.put(("pokemon", {"id": pokemon_id, "detail": detail, "image": image}))
+                        self.results.put(("pokemon", {"id": pokemon_id, "detail": detail,
+                                                        "image": image, "image_error": "; ".join(errors[-2:])}))
+                    else:
+                        self.results.put(("pokemon", {"id": pokemon_id, "detail": detail, "image": image,
+                                                        "image_error": ""}))
             except Exception as exc:  # Network errors are reported to the game thread.
                 self.results.put(("error", {"id": pokemon_id, "message": str(exc)}))
 
@@ -241,8 +257,10 @@ class PokedexClient:
                 if value["image"]:
                     self.sprites[value["id"]] = value["image"]
                     self.media_status[value["id"]] = "ready"
+                    self.media_errors.pop(value["id"], None)
                 else:
                     self.media_status[value["id"]] = "failed"
+                    self.media_errors[value["id"]] = value.get("image_error") or "Sprite image was unavailable."
                 self.requested.discard(value["id"])
             elif kind == "animation":
                 if value["image"]:
@@ -269,6 +287,7 @@ class PokedexClient:
                 self.requested.discard(value["id"])
                 if kind == "error":
                     self.media_status[value["id"]] = "failed"
+                    self.media_errors[value["id"]] = value.get("message", "Download failed.")
                     self.requested_animation.discard(value["id"])
                     self.requested_species.discard(value["id"])
                     self.requested_evolution.discard(value["id"])
