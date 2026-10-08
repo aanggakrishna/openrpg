@@ -166,7 +166,7 @@ Menus support mouse input or **arrow keys + Enter**; **Esc** goes back. In the P
 
 ### Pokémon data and offline setup
 
-A compact Pokédex database seed is bundled at `assets/data/pokedex.sqlite3.gz`. On first launch it is expanded to `.openrpg/database/pokedex.sqlite3`, so new clones have Pokémon species, stats, moves, types, and encounters without running a separate setup command. The game downloads a Pokémon's sprite when that Pokémon is first needed and reuses the cached image on later visits. An internet connection is needed for sprites that are not already cached.
+A compact Pokédex database seed is bundled at `assets/data/pokedex.sqlite3.gz`. On first launch it is expanded to `.openrpg/database/pokedex.sqlite3`, so new clones have Pokémon species, stats, moves, types, and encounters without running a separate setup command. After loading a profile, a progress screen downloads sprites for the active team and sanctuary entrance. Other Pokémon sprites load when encountered. An internet connection is needed for sprites that are not already cached; the loading screen offers retry and skip controls if downloads fail or are slow.
 
 To refresh the local database from the upstream PokéAPI CSV tables:
 

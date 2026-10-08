@@ -40,6 +40,7 @@ class FlowMixin:
         self.wizard = {}
         self.profile_action = 'load'
         self.profile_return = 'title'
+        self.asset_loading_ids = []
 
     def words(self, indonesian, english):
         return indonesian if self.life.language == 'id' else english
@@ -118,11 +119,62 @@ class FlowMixin:
         self.last_save=self.life.elapsed
         self.last_location=(self.life.scene,int(self.life.x//1280),int(self.life.y//1600))
         self.encounter_grace=15
-        self.set_mode('game')
-        pg.key.stop_text_input()
-        for ident in self.active_pokemon_team():
+        # Cache the active team and the three Pokémon used in the sanctuary
+        # entrance before showing the world. Remaining species stay on-demand.
+        self.asset_loading_ids = list(dict.fromkeys(
+            self.active_pokemon_team() + [1, 15, 16]))
+        for ident in self.asset_loading_ids:
             self.pokedex.request(ident)
+        self.set_mode('asset_loading')
+        pg.key.stop_text_input()
         self.notify(self.words('B terminal · J misi harian · E interaksi · P Pokédex','B terminal · J daily quests · E interact · P Pokédex'))
+
+    def asset_loading_progress(self):
+        statuses = [self.pokedex.media_status.get(ident, 'loading') for ident in self.asset_loading_ids]
+        ready = sum(status == 'ready' for status in statuses)
+        settled = sum(status in ('ready', 'failed') for status in statuses)
+        return ready, settled, len(statuses), statuses
+
+    def retry_missing_sprites(self):
+        for ident in self.asset_loading_ids:
+            if self.pokedex.media_status.get(ident) == 'failed':
+                self.pokedex.request(ident)
+
+    def continue_after_asset_loading(self):
+        _, _, _, statuses = self.asset_loading_progress()
+        failed = sum(status == 'failed' for status in statuses)
+        self.set_mode('game')
+        if failed:
+            self.notify(self.words(
+                f'{failed} sprite belum terunduh. Periksa internet; Pokémon lain akan dimuat saat ditemukan.',
+                f'{failed} sprites could not be downloaded. Check your connection; other Pokémon load when encountered.'))
+
+    def draw_asset_loading(self):
+        self.canvas.fill((12, 19, 38))
+        self.text(self.words('MENYIAPKAN DUNIA POKÉMON', 'PREPARING THE POKÉMON WORLD'), 640, 178, GOLD, self.big, True)
+        self.text(self.words('Mengunduh sprite tim dan area awal. Pokémon lain dimuat saat ditemukan.',
+                             'Downloading your team and starting-area sprites. Other Pokémon load as you find them.'),
+                  640, 238, C, self.small, True)
+        ready, settled, total, statuses = self.asset_loading_progress()
+        self.text(self.words(f'Sprite siap {ready}/{total}', f'Sprites ready {ready}/{total}'), 640, 313, G, self.medium, True)
+        pg.draw.rect(self.canvas, retro.PANEL, (300, 350, 680, 26))
+        width = round(672 * (ready / max(1, total)))
+        if width:
+            pg.draw.rect(self.canvas, G, (304, 354, width, 18))
+        for index, (ident, status) in enumerate(zip(self.asset_loading_ids, statuses)):
+            detail = self.pokemon_data(ident) or {}
+            name = detail.get('name', f'Pokémon #{ident}').title()
+            mark = {'ready': '✓', 'failed': '×', 'loading': '…'}.get(status, '…')
+            color = G if status == 'ready' else retro.RED if status == 'failed' else M
+            self.text(f'{mark}  {name}', 365 + (index % 2) * 300, 414 + (index // 2) * 39, color, self.small)
+        if settled == total and ready < total:
+            self.text(self.words('Sebagian sprite gagal dimuat. Coba lagi atau lanjut tanpa sprite tersebut.',
+                                 'Some sprites failed to load. Retry or continue without them.'),
+                      640, 565, retro.GOLD, self.small, True)
+        self.button(self.words('Coba lagi', 'Retry'), (330, 640, 260, 56), self.retry_missing_sprites,
+                    settled == total and ready < total)
+        self.button(self.words('Lewati dan mulai', 'Skip and start'), (690, 640, 260, 56),
+                    self.continue_after_asset_loading, True)
 
     def begin(self):
         if self.playing:
@@ -530,7 +582,8 @@ class FlowMixin:
                     self.invitation={kind:actor};self.set_mode('invitation');return
 
     def overlay(self):
-        custom={'profiles':self.draw_profiles,'setup':self.draw_setup,'reward':self.draw_reward,'invitation':self.draw_invitation}
+        custom={'profiles':self.draw_profiles,'setup':self.draw_setup,'reward':self.draw_reward,
+                'invitation':self.draw_invitation,'asset_loading':self.draw_asset_loading}
         if self.mode in custom:
             self.buttons=[];self.canvas.fill((12,19,38));custom[self.mode]()
         else:super().overlay()
@@ -601,6 +654,13 @@ class FlowMixin:
         super().handle(event)
 
     def update(self,dt):
+        if self.mode == 'asset_loading':
+            self.frame += dt * 60
+            self.terminal.poll();self.load_pokemon_events();self.load_countdown_audio()
+            ready, settled, total, statuses = self.asset_loading_progress()
+            if settled == total and ready == total:
+                self.continue_after_asset_loading()
+            return
         if not self.playing and self.mode in ('title','settings','profiles','setup'):
             self.frame+=dt*60
             self.terminal.poll();self.load_pokemon_events();self.load_countdown_audio()

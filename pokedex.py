@@ -25,6 +25,7 @@ class PokedexClient:
         self.jobs = queue.Queue()
         self.results = queue.Queue()
         self.requested = set()
+        self.media_status = {}
         self.requested_animation = set()
         self.requested_species = set()
         self.requested_evolution = set()
@@ -60,6 +61,7 @@ class PokedexClient:
         if not 1 <= pokemon_id <= 2000 or pokemon_id in self.requested or (pokemon_id in self.details and pokemon_id in self.sprites):
             return
         self.requested.add(pokemon_id)
+        self.media_status[pokemon_id] = "loading"
         self.jobs.put(("pokemon", pokemon_id))
 
     def request_animation(self, pokemon_id):
@@ -238,6 +240,9 @@ class PokedexClient:
                 self.details[value["id"]] = value["detail"]
                 if value["image"]:
                     self.sprites[value["id"]] = value["image"]
+                    self.media_status[value["id"]] = "ready"
+                else:
+                    self.media_status[value["id"]] = "failed"
                 self.requested.discard(value["id"])
             elif kind == "animation":
                 if value["image"]:
@@ -263,6 +268,7 @@ class PokedexClient:
             else:
                 self.requested.discard(value["id"])
                 if kind == "error":
+                    self.media_status[value["id"]] = "failed"
                     self.requested_animation.discard(value["id"])
                     self.requested_species.discard(value["id"])
                     self.requested_evolution.discard(value["id"])
