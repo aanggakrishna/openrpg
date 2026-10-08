@@ -1,14 +1,14 @@
 # OpenRPG
 
-**Game RPG kehidupan 2D berbasis Python dan Pygame.** Jelajahi rumah, kebun, peternakan, hutan, market, serta suaka Pokémon dalam dunia pixel art 8-bit. Rawat kebutuhan karakter, kumpulkan Pokémon, bertarung dalam duel real-time, dan buka terminal shell sungguhan di dalam game.
+**A 2D life RPG built with Python and Pygame.** Explore a home, garden, farm, forest, market, and Pokémon sanctuary in an 8-bit pixel-art world. Take care of your character, collect Pokémon, fight real-time battles, and open a real shell terminal inside the game.
 
-[Instalasi](#jalankan) · [Kontrol](#kontrol) · [Fitur](#aktivitas) · [Terminal](#terminal-sungguhan) · [Kredit aset](assets/CREDITS.md) · [Lisensi](#lisensi)
+[Getting started](#getting-started) · [Controls](#controls) · [Activities](#activities) · [Real terminal](#real-terminal) · [Asset credits](assets/CREDITS.md) · [License](#license)
 
-## Jalankan
+## Getting started
 
-**Persyaratan:** Python 3.10+ dan macOS atau Linux. Katalog dan gambar Pokémon diunduh dari PokéAPI saat pertama kali dibutuhkan; setelah itu data tersimpan dalam cache lokal.
+**Requirements:** Python 3.10+ and macOS or Linux. Pokémon catalog entries and images are fetched from PokéAPI when first needed and stored in a local cache.
 
-Di macOS, klik dua kali `run.command`. Atau jalankan dari Terminal:
+On macOS, double-click `run.command`. Or launch from a terminal:
 
 ```sh
 git clone https://github.com/aanggakrishna/openrpg.git
@@ -18,80 +18,80 @@ python3 -m venv .venv
 .venv/bin/python main.py
 ```
 
-Pilih Nara, Bima, atau Ayu, lalu tekan Enter. Progres tersimpan otomatis pada `.openrpg/save.json`; save lama tetap didukung.
+Choose Nara, Bima, or Ayu, then press Enter. Progress is saved automatically to `.openrpg/save.json`; existing saves remain supported.
 
-## Sekilas fitur
+## Features at a glance
 
-- **Simulasi kehidupan:** makan, minum, istirahat, memasak, berkebun, beternak, memancing, dan merawat kesehatan.
-- **Dunia untuk dijelajahi:** rumah, peternakan, hutan, market, pantai, gunung, serta suaka berukuran **5.120 × 4.800 piksel** dengan 12 habitat.
-- **Satwa dan berkuda:** hewan bergerak dan berinteraksi dengan lingkungannya; beli perlengkapan, berburu, dan tunggangi kuda.
-- **Pokémon:** katalog Pokédex PokéAPI, Pokémon yang berkeliaran, tim hingga tiga Pokémon aktif, Pokémon Center, evolusi, serta pertarungan melawan AI dan pelatih.
-- **Duel arcade real-time:** arena berpanggung, lompatan, tangkisan, serangan, jurus, ultimate, item pemulih, dan Poké Ball dengan peluang tangkap.
-- **Terminal asli:** jalankan shell dan OpenCode dari PC di kamar. Sesi terminal yang sama bisa dibuka di Terminal.app dan terus bekerja saat kamu kembali menjelajahi game.
-- **Retro 8-bit:** dunia pixel art, font piksel, HUD arcade, animasi, dan efek jurus.
+- **Life simulation:** eat, drink, rest, cook, garden, raise farm animals, fish, and look after your health.
+- **An explorable world:** home, farm, forest, market, coast, mountains, and a **5,120 × 4,800 pixel** sanctuary with 12 habitats.
+- **Wildlife and horseback riding:** animals move and interact with their surroundings; buy equipment, hunt, and ride a horse.
+- **Pokémon:** Pokédex powered by PokéAPI, roaming wild Pokémon, up to three active party members, a Pokémon Center, evolution, and battles against AI and trainers.
+- **Real-time arcade battles:** multi-platform arenas, jumping, guarding, attacks, type moves, ultimates, healing items, and Poké Balls with a chance to catch.
+- **Real terminal:** run a shell and OpenCode from the bedroom PC. The same terminal session can also be opened in Terminal.app and keeps running while you explore the game.
+- **8-bit retro style:** pixel-art world, pixel font, arcade HUD, animations, and move effects.
 
-## Aset RPG
+## Assets
 
-Grafis dunia memakai tileset dan sprite PNG asli dari Kenney, diperbesar tanpa smoothing agar pixel tetap tajam:
+The game uses original PNG tilesets and sprites from Kenney:
 
-- [Tiny Town](https://kenney.nl/assets/tiny-town): rumput, jalan, rumah, pohon, pagar.
-- [Tiny Farm](https://kenney.nl/assets/tiny-farm): tanaman, hewan, peternakan, karakter petani.
-- [Tiny Dungeon](https://kenney.nl/assets/tiny-dungeon): sprite Ayu.
-- [Roguelike/RPG Pack](https://kenney.nl/assets/roguelike-rpg-pack): tepian air, lantai, dapur, tempat tidur, meja, kursi, dekorasi.
+- [Tiny Town](https://kenney.nl/assets/tiny-town): grass, paths, houses, trees, and fences.
+- [Tiny Farm](https://kenney.nl/assets/tiny-farm): crops, farm animals, farming, and farmer characters.
+- [Tiny Dungeon](https://kenney.nl/assets/tiny-dungeon): Ayu character sprite.
+- [Roguelike/RPG Pack](https://kenney.nl/assets/roguelike-rpg-pack): shoreline, floors, kitchen, beds, tables, chairs, and decor.
 
-Paket Kenney berlisensi **CC0**. Karakter kini memakai animasi berjalan empat arah dari [Ninja Adventure](https://pixel-boy.itch.io/ninja-adventure-asset-pack), karya Pixel-Boy dan AAA, juga CC0. Paket tersebut menyediakan NPC, pohon lebih detail, singa, kuda, ayam, babi hutan, hyena, dan monyet. Gajah dan kelinci memakai sprite sheet orisinal yang dibuat dengan ImageGen, masing-masing empat arah dan empat pose berjalan. Satwa Ninja Adventure memakai pose arah dengan gerak bob. Gaya visual tetap pixel art. Kredit dan lisensi tersedia di `assets/CREDITS.md`.
+The Kenney packs are licensed **CC0**. Four-direction walking animations come from [Ninja Adventure](https://pixel-boy.itch.io/ninja-adventure-asset-pack) by Pixel-Boy and AAA, also CC0. It also provides NPCs, detailed trees, lions, horses, chickens, boars, hyenas, and monkeys. The elephant and rabbit spritesheets were generated for this project; each has four directions and four walking poses. See [`assets/CREDITS.md`](assets/CREDITS.md) for credits and included asset licenses.
 
-## Kontrol
+## Controls
 
-| Tombol | Fungsi |
+| Key | Action |
 | --- | --- |
-| WASD / panah | Berjalan |
-| E | Berinteraksi; memilih duel atau informasi saat bertemu Pokémon |
+| WASD / arrow keys | Move |
+| E | Interact; choose battle or Pokédex information when meeting a Pokémon |
 | I | Inventory |
-| H | Memakai obat |
-| R | Naik atau turun dari kuda |
-| T | Memajukan waktu satu jam |
-| C | Membuka pilihan cuaca |
-| B | Membuka tampilan terminal bersama |
-| P | Membuka Pokédex |
-| M | Membuka peta suaka Pokémon; gunakan roda atau +/- untuk zoom |
-| N | Membuka Pokémon Center |
-| Space | Menyerang dengan senjata atau memulai duel jika dekat Pokémon |
-| F1 / Esc | Bantuan / menu |
+| H | Use medicine |
+| R | Mount or dismount the horse |
+| T | Advance time by one hour |
+| C | Open weather options |
+| B | Open the shared terminal view |
+| P | Open the Pokédex |
+| M | Open the sanctuary map; use the mouse wheel or +/- to zoom |
+| N | Open the Pokémon Center |
+| Space | Attack with a weapon or start a battle near a Pokémon |
+| F1 / Esc | Help / menu |
 
-### Aktivitas
+## Activities
 
-- **Rumah dan kamar:** masak dan makan di dapur; isi kebutuhan di ruang keluarga; tidur untuk memulihkan kesehatan dan energi; gunakan PC untuk membuka terminal.
-- **Kebun dan peternakan:** tanam, siram, dan panen sayur; beri makan ayam untuk mengumpulkan telur. Jual hasil panen di market.
-- **Memancing:** lempar umpan di kolam, tunggu ikan menggigit, lalu tarik dengan E.
-- **Hutan:** jelajahi habitat satwa. Predator berburu sesuai waktu; hewan dapat lari, melawan, dan muncul kembali.
-- **Suaka Pokémon:** tekan M atau gunakan portal di halaman. Peta 5.120 × 4.800 terbagi dalam 12 habitat yang terhubung. Pokémon liar berpindah, bersembunyi, dan spesies langka muncul lebih jauh dari pintu masuk.
-- **Pertemuan Pokémon:** dekati Pokémon lalu tekan E untuk memilih duel atau informasi Pokédex. Katalog, sprite, dan data yang sudah diambil disimpan di `.openrpg/pokedex`.
-- **Pokémon Center:** periksa dan pulihkan Pokémon, atur hingga tiga anggota tim aktif, dan evolusikan Pokémon yang memenuhi syarat.
-- **Duel:** bergerak dengan panah; panah atas untuk melompat atau memanjat; Shift untuk menangkis; A untuk pukulan jarak dekat; S dan D untuk jurus; F untuk ultimate; tombol 1–3 untuk mengganti Pokémon; O untuk melempar Poké Ball. Setiap duel dibatasi 60 detik. Pelatih juga menantang pemain di jalan dan arena.
-- **Market:** Sari menjual makanan dan obat, Budi menjual senjata, dan Danu membeli hasil kebun, ternak, ikan, serta buruan. Market buka pukul 06:00–22:00.
+- **Home and bedroom:** cook and eat in the kitchen; restore your needs in the living room; sleep to restore health and energy; use the PC to open the terminal.
+- **Garden and farm:** plant, water, and harvest vegetables; feed chickens to collect eggs. Sell your harvest at the market.
+- **Fishing:** cast a line in the pond, wait for a bite, then press E to reel it in.
+- **Forest:** explore wildlife habitats. Predators hunt at certain times; animals can flee, fight back, and respawn.
+- **Pokémon sanctuary:** press M or use the portal in the yard. The 5,120 × 4,800 map contains 12 connected habitats. Wild Pokémon roam and hide; rarer species appear farther from the entrance.
+- **Pokémon encounters:** approach a Pokémon and press E to choose a battle or view Pokédex information. Downloaded catalog data and sprites are cached in `.openrpg/pokedex`.
+- **Pokémon Center:** inspect and heal Pokémon, choose up to three active party members, and evolve Pokémon that meet the requirements.
+- **Battles:** move with the arrow keys; press Up to jump or climb, Shift to guard, A for a close-range punch, S/D for moves, F for an ultimate, 1–3 to switch Pokémon, and O to throw a Poké Ball. Battles have a 60-second limit. Trainers also challenge you on the road and in the arena.
+- **Market:** Sari sells food and medicine, Budi sells weapons, and Danu buys crops, farm goods, fish, and hunting loot. The market is open from 06:00 to 22:00.
 
-### Berburu dan kesehatan
+### Hunting and health
 
-Uang awal 150 koin dan lima Poké Ball. Poké Ball tambahan dijual seharga 12 koin dari Sari. Tombak berharga 80; busur 160 dan panah 3 per buah. Beli senjata di Budi, kemudian pakai dengan 1 atau 2. Tombak menyerang jarak dekat ke arah hadap; busur menghabiskan satu panah per tembakan. Hewan yang diburu menghasilkan daging dan kulit ke tas. Buruan predator tidak memberikan hasil ke pemain.
+You start with 150 coins and five Poké Balls. Sari sells extra Poké Balls for 12 coins each. A spear costs 80 coins; a bow costs 160, and arrows cost 3 coins each. Buy weapons from Budi, then equip the spear with 1 or the bow with 2. The spear is a close-range weapon; the bow uses one arrow per shot. Hunting animals adds meat and hides to your inventory. Predators do not yield hunting loot.
 
-Singa berburu pukul **06–10 dan 16–20**; hyena **18–06**. Gajah dan babi hutan dapat membalas serangan. Hewan yang mati muncul kembali setelah 100 detik waktu bermain.
+Lions hunt at **06:00–10:00 and 16:00–20:00**; hyenas hunt from **18:00–06:00**. Elephants and wild boars can fight back. Animals respawn after 100 seconds of play time.
 
-Kebutuhan turun selama bermain, memakai PC, membuka tas, atau berbelanja. Energi rendah memperlambat berjalan. Lapar atau haus yang kosong mengurangi kesehatan; serangan satwa juga melukai pemain. Obat memulihkan 45 HP, tidur memulihkan kesehatan. Saat HP habis, pemain bangun di tempat tidur dengan HP penuh; tas dan uang tetap tersimpan. **Sesi terminal dan proses AI tidak diulang atau dihentikan oleh kematian pemain.**
+Your needs decrease while playing, using the PC, opening the inventory, or shopping. Low energy slows movement. Hunger or thirst reaching zero reduces health; wildlife attacks also cause damage. Medicine restores 45 HP, and sleep restores health. When HP runs out, you wake up in bed at full health; your inventory and money are preserved. **Character death does not restart the terminal session or AI process.**
 
-### Waktu dan cuaca
+### Time and weather
 
-Jam dan hari tampil di atas layar. Satu detik nyata setara 1,3 menit di game. T memajukan tepat 60 menit, termasuk pergantian hari dan pertumbuhan kebun. Pencahayaan berubah saat pagi, sore, dan malam; cuaca otomatis dapat berubah setiap tiga jam game. C menyediakan cerah, berawan, hujan, salju, dan otomatis. Salju memperlambat gerakan di luar rumah.
+The in-game clock and day are shown at the top of the screen. One real-time second equals 1.3 in-game minutes. Press T to advance exactly 60 minutes, including day changes and crop growth. Lighting changes through morning, afternoon, and night. Weather can change automatically every three in-game hours. Press C to choose clear, cloudy, rain, snow, or automatic weather. Snow slows movement outdoors.
 
-Lompatan satu jam langsung mengganti jadwal satwa; gerakan satwa selama jam yang dilewati tidak disimulasikan satu per satu. Menu jeda, bantuan, dan layar pemilihan karakter menjeda dunia; terminal tetap berjalan.
+Skipping an hour immediately updates wildlife schedules; animal movement during the skipped hour is not simulated step by step. The pause, help, and character selection screens pause the world; the terminal keeps running.
 
-## Terminal sungguhan
+## Real terminal
 
-Buka terminal dengan menekan B di mana saja atau gunakan PC di kamar. Terminal menjalankan shell lokal; ketik `opencode` untuk membuka OpenCode, atau gunakan perintah `opencode run` seperti biasa. OpenCode memerlukan instalasi dan autentikasi provider di komputer.
+Press B anywhere to open the terminal, or use the PC in the bedroom. The terminal runs your local shell. Type `opencode` to start OpenCode, or use `opencode run` as you normally would. OpenCode must be installed and authenticated on your computer.
 
-PC membuka **shell login interaktif lokal** menggunakan `$SHELL`, biasanya zsh di macOS atau bash di Linux. Shell memiliki controlling pseudo-terminal untuk mendukung job control dan Ctrl+C. Input keyboard, paste, perintah, file, dan proses adalah nyata.
+The PC opens a **local interactive login shell** using `$SHELL`—usually zsh on macOS or bash on Linux. It runs in a controlling pseudo-terminal, supporting job control and Ctrl+C. Keyboard input, paste, commands, files, and processes are real.
 
-Contoh perintah yang bisa Anda ketik di PC:
+Example commands:
 
 ```sh
 pwd
@@ -101,58 +101,52 @@ git status
 opencode
 ```
 
-OpenCode tidak dijalankan otomatis. Ketik `opencode` seperti di aplikasi Terminal biasa jika ingin memakai AI. Ia memakai konfigurasi/login lokal Anda. Jika binary belum ditemukan melalui PATH, coba `~/.opencode/bin/opencode`.
+OpenCode does not start automatically. Type `opencode` in the terminal to use it with your existing configuration and login. If it is not found on PATH, try `~/.opencode/bin/opencode`.
 
-Folder awal adalah `computer-workspace/` di direktori game; folder dibuat ketika PC pertama kali digunakan. Pilih folder atau shell lain:
+The default working directory is `computer-workspace/` inside the game folder. It is created the first time you use the PC. Choose another project directory or shell:
 
 ```sh
-.venv/bin/python main.py --project /path/ke/proyek
+.venv/bin/python main.py --project /path/to/project
 .venv/bin/python main.py --shell /bin/bash
 ```
 
-Shell memakai akun pengguna Anda dan dapat melakukan operasi komputer yang sama seperti terminal biasa. Folder awal bukan sandbox; `cd` dapat berpindah ke direktori lain.
+The shell runs as your user and can perform the same operations as a regular terminal. Its starting directory is not a sandbox; `cd` can move to other directories.
 
-| Kontrol di PC | Fungsi |
+| PC control | Action |
 | --- | --- |
-| Ketik + Enter | Jalankan perintah |
-| Tab / panah | Completion / navigasi shell dan CLI |
-| Ctrl+C | Hentikan perintah foreground |
-| Ctrl/Cmd+V | Paste clipboard |
-| Roda mouse / Shift+PageUp / Shift+PageDown | Scroll riwayat terminal |
-| F10 | Kirim Escape ke shell/CLI |
-| Esc / tombol Tinggalkan PC | Kembali bermain tanpa menutup shell |
-| R setelah shell selesai | Buka shell baru |
+| Type + Enter | Run a command |
+| Tab / arrow keys | Shell and CLI completion / navigation |
+| Ctrl+C | Stop the foreground process |
+| Ctrl/Cmd+V | Paste from the clipboard |
+| Mouse wheel / Shift+PageUp / Shift+PageDown | Scroll terminal history |
+| F10 | Send Escape to the shell or CLI |
+| Esc / Leave PC button | Return to the game without closing the shell |
+| R after the shell exits | Start a new shell |
 
-Anda dapat meninggalkan monitor untuk berkebun atau memancing sementara perintah masih berjalan, kemudian kembali ke sesi yang sama. Ini berlaku **selama aplikasi game masih terbuka**. Saat keluar aplikasi, game menyimpan progres dan menutup shell beserta pekerjaan yang mengikuti sesi terminal tersebut. Perintah yang sengaja dilepaskan dengan `nohup`/`disown` mengikuti perilaku shell biasa.
+You can leave the PC to garden or fish while a command runs, then return to the same session. This works while the game remains open. Quitting the game saves progress and closes the shell and its child processes. Commands detached with `nohup` or `disown` follow normal shell behavior.
 
-Riwayat scroll berisi hingga 2.000 baris. Output baru atau input mengembalikan tampilan ke bagian bawah. Aplikasi CLI yang memakai alternate screen dapat kembali ke layar shell setelah selesai.
+Terminal history holds up to 2,000 lines. New output or input returns the view to the bottom. CLI applications using the alternate screen can return to the shell view when they exit.
 
-## Platform dan catatan
+## Platform and notes
 
-Lokasi mencakup halaman, hutan, suaka Pokémon, pantai, gunung, market, rumah, dan kamar. Data katalog PokéAPI memerlukan internet saat pertama dimuat; katalog, detail Pokémon, serta setiap gambar yang sudah diambil dicache lokal. Terminal tertanam mendukung macOS/Linux. Mouse di aplikasi TUI, emoji kompleks, dan protokol gambar terminal belum didukung; gunakan keyboard untuk aplikasi CLI.
+Locations include the yard, forest, Pokémon sanctuary, coast, mountains, market, home, and bedroom. Pokédex data is fetched from PokéAPI and requires an internet connection for items not yet cached. The embedded terminal supports macOS and Linux and is keyboard-controlled.
 
-## Tema retro 8-bit
+## Retro 8-bit theme
 
-Tampilan memakai font piksel VT323, panel bersudut, palet navy/mint/emas,
-bar HP bersegmen, ikon item berukuran tetap, dan latar arena piksel.
-`retro.py` menyimpan komponen visual bersama. Isi terminal tetap memakai
-font monospace Unicode agar output shell tetap terbaca. Kontrol dan format
-save tidak berubah. Tutup lalu buka ulang game untuk memuat tema baru.
+The game uses the VT323 pixel font, angular panels, a navy/mint/gold palette, segmented HP bars, consistently sized item icons, and pixel-art battle backgrounds. Shared UI components are in `retro.py`. Terminal output uses a Unicode monospace font for readability. Controls and save format remain unchanged.
 
-Font VT323 oleh Peter Hull dibundel dari repositori Google Fonts
-(`ofl/vt323`) dengan lisensi SIL Open Font License di `assets/fonts/OFL.txt`.
+VT323 by Peter Hull is bundled from the Google Fonts repository (`ofl/vt323`) under the SIL Open Font License; see `assets/fonts/OFL.txt`.
 
-### Pemeriksaan regresi
+## Regression checks
 
-```bash
+```sh
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy .venv/bin/python -m unittest discover -s tests
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy .venv/bin/python tests/check_game.py
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy .venv/bin/python tests/check_retro.py
 ```
 
-Pemeriksaan retro menggunakan data Pokémon contoh dan tidak memerlukan jaringan. Save dan shell pemeriksaan terpisah dari
-save pemain. Hasil render tersimpan di `artifacts/retro/`.
+The retro UI check uses mock Pokémon data and requires no network. Tests use isolated save files and shell sessions.
 
-## Lisensi
+## License
 
-Kode asli OpenRPG dirilis di bawah [MIT License](LICENSE). Aset pihak ketiga mengikuti lisensinya masing-masing; lihat [daftar kredit dan lisensi aset](assets/CREDITS.md) serta file lisensi yang disertakan pada setiap paket. Lisensi MIT untuk kode OpenRPG tidak mencakup merek dagang atau data dan artwork Pokémon.
+Original OpenRPG code is released under the [MIT License](LICENSE). Third-party assets retain their respective licenses; see the [asset credits and license list](assets/CREDITS.md) and the license files included with each pack. The MIT License for OpenRPG code does not cover trademarks or Pokémon data and artwork.
