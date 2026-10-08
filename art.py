@@ -6,9 +6,13 @@ import pygame as pg
 
 ROOT = Path(__file__).resolve().parent / "assets"
 NINJA = ROOT / "ninja-adventure/Ninja Adventure - Asset Pack"
+PLAYER_STYLES = ("Boy", "Hunter", "Woman", "NinjaBlue", "NinjaGreen", "Samurai", "Princess", "Cavegirl", "EggGirl")
 FACING = {"down": 0, "up": 1, "left": 2, "right": 3}
-RESERVE_WIDTH, RESERVE_HEIGHT = 5120, 4800
+RESERVE_WIDTH, RESERVE_HEIGHT = 5120, 6400
 RESERVE_ZONE_W, RESERVE_ZONE_H = 1280, 1600
+RESERVE_COLUMNS, RESERVE_ROWS = 4, 4
+RESERVE_LEVEL_REQUIREMENTS = [0, 4, 8, 12, 6, 10, 14, 18, 16, 20, 24, 28, 32, 36, 40, 45]
+RESERVE_CENTERS = [(160, 690), (1920, 800), (3200, 2400), (4480, 4000), (640, 3200), (1920, 5600)]
 RESERVE_ZONES = [
     {"name": "Suaka Hijau", "biome": "meadow", "x": 0, "y": 0, "color": (114, 171, 103)},
     {"name": "Hutan Rimba", "biome": "forest", "x": 1280, "y": 0, "color": (64, 130, 76)},
@@ -22,6 +26,10 @@ RESERVE_ZONES = [
     {"name": "Tundra Salju", "biome": "snow", "x": 1280, "y": 3200, "color": (176, 207, 222)},
     {"name": "Kepulauan Angin", "biome": "sky", "x": 2560, "y": 3200, "color": (108, 174, 210)},
     {"name": "Reruntuhan Kristal", "biome": "crystal", "x": 3840, "y": 3200, "color": (127, 104, 167)},
+    {"name": "Hutan Purba", "biome": "ancient_forest", "x": 0, "y": 4800, "color": (71, 109, 68)},
+    {"name": "Palung Samudra", "biome": "deepsea", "x": 1280, "y": 4800, "color": (37, 94, 139)},
+    {"name": "Lembah Naga", "biome": "dragon_valley", "x": 2560, "y": 4800, "color": (128, 82, 92)},
+    {"name": "Kuil Legenda", "biome": "legendary_ruins", "x": 3840, "y": 4800, "color": (117, 92, 150)},
 ]
 
 
@@ -34,7 +42,7 @@ class RPGArt:
                 self.tiles[pack, int(path.stem.split("_")[1])] = pg.image.load(path).convert_alpha()
         self.sheet = pg.image.load(ROOT / "roguelike-rpg-pack/Spritesheet/roguelikeSheet_transparent.png").convert_alpha()
         self.characters = {}
-        for name in ("Boy", "Hunter", "Woman", "OldMan", "Villager4"):
+        for name in dict.fromkeys(PLAYER_STYLES + ("OldMan", "Villager4")):
             for anim in ("Idle", "Walk", "Attack"):
                 self.characters[name, anim] = pg.image.load(NINJA / f"Actor/Character/{name}/SeparateAnim/{anim}.png").convert_alpha()
         self.nature = pg.image.load(NINJA / "Backgrounds/Tilesets/TilesetNature.png").convert_alpha()
@@ -70,21 +78,19 @@ class RPGArt:
                                   (2350, 565), (2310, 945), (1940, 1330), (1280, 260), (1290, 1380)],
                       "coast": [(75, 255), (1190, 263), (1080, 658)],
                       "mountain": [(132, 600), (1180, 548), (960, 222)]}
-        self.background = pg.Surface((1280, 800)).convert()
-        self.build_outdoors(self.background)
-        self.forest_background = pg.Surface((1280, 800)).convert()
-        self.build_forest(self.forest_background)
-        self.market_background = pg.Surface((1280, 800)).convert()
-        self.build_market(self.market_background)
+        # Scene backgrounds are generated only when the player visits them.
+        self.background = None
+        self.forest_background = None
+        self.market_background = None
         # Extra trees in the woodland and wetland regions; paths remain clear.
         rng = random.Random(751)
-        for zone_index in (1, 4, 9):
+        for zone_index in (1, 4, 9, 12):
             zone = RESERVE_ZONES[zone_index]
             for _ in range(15):
                 self.trees["reserve"].append((zone["x"] + rng.randrange(90, 1190), zone["y"] + rng.randrange(190, 1480)))
         # One road network, shared by art and tree placement. Junctions are unions.
         self.reserve_paths = [pg.Rect(0, y - 48, RESERVE_WIDTH, 96)
-                              for y in (800, 1600, 2400, 3200, 4000)]
+                              for y in range(800, RESERVE_HEIGHT, RESERVE_ZONE_H // 2)]
         self.reserve_paths += [pg.Rect(x - 40, 0, 80, RESERVE_HEIGHT)
                                for x in (1280, 2560, 3840)]
         self.reserve_paths += [pg.Rect(x - 28, 0, 56, RESERVE_HEIGHT)
@@ -93,13 +99,12 @@ class RPGArt:
         self.trees["reserve"] = [(x, y) for x, y in self.trees["reserve"]
                                  if not any(r.colliderect(pg.Rect(x-48, y-90, 96, 96))
                                             for r in self.reserve_paths)]
-        self.reserve_background = pg.Surface((RESERVE_WIDTH, RESERVE_HEIGHT)).convert()
-        self.build_reserve(self.reserve_background)
-        self.extend_reserve(self.reserve_background)
-        self.coast_background = pg.Surface((1280, 800)).convert()
-        self.build_biome(self.coast_background, "coast")
-        self.mountain_background = pg.Surface((1280, 800)).convert()
-        self.build_biome(self.mountain_background, "mountain")
+        # Sanctuary terrain is split into independently cached 1280×1600 zones.
+        # A small LRU cache caps map-background memory regardless of world size.
+        self.reserve_chunks = {}
+        self.reserve_chunk_limit = 4
+        self.coast_background = None
+        self.mountain_background = None
 
     def image(self, pack, index, size=48):
         key = (pack, index, size)
@@ -178,6 +183,9 @@ class RPGArt:
             self.tile(target, "tiny-farm", tile, x, y, 32)
 
     def outdoors(self, target, life, frame):
+        if self.background is None:
+            self.background = pg.Surface((1280, 800)).convert()
+            self.build_outdoors(self.background)
         target.blit(self.background, (0, 0))
         for i, crop in enumerate(life.crops):
             x, y = 556 + i % 3 * 62, 418 + i // 3 * 69
@@ -210,6 +218,9 @@ class RPGArt:
         self.tile(target, "tiny-town", 83, 1182, 439, 48)
 
     def forest(self, target):
+        if self.forest_background is None:
+            self.forest_background = pg.Surface((1280, 800)).convert()
+            self.build_forest(self.forest_background)
         target.blit(self.forest_background, (0, 0))
 
     def build_reserve(self, target):
@@ -251,6 +262,21 @@ class RPGArt:
             self.tile(target, "tiny-town", 2, x, 160 + (x % 4) * 25, 32)
             self.tile(target, "tiny-farm", 77, x + 60, 1380 - (x % 3) * 42, 32)
 
+    def draw_regional_centers(self, target):
+        """Draw small healing stations after biome terrain and paths are painted."""
+        for cx, cy in RESERVE_CENTERS[1:]:
+            pg.draw.rect(target, (45, 45, 56), (cx - 90, cy - 206, 180, 164))
+            pg.draw.rect(target, (235, 229, 207), (cx - 82, cy - 198, 164, 154))
+            pg.draw.polygon(target, (177, 55, 65), [(cx - 94, cy - 194),
+                           (cx, cy - 244), (cx + 94, cy - 194)])
+            pg.draw.rect(target, (126, 57, 57), (cx - 20, cy - 100, 40, 56))
+            pg.draw.rect(target, (104, 178, 205), (cx - 68, cy - 174, 34, 34))
+            pg.draw.rect(target, (104, 178, 205), (cx + 34, cy - 174, 34, 34))
+            pg.draw.circle(target, (255, 255, 244), (cx, cy - 205), 22)
+            pg.draw.circle(target, (206, 76, 82), (cx, cy - 205), 21, 6)
+            pg.draw.line(target, (206, 76, 82), (cx - 20, cy - 205), (cx + 20, cy - 205), 5)
+            pg.draw.circle(target, (206, 76, 82), (cx, cy - 205), 5)
+
     def extend_reserve(self, target):
         """Paint the ten new biomes and connect them to the original sanctuary."""
         rng = random.Random(8241)
@@ -263,11 +289,13 @@ class RPGArt:
                 tint = tuple(max(0, min(255, c + rng.randrange(-15, 16))) for c in zone["color"])
                 pg.draw.rect(target, tint, (px, py, rng.randrange(8, 25), rng.randrange(5, 14)))
             biome = zone["biome"]
-            if biome in ("coast", "swamp"):
+            if biome in ("coast", "swamp", "deepsea"):
                 for i in range(4):
                     cx, cy = x + 210 + i * 260, y + 330 + (i % 2) * 690
-                    pg.draw.ellipse(target, (47, 125, 151) if biome == "coast" else (46, 95, 91), (cx - 135, cy - 78, 270, 156))
-                    pg.draw.ellipse(target, (119, 190, 199) if biome == "coast" else (95, 145, 120), (cx - 116, cy - 58, 232, 116), 5)
+                    outer = (22, 72, 119) if biome == "deepsea" else (47, 125, 151) if biome == "coast" else (46, 95, 91)
+                    inner = (48, 133, 170) if biome == "deepsea" else (119, 190, 199) if biome == "coast" else (95, 145, 120)
+                    pg.draw.ellipse(target, outer, (cx - 135, cy - 78, 270, 156))
+                    pg.draw.ellipse(target, inner, (cx - 116, cy - 58, 232, 116), 5)
                 for i in range(14):
                     rx, ry = x + rng.randrange(40, 1240), y + rng.randrange(120, 1480)
                     pg.draw.ellipse(target, (213, 195, 140), (rx, ry, 92, 19))
@@ -277,11 +305,11 @@ class RPGArt:
                     color = (224, 194, 123) if biome == "desert" else (181, 138, 99)
                     pg.draw.ellipse(target, color, (dx, dy, 310, 90))
                     pg.draw.arc(target, (238, 214, 154), (dx + 20, dy + 8, 260, 64), 0, math.pi, 3)
-            elif biome in ("cave", "mountain", "volcano"):
+            elif biome in ("cave", "mountain", "volcano", "dragon_valley"):
                 for i in range(13):
                     rx, ry = x + rng.randrange(30, 1200), y + rng.randrange(120, 1460)
                     points = [(rx - 65, ry + 48), (rx - 42, ry - 35), (rx, ry - rng.randrange(65, 130)), (rx + 55, ry - 20), (rx + 76, ry + 48)]
-                    col = (66, 69, 78) if biome == "cave" else (98, 110, 122) if biome == "mountain" else (83, 66, 66)
+                    col = (66, 69, 78) if biome == "cave" else (128, 79, 91) if biome == "dragon_valley" else (98, 110, 122) if biome == "mountain" else (83, 66, 66)
                     pg.draw.polygon(target, col, points)
                     pg.draw.line(target, (153, 158, 164), points[1], points[2], 4)
                 if biome == "volcano":
@@ -294,11 +322,21 @@ class RPGArt:
                     pg.draw.ellipse(target, color, (cx - 100, cy - 32, 200, 65))
                     if biome == "snow":
                         pg.draw.circle(target, (246, 251, 252), (cx, cy - 8), 7)
-            elif biome == "crystal":
+            elif biome in ("crystal", "legendary_ruins"):
                 for i in range(28):
                     cx, cy = x + rng.randrange(40, 1240), y + rng.randrange(120, 1480)
-                    pg.draw.polygon(target, (91, 221, 218), [(cx, cy - 45), (cx + 22, cy), (cx, cy + 44), (cx - 18, cy)])
-                    pg.draw.line(target, (204, 255, 248), (cx, cy - 40), (cx, cy + 28), 3)
+                    crystal = biome == "crystal"
+                    tint = (91, 221, 218) if crystal else (220, 190, 106)
+                    light = (204, 255, 248) if crystal else (255, 232, 158)
+                    pg.draw.polygon(target, tint, [(cx, cy - 45), (cx + 22, cy), (cx, cy + 44), (cx - 18, cy)])
+                    pg.draw.line(target, light, (cx, cy - 40), (cx, cy + 28), 3)
+            elif biome == "ancient_forest":
+                for i in range(30):
+                    tx = x + rng.randrange(80, 1200)
+                    ty = y + rng.randrange(140, 1480)
+                    pg.draw.rect(target, (75, 58, 43), (tx - 8, ty - 52, 16, 60))
+                    pg.draw.circle(target, (41, 83, 52), (tx, ty - 58), 43)
+                    pg.draw.circle(target, (92, 129, 62), (tx, ty - 69), 28)
 
         self.paint_paths(target, self.reserve_paths)
 
@@ -365,10 +403,99 @@ class RPGArt:
         target.blit(label, label.get_rect(center=(640, 158)))
 
     def reserve(self, target, camera):
-        target.blit(self.reserve_background, (-int(camera[0]), -int(camera[1])))
+        cam_x, cam_y = int(camera[0]), int(camera[1])
+        left = max(0, cam_x // RESERVE_ZONE_W)
+        top = max(0, cam_y // RESERVE_ZONE_H)
+        right = min(RESERVE_COLUMNS - 1, (cam_x + target.get_width() - 1) // RESERVE_ZONE_W)
+        bottom = min(RESERVE_ROWS - 1, (cam_y + target.get_height() - 1) // RESERVE_ZONE_H)
+        for row in range(top, bottom + 1):
+            for col in range(left, right + 1):
+                index = row * RESERVE_COLUMNS + col
+                chunk = self.reserve_chunks.get(index)
+                if chunk is None:
+                    chunk = self.build_reserve_chunk(index)
+                    self.reserve_chunks[index] = chunk
+                    while len(self.reserve_chunks) > self.reserve_chunk_limit:
+                        self.reserve_chunks.pop(next(iter(self.reserve_chunks)))
+                else:
+                    self.reserve_chunks.pop(index)
+                    self.reserve_chunks[index] = chunk
+                zone = RESERVE_ZONES[index]
+                target.blit(chunk, (zone["x"] - cam_x, zone["y"] - cam_y))
+
+    def build_reserve_chunk(self, index):
+        """Bake only the requested sanctuary region, keeping visited zones cached."""
+        zone = RESERVE_ZONES[index]
+        surface = pg.Surface((RESERVE_ZONE_W, RESERVE_ZONE_H)).convert()
+        surface.fill(zone["color"])
+        rng = random.Random(8241 + index * 173)
+        if index == 0:
+            self.fill(surface, "tiny-town", 0, surface.get_rect())
+            self.tile(surface, "tiny-town", 83, 1182, 439, 48)
+            for _ in range(110):
+                x, y = rng.randrange(25, RESERVE_ZONE_W - 25), rng.randrange(80, RESERVE_ZONE_H - 25)
+                self.tile(surface, "tiny-town", 2 if rng.randrange(5) == 0 else 1, x, y, rng.choice((24, 28, 32)))
+            # Entrance Pokémon Center.
+            pg.draw.rect(surface, (231, 225, 204), (78, 566, 158, 105))
+            pg.draw.rect(surface, (183, 70, 72), (68, 548, 178, 40))
+            pg.draw.polygon(surface, (202, 83, 83), [(68, 549), (157, 506), (246, 549)])
+            pg.draw.rect(surface, (134, 67, 62), (137, 615, 42, 56))
+            pg.draw.rect(surface, (114, 187, 208), (91, 589, 33, 35))
+            pg.draw.rect(surface, (114, 187, 208), (190, 589, 33, 35))
+            pg.draw.ellipse(surface, (114, 151, 89), (1040, 735, 240, 150))
+        else:
+            for _ in range(150):
+                px, py = rng.randrange(0, RESERVE_ZONE_W), rng.randrange(0, RESERVE_ZONE_H)
+                tint = tuple(max(0, min(255, c + rng.randrange(-15, 16))) for c in zone["color"])
+                pg.draw.rect(surface, tint, (px, py, rng.randrange(8, 25), rng.randrange(5, 14)))
+            biome = zone["biome"]
+            for _ in range(12):
+                px, py = rng.randrange(40, RESERVE_ZONE_W - 40), rng.randrange(160, RESERVE_ZONE_H - 80)
+                if biome in ("coast", "swamp", "deepsea"):
+                    pg.draw.ellipse(surface, (48, 133, 170), (px - 95, py - 48, 190, 96), 5)
+                elif biome in ("desert", "badlands"):
+                    pg.draw.ellipse(surface, (224, 194, 123), (px - 120, py - 35, 240, 70))
+                elif biome in ("cave", "mountain", "volcano", "dragon_valley"):
+                    points = [(px - 44, py + 32), (px - 25, py - 20), (px, py - rng.randrange(40, 85)), (px + 37, py - 12), (px + 50, py + 32)]
+                    pg.draw.polygon(surface, (98, 110, 122), points)
+                    pg.draw.line(surface, (153, 158, 164), points[1], points[2], 3)
+                elif biome in ("snow", "sky"):
+                    pg.draw.ellipse(surface, (229, 242, 244), (px - 65, py - 18, 130, 38))
+                elif biome in ("crystal", "legendary_ruins"):
+                    color = (91, 221, 218) if biome == "crystal" else (220, 190, 106)
+                    pg.draw.polygon(surface, color, [(px, py - 32), (px + 16, py), (px, py + 30), (px - 14, py)])
+                elif biome == "ancient_forest":
+                    pg.draw.rect(surface, (75, 58, 43), (px - 5, py - 24, 10, 34))
+                    pg.draw.circle(surface, (41, 83, 52), (px, py - 34), 28)
+        # Draw local sections of the shared roads so neighboring chunks line up.
+        local_paths = []
+        for path in self.reserve_paths:
+            local = path.move(-zone["x"], -zone["y"])
+            if local.colliderect(surface.get_rect()):
+                local_paths.append(local)
+        self.paint_paths(surface, local_paths)
+        # Small red-roof centers mark recovery and safe rest stops in every biome.
+        cx, cy = RESERVE_ZONE_W // 2, RESERVE_ZONE_H // 2 + 155
+        pg.draw.rect(surface, (45, 45, 56), (cx - 48, cy - 99, 96, 78))
+        pg.draw.rect(surface, (235, 229, 207), (cx - 42, cy - 93, 84, 72))
+        pg.draw.polygon(surface, (177, 55, 65), [(cx - 54, cy - 91), (cx, cy - 123), (cx + 54, cy - 91)])
+        pg.draw.rect(surface, (126, 57, 57), (cx - 12, cy - 54, 24, 33))
+        for sx, roof in ((250, (205, 116, 69)), (1030, (79, 127, 174))):
+            pg.draw.ellipse(surface, (62, 70, 54), (sx - 46, 1080, 92, 16))
+            pg.draw.rect(surface, (222, 207, 170), (sx - 38, 1033, 76, 49))
+            pg.draw.rect(surface, (105, 74, 54), (sx - 47, 1024, 94, 15))
+            pg.draw.polygon(surface, roof, [(sx - 48, 1030), (sx, 1005), (sx + 48, 1030)])
+            pg.draw.rect(surface, (105, 74, 54), (sx - 7, 1053, 14, 29))
+        return surface
 
     def biome(self, target, name):
-        target.blit(self.coast_background if name == "coast" else self.mountain_background, (0, 0))
+        attr = "coast_background" if name == "coast" else "mountain_background"
+        background = getattr(self, attr)
+        if background is None:
+            background = pg.Surface((1280, 800)).convert()
+            self.build_biome(background, name)
+            setattr(self, attr, background)
+        target.blit(background, (0, 0))
 
     def build_market(self, target):
         self.fill(target, "tiny-town", 0, (0, 0, 1280, 800))
@@ -388,6 +515,9 @@ class RPGArt:
         self.tile(target, "tiny-town", 104, 700, 340, 48)
 
     def market(self, target):
+        if self.market_background is None:
+            self.market_background = pg.Surface((1280, 800)).convert()
+            self.build_market(self.market_background)
         target.blit(self.market_background, (0, 0))
 
     def room(self, target):
@@ -433,7 +563,7 @@ class RPGArt:
         self.tile(target, "rpg", (28, 9), x - 24, y - 59, 48)
 
     def character(self, target, x, y, index, scale, frame, walking, facing="down", attacking=False, npc=None):
-        name = npc or ("Boy", "Hunter", "Woman")[index]
+        name = npc or PLAYER_STYLES[index % len(PLAYER_STYLES)]
         anim = "Attack" if attacking else "Walk" if walking else "Idle"
         source = self.characters[name, anim]
         row = int(frame / 7) % 4 if anim == "Walk" else 0

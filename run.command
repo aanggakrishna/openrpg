@@ -5,4 +5,7 @@ if [[ ! -x .venv/bin/python ]]; then
   python3 -m venv .venv
   .venv/bin/python -m pip install -r requirements.txt
 fi
+if [[ ! -f .openrpg/database/pokedex.sqlite3 ]]; then
+  .venv/bin/python tools/build_pokedex.py
+fi
 exec .venv/bin/python main.py "$@"

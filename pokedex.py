@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import pokemon_db
 from pathlib import Path
 import queue
 import threading
@@ -38,6 +39,8 @@ class PokedexClient:
                 self.catalog = json.loads(self.catalog_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 self.catalog = []
+        if not self.catalog:
+            self.catalog = pokemon_db.catalog()
         self.worker = threading.Thread(target=self._work, daemon=True, name="pokeapi-cache")
         self.worker.start()
         self.request_catalog()
@@ -54,7 +57,7 @@ class PokedexClient:
 
     def request(self, pokemon_id):
         pokemon_id = int(pokemon_id)
-        if not 1 <= pokemon_id <= 2000 or pokemon_id in self.requested:
+        if not 1 <= pokemon_id <= 2000 or pokemon_id in self.requested or (pokemon_id in self.details and pokemon_id in self.sprites):
             return
         self.requested.add(pokemon_id)
         self.jobs.put(("pokemon", pokemon_id))
@@ -122,7 +125,7 @@ class PokedexClient:
                     if path.exists():
                         data = json.loads(path.read_text(encoding="utf-8"))
                     else:
-                        data = json.loads(self._get(f"{API}/evolution-chain/{pokemon_id}/"))
+                        data = pokemon_db.evolution(pokemon_id) or json.loads(self._get(f"{API}/evolution-chain/{pokemon_id}/"))
                         tmp = path.with_suffix(".tmp")
                         tmp.write_text(json.dumps(data), encoding="utf-8")
                         tmp.replace(path)
@@ -132,10 +135,13 @@ class PokedexClient:
                     if path.exists():
                         data = json.loads(path.read_text(encoding="utf-8"))
                     else:
-                        data = json.loads(self._get(f"{API}/pokemon-species/{pokemon_id}/"))
+                        data = pokemon_db.species(pokemon_id) or json.loads(self._get(f"{API}/pokemon-species/{pokemon_id}/"))
                         tmp = path.with_suffix(".tmp")
                         tmp.write_text(json.dumps(data), encoding="utf-8")
                         tmp.replace(path)
+                    local = pokemon_db.species(pokemon_id)
+                    if local and not data.get("flavor_text_entries"):
+                        data = dict(data, flavor_text_entries=local.get("flavor_text_entries", []))
                     self.results.put(("species", {"id": pokemon_id, "data": data}))
                 elif kind == "animation":
                     detail_path = self.cache_dir / f"{pokemon_id}.json"
@@ -172,7 +178,7 @@ class PokedexClient:
                     if path.exists():
                         data = json.loads(path.read_text(encoding="utf-8"))
                     else:
-                        data = json.loads(self._get(f"{API}/move/{pokemon_id}/"))
+                        data = pokemon_db.move(pokemon_id) or json.loads(self._get(f"{API}/move/{pokemon_id}/"))
                         tmp = path.with_suffix(".tmp")
                         tmp.write_text(json.dumps(data), encoding="utf-8")
                         tmp.replace(path)
@@ -197,7 +203,7 @@ class PokedexClient:
                     if detail_path.exists():
                         detail = json.loads(detail_path.read_text(encoding="utf-8"))
                     else:
-                        detail = json.loads(self._get(f"{API}/pokemon/{pokemon_id}/"))
+                        detail = pokemon_db.detail(pokemon_id) or json.loads(self._get(f"{API}/pokemon/{pokemon_id}/"))
                         tmp = detail_path.with_suffix(".tmp")
                         tmp.write_text(json.dumps(detail), encoding="utf-8")
                         tmp.replace(detail_path)

@@ -92,7 +92,7 @@ class SimulationTests(unittest.TestCase):
             path = Path(folder) / "save.json"; life.save(path)
             loaded = Life.load(path)
             self.assertEqual((loaded.money, loaded.scene, loaded.weather_override), (90, "market", "Salju"))
-            self.assertEqual(len(loaded.animals), 30)
+            self.assertEqual(len(loaded.animals), 11)
 
 
 if __name__ == "__main__":

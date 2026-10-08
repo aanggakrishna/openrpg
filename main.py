@@ -8,7 +8,12 @@ import math
 from pathlib import Path
 import random
 import shlex
+import shutil
+import subprocess
+import sys
+import threading
 import time
+import wave
 
 import pygame as pg
 import retro
@@ -16,7 +21,14 @@ from PIL import Image
 
 from state import Life, BUY, SELL, WEAPONS
 from terminal import ShellTerminal
-from art import RPGArt, RESERVE_WIDTH, RESERVE_HEIGHT, RESERVE_ZONE_W, RESERVE_ZONE_H, RESERVE_ZONES
+from art import (RPGArt, RESERVE_WIDTH, RESERVE_HEIGHT, RESERVE_ZONE_W, RESERVE_ZONE_H,
+                 RESERVE_ZONES, RESERVE_CENTERS, RESERVE_COLUMNS, RESERVE_ROWS,
+                 RESERVE_LEVEL_REQUIREMENTS)
+from i18n import translate
+
+# Legendary and mythical species are deliberately weighted toward late-game
+# sanctuaries rather than mixed into ordinary roaming encounters.
+RARE_POKEMON_IDS = {144,145,146,150,151,243,244,245,249,250,251,377,378,379,380,381,382,383,384,385,386,480,481,482,483,484,485,486,487,488,489,490,491,492,493,494,638,639,640,641,642,643,644,645,646,647,648,649,716,717,718,719,720,721,785,786,787,788,789,790,791,792,800,801,802,805,806,807,808,809,888,889,890,891,892,894,895,896,897,898,905,1001,1002,1003,1004,1007,1008,1009,1010,1011,1012,1013,1014,1015,1016,1017,1024,1025}
 from wildlife import Wildlife, SPECIES, hunting_time
 from environment import Environment, OUTSIDE
 from pokedex import PokedexClient
@@ -24,6 +36,7 @@ from pokedex import PokedexClient
 ROOT = Path(__file__).resolve().parent
 W, H = 1280, 800
 INK, CREAM, MUTED, GREEN = retro.INK, retro.CREAM, retro.MUTED, retro.GREEN
+BATTLE_WEATHER_EMOJI = {"Cerah":"☀", "Berawan":"☁", "Hujan":"🌧", "Salju":"❄", "Badai":"⛈"}
 TYPE_MOVES = {
     "normal": ("Hantaman Bintang", (231, 224, 193), "burst"), "fire": ("Sembur Api", (245, 102, 48), "fire"),
     "water": ("Arus Hydro", (72, 167, 245), "water"), "electric": ("Petir Kilat", (255, 221, 55), "electric"),
@@ -48,7 +61,7 @@ ULTIMATE_EMOJI = {"normal": "✨", "fire": "🔥", "water": "🌊", "electric": 
                   "dark": "🌑", "steel": "⚙️", "fairy": "✨"}
 
 
-class Game:
+class LegacyGame:
     def __init__(self, project, save_path=None, shell=None):
         pg.init()
         self.window = pg.display.set_mode((W, H), pg.RESIZABLE)
@@ -87,8 +100,11 @@ class Game:
         self.projectiles = []
         self.shop_npc = "Sari"
         self.shop_tab = "buy"
+        self.sell_pokemon_pending = None
+        self.daily_rewarded_today = 0
         self.facing = "down"
         self.mode = "title"
+        self.settings_return_mode = "title"
         self.selected = self.life.character
         self.running = True
         self.toast = "Selamat datang! Ikuti jalan menuju rumah."
@@ -109,6 +125,51 @@ class Game:
         self.battle = None
         self.encounter_target = None
         self.pokemon_sounds = {}
+        self.battle_sounds = {}
+        self.action_sounds = {}
+        self.pending_action_sounds = []
+        self._tts_queue = []
+        self._tts_lock = threading.Lock()
+        self._tts_worker_running = False
+        self.countdown_tts_dir = ROOT / ".openrpg" / "countdown-tts"
+        self.countdown_tts_sounds = {}
+        self.countdown_tts_pending = []
+        self.countdown_tts_lock = threading.Lock()
+        self.countdown_tts_loading = True
+        self.countdown_tts_channel = None
+        self.hospitality_kind = "restaurant"
+        self.last_hit_cry = 0.0
+        self._last_pokemon_cry = (None, 0.0)
+        self._music_key = None
+        self._last_battle_track = None
+        self._market_ambience = None
+        self._market_ambience_channel = None
+        self._forest_ambience = None
+        self._forest_ambience_channel = None
+        self.footstep_timer = 0.0
+        self.door_close_timer = 0.0
+        self.dead_active = False
+        self.dead_timer = 0.0
+        if pg.mixer.get_init():
+            pg.mixer.set_num_channels(16)
+            self.countdown_tts_channel = pg.mixer.Channel(8)
+            for sound_name in ("fire", "water", "earth", "wind", "leaf", "punch", "ultimate_charge"):
+                try:
+                    self.battle_sounds[sound_name] = pg.mixer.Sound(str(ROOT / "assets" / "audio" / "sfx" / f"{sound_name}.ogg"))
+                except (pg.error, OSError):
+                    pass
+            try:
+                self.battle_sounds["victory"] = self.make_victory_sound()
+            except (pg.error, ValueError):
+                pass
+            try:
+                self._market_ambience = pg.mixer.Sound(str(ROOT / "assets" / "audio" / "ambience" / "market_crowd.ogg"))
+                self._market_ambience_channel = pg.mixer.Channel(7)
+                self._market_ambience_channel.set_volume(.10)
+                self._forest_ambience_channel = pg.mixer.Channel(6)
+                pg.mixer.music.set_volume(.28)
+            except (pg.error, OSError):
+                self._market_ambience = None
         self.battle_sprite = None
         self.team_sprite = None
         self.reserve_camera = (0, 0)
@@ -132,23 +193,88 @@ class Game:
         ]
         self.center_selected = 0
         self.center_message = "Pilih Pokémon untuk diperiksa."
+        self.evolution_anim = None
         self.fight_type_vfx = None
         self.phone_unread = False
         self.phone_status = "Tuliskan prompt untuk OpenCode. Enter mengirimkannya."
         self.terminal_cache = pg.Surface(self.terminal_area.size)
         self.terminal_cache.fill((17, 22, 25))
         self.terminal.screen.dirty.update(range(36))
+        self.prepare_countdown_audio()
         pg.key.set_repeat()
         pg.scrap.init()
 
     def text(self, text, x, y, color=INK, font=None, center=False):
-        surface = (font or self.font).render(str(text), False, color)
+        surface = (font or self.font).render(self.tr(text), False, color)
         self.canvas.blit(surface, surface.get_rect(center=(x, y)) if center else (x, y))
 
     def box(self, rect, color, radius=10, border=None):
         retro.panel(self.canvas, rect, color, border)
 
+    def draw_bag_icon(self, x, y, size=24):
+        unit = max(2, size // 6)
+        left, top = int(x - 3 * unit), int(y - 2 * unit)
+        pg.draw.rect(self.canvas, (213, 169, 97), (left, top + unit, 6 * unit, 5 * unit))
+        pg.draw.rect(self.canvas, (242, 213, 151), (left + unit, top, 4 * unit, 2 * unit))
+        pg.draw.rect(self.canvas, (116, 76, 52), (left + unit, top + 2 * unit, 4 * unit, unit))
+        pg.draw.rect(self.canvas, (88, 63, 45), (left + 2 * unit, top + 4 * unit, 2 * unit, unit))
+
+    def draw_pokedex_icon(self, x, y, size=24):
+        unit = max(2, size // 6)
+        left, top = int(x - 3 * unit), int(y - 3 * unit)
+        pg.draw.rect(self.canvas, (215, 75, 77), (left, top, 6 * unit, 6 * unit))
+        pg.draw.rect(self.canvas, (248, 224, 182), (left + unit, top + unit, 4 * unit, 4 * unit))
+        pg.draw.rect(self.canvas, (58, 80, 76), (left + 2 * unit, top + 2 * unit, 2 * unit, 2 * unit))
+        pg.draw.rect(self.canvas, (255, 255, 239), (left + unit, top + 2 * unit, unit, unit))
+
+    def draw_item_icon(self, item, x, y):
+        """Small, consistent pixel-art inventory icons; x/y are icon centers."""
+        x, y = int(x), int(y)
+        dark, cream, green, red = (54, 48, 39), (239, 218, 165), (123, 183, 89), (211, 79, 76)
+        if item == "Sayur":
+            pg.draw.polygon(self.canvas, green, [(x, y + 9), (x - 9, y - 1), (x - 5, y - 9), (x + 2, y - 4), (x + 8, y - 8), (x + 8, y + 1)])
+            pg.draw.line(self.canvas, dark, (x, y + 9), (x + 1, y - 5), 2)
+        elif item == "Ikan":
+            pg.draw.ellipse(self.canvas, (91, 171, 192), (x - 9, y - 5, 15, 10))
+            pg.draw.polygon(self.canvas, (69, 132, 157), [(x + 5, y), (x + 11, y - 6), (x + 11, y + 6)])
+            pg.draw.circle(self.canvas, dark, (x - 5, y - 1), 1)
+        elif item in ("Telur", "Makanan"):
+            pg.draw.ellipse(self.canvas, cream if item == "Telur" else (203, 157, 90), (x - 6, y - 9, 12, 18))
+            if item == "Makanan":
+                pg.draw.rect(self.canvas, dark, (x - 5, y + 3, 10, 2))
+        elif item == "Daging":
+            pg.draw.circle(self.canvas, (176, 92, 76), (x, y), 8)
+            pg.draw.circle(self.canvas, cream, (x + 5, y + 5), 3)
+            pg.draw.rect(self.canvas, dark, (x - 1, y - 8, 2, 5))
+        elif item == "Kulit":
+            pg.draw.polygon(self.canvas, (188, 167, 116), [(x, y - 10), (x + 7, y - 2), (x + 4, y + 9), (x - 3, y + 7), (x - 7, y - 2)])
+            pg.draw.line(self.canvas, cream, (x, y - 6), (x, y + 6), 2)
+        elif item == "Kayu":
+            pg.draw.rect(self.canvas, (157, 107, 65), (x - 8, y - 6, 16, 12))
+            pg.draw.rect(self.canvas, (221, 174, 104), (x - 5, y - 4, 10, 8), 2)
+        elif item == "Obat":
+            pg.draw.rect(self.canvas, (104, 178, 183), (x - 7, y - 5, 14, 13))
+            pg.draw.rect(self.canvas, cream, (x - 4, y - 9, 8, 4))
+            pg.draw.rect(self.canvas, (225, 231, 218), (x - 2, y - 2, 4, 7))
+            pg.draw.rect(self.canvas, (225, 231, 218), (x - 4, y, 8, 3))
+        elif item == "Tombak":
+            pg.draw.line(self.canvas, (148, 103, 61), (x - 7, y + 9), (x + 5, y - 7), 3)
+            pg.draw.polygon(self.canvas, (208, 216, 207), [(x + 2, y - 5), (x + 10, y - 10), (x + 7, y - 1)])
+        elif item == "Busur":
+            pg.draw.arc(self.canvas, (164, 116, 65), (x - 9, y - 10, 17, 20), -1.35, 1.35, 3)
+            pg.draw.line(self.canvas, cream, (x + 2, y - 8), (x + 2, y + 8), 1)
+        elif item == "Panah":
+            pg.draw.line(self.canvas, (163, 112, 67), (x - 9, y + 7), (x + 7, y - 7), 2)
+            pg.draw.polygon(self.canvas, (215, 222, 211), [(x + 7, y - 7), (x + 10, y - 10), (x + 9, y - 4)])
+        elif item == "Pokeball":
+            pg.draw.circle(self.canvas, (218, 76, 79), (x, y), 9)
+            pg.draw.rect(self.canvas, (244, 237, 216), (x - 8, y, 16, 7))
+            pg.draw.line(self.canvas, dark, (x - 8, y), (x + 8, y), 2)
+            pg.draw.circle(self.canvas, cream, (x, y), 3)
+            pg.draw.circle(self.canvas, dark, (x, y), 3, 1)
+
     def button(self, label, rect, callback, active=False):
+        label = self.tr(label)
         rect = pg.Rect(rect)
         hover = rect.collidepoint(self.mouse())
         self.box(rect, retro.GOLD if active or hover else retro.PANEL, 9)
@@ -163,7 +289,10 @@ class Game:
         return ((x - (sw - W * scale) / 2) / scale, (y - (sh - H * scale) / 2) / scale)
 
     def notify(self, message):
-        self.toast, self.toast_until = message, time.monotonic() + 5
+        self.toast, self.toast_until = self.tr(message), time.monotonic() + 5
+
+    def tr(self, value):
+        return translate(value, self.life.language)
 
     def sprite(self, x, y, index=None, scale=1, walking=False):
         self.art.character(self.canvas, x, y, self.life.character if index is None else index,
@@ -176,6 +305,7 @@ class Game:
                 ("Danu", 673 + math.sin(self.life.elapsed / 8) * 13, 594, "OldMan", "Pembeli hasil panen")]
 
     def label(self, text, x, y):
+        text = self.tr(text)
         size = self.small.size(text)
         self.box((x - size[0] / 2 - 12, y - 4, size[0] + 24, 27), CREAM, 6)
         self.text(text, x, y + 10, font=self.small, center=True)
@@ -186,6 +316,8 @@ class Game:
                       ("pond", 963, 615, "Memancing"), ("bench", 312, 616, "Duduk & bersantai"),
                       ("reserve", 160, 610, "Portal langsung ke suaka Pokémon"),
                       ("forest", 43, 405, "Ke hutan di kiri"), ("market", 1237, 405, "Ke market di kanan")]
+            result += [("restaurant", 780, 590, "Restoran · makan & minum"),
+                       ("hotel", 880, 620, "Hotel · tidur & pulihkan kebutuhan")]
             for i in range(6):
                 result.append((f"crop{i}", 580 + i % 3 * 62, 440 + i // 3 * 69, "Kebun: tanam / siram / panen"))
             if self.life.horse_scene == "outdoors" and not self.life.mounted:
@@ -193,25 +325,43 @@ class Game:
             return result
         if self.life.scene == "forest":
             result = [("farm", 1237, 405, "Kembali ke rumah"), ("wood", 645, 555, "Kumpulkan kayu"),
-                      ("reserve", 650, 177, "Jelajahi suaka Pokémon ke utara")]
+                      ("reserve", 650, 177, "Jelajahi suaka Pokémon ke utara"),
+                      ("restaurant", 300, 475, "Restoran hutan · makan & minum"),
+                      ("hotel", 980, 475, "Penginapan hutan · pulihkan kebutuhan")]
             if self.life.horse_scene == "forest" and not self.life.mounted:
                 result.append(("horse", self.life.horse_x, self.life.horse_y, "Naik kuda · R"))
             return result
         if self.life.scene == "reserve":
-            result = [("forest", 92, 800, "Kembali ke hutan"),
-                      ("center", 160, 690, "Pokémon Center · periksa, pulihkan, evolusi")]
+            result = [("forest", 92, 800, "Kembali ke hutan")]
+            zone = self.reserve_zone_at(self.life.x, self.life.y)
+            result += [("restaurant", zone["x"] + 250, zone["y"] + 1070, "Restoran · makan & minum"),
+                       ("hotel", zone["x"] + 1030, zone["y"] + 1070, "Hotel · tidur & pulihkan kebutuhan")]
+            zone_centers = [(x, y) for x, y in RESERVE_CENTERS
+                            if zone["x"] <= x < zone["x"] + RESERVE_ZONE_W
+                            and zone["y"] <= y < zone["y"] + RESERVE_ZONE_H]
+            if not zone_centers:
+                zone_centers = [(zone["x"] + RESERVE_ZONE_W // 2,
+                                 zone["y"] + RESERVE_ZONE_H // 2 + 155)]
+            result.extend(("center", x, y, "Pokémon Center · periksa, pulihkan, evolusi")
+                          for x, y in zone_centers)
             result.extend(("gate:" + gate["direction"], gate["x"], gate["y"],
-                           "Gerbang · " + gate["target"]["name"])
+                           ("Gerbang terkunci · Lv." + str(gate["required_level"])
+                            if self.player_progress_level() < gate["required_level"]
+                            else "Gerbang · " + gate["target"]["name"]))
                           for gate in self.reserve_gates())
             if not self.life.mounted and self.life.horse_scene == "reserve":
                 result.append(("horse", self.life.horse_x, self.life.horse_y, "Naik kuda · R"))
             return result
         if self.life.scene == "coast":
-            return [("reserve", 50, 410, "Kembali ke suaka")]
+            return [("reserve", 50, 410, "Kembali ke suaka"), ("restaurant", 280, 500, "Restoran pantai · makan & minum"),
+                    ("hotel", 1050, 500, "Hotel pantai · pulihkan kebutuhan")]
         if self.life.scene == "mountain":
-            return [("reserve", 640, 640, "Kembali ke suaka")]
+            return [("reserve", 640, 640, "Kembali ke suaka"), ("restaurant", 290, 560, "Restoran gunung · makan & minum"),
+                    ("hotel", 1000, 560, "Hotel gunung · pulihkan kebutuhan")]
         if self.life.scene == "market":
             result = [("farm", 43, 405, "Kembali ke rumah")]
+            result += [("restaurant", 700, 610, "Restoran · makan & minum"),
+                       ("hotel", 960, 610, "Hotel · tidur & pulihkan kebutuhan")]
             result += [("npc_" + name, x, y + 25, f"Bicara dengan {name}") for name, x, y, _, _ in self.npcs()]
             if self.life.horse_scene == "market" and not self.life.mounted:
                 result.append(("horse", self.life.horse_x, self.life.horse_y, "Naik kuda · R"))
@@ -225,16 +375,17 @@ class Game:
 
     def reserve_gates(self):
         """Return neighboring biome gates around the player's current region."""
-        col = max(0, min(3, int(self.life.x // RESERVE_ZONE_W)))
-        row = max(0, min(2, int(self.life.y // RESERVE_ZONE_H)))
-        zone = RESERVE_ZONES[row * 4 + col]
+        col = max(0, min(RESERVE_COLUMNS - 1, int(self.life.x // RESERVE_ZONE_W)))
+        row = max(0, min(RESERVE_ROWS - 1, int(self.life.y // RESERVE_ZONE_H)))
+        zone = RESERVE_ZONES[row * RESERVE_COLUMNS + col]
         gates = []
         for direction, dc, dr in (("utara", 0, -1), ("selatan", 0, 1),
                                   ("barat", -1, 0), ("timur", 1, 0)):
             nc, nr = col + dc, row + dr
-            if not (0 <= nc < 4 and 0 <= nr < 3):
+            if not (0 <= nc < RESERVE_COLUMNS and 0 <= nr < RESERVE_ROWS):
                 continue
-            target = RESERVE_ZONES[nr * 4 + nc]
+            target_index = nr * RESERVE_COLUMNS + nc
+            target = RESERVE_ZONES[target_index]
             if direction == "utara":
                 x, y = zone["x"] + RESERVE_ZONE_W // 2, zone["y"] + 155
             elif direction == "selatan":
@@ -244,12 +395,20 @@ class Game:
             else:
                 x, y = zone["x"] + RESERVE_ZONE_W - 28, zone["y"] + RESERVE_ZONE_H // 2
             gates.append({"direction": direction, "x": x, "y": y, "target": target,
-                          "col": nc, "row": nr})
+                          "col": nc, "row": nr,
+                          "required_level": RESERVE_LEVEL_REQUIREMENTS[target_index]})
         return gates
+
+    def player_progress_level(self):
+        levels = [self.pokemon_level(ident) for ident in self.life.pokemon_party]
+        return max(levels, default=1)
 
     def travel_reserve_gate(self, direction):
         gate = next((item for item in self.reserve_gates() if item["direction"] == direction), None)
         if not gate:
+            return
+        if self.player_progress_level() < gate["required_level"]:
+            self.notify(f"Gerbang terkunci. Butuh Pokémon Lv.{gate['required_level']} · tim tertinggi Lv.{self.player_progress_level()}.")
             return
         target = gate["target"]
         if direction == "timur":
@@ -264,7 +423,7 @@ class Game:
         if self.life.mounted:
             self.life.horse_x, self.life.horse_y = x, y
         self.projectiles.clear()
-        self.notify(f"Memasuki {target['name']} · area luas · M untuk peta dunia")
+        self.notify(f"Memasuki {target['name']} · {target['biome']} · Pokémon lebih langka dan kuat")
 
     def obstacles(self, scene=None):
         scene = scene or self.life.scene
@@ -290,6 +449,13 @@ class Game:
         return found if math.hypot(found[1] - self.life.x, found[2] - self.life.y) < 81 else None
 
     def transition(self, scene, x, y):
+        old_scene = self.life.scene
+        if old_scene != scene:
+            if scene in ("house", "bedroom") or old_scene in ("house", "bedroom"):
+                self.play_action_sound("door-wood-open", .35)
+                self.door_close_timer = .28
+            else:
+                self.play_action_sound("gate", .32)
         if self.life.mounted and scene not in OUTSIDE:
             self.toggle_mount()
         self.life.scene, self.life.x, self.life.y = scene, x, y
@@ -297,7 +463,7 @@ class Game:
             self.life.horse_scene, self.life.horse_x, self.life.horse_y = scene, x, y
         self.fishing = None
         self.projectiles.clear()
-        self.life.save(self.save_path)
+        self.save_current()
 
     def interact(self):
         if self.fishing:
@@ -306,8 +472,12 @@ class Game:
                 self.life.bag["Ikan"] += 1
                 self.life.boost("Senang", 14)
                 self.life.complete("Memancing")
+                self.life.record_daily_quest("fish", 1)
+                self.play_action_sound("fishing-bite", .45)
+                self.queue_action_sound("fishing-reel", .18, .45)
                 self.notify("Dapat ikan! +1 ikan. Bisa dimasak di dapur.")
             else:
+                self.play_action_sound("ui-error", .35)
                 self.notify("Terlalu cepat! Tunggu tulisan TARIK muncul.")
             self.fishing = None
             return
@@ -324,9 +494,15 @@ class Game:
                 if pokemon or trainer:
                     self.attack_nearby_pokemon()
                     return
+            self.play_action_sound("ui-error", .32)
             self.notify("Dekati Pokémon / pelatih lalu tekan Space, atau dekati benda dan tekan E.")
             return
         action = station[0]
+        if action in ("restaurant", "hotel"):
+            self.play_action_sound("menu-open", .32)
+            self.hospitality_kind = action
+            self.mode = "hospitality"
+            return
         if action.startswith("gate:"):
             self.travel_reserve_gate(action.split(":", 1)[1])
             return
@@ -360,17 +536,21 @@ class Game:
             self.toggle_mount()
             return
         if action == "center":
+            self.play_action_sound("menu-open", .32)
             self.mode = "center"
             self.center_selected = 0
             self.center_message = "Selamat datang! Kami bisa memeriksa dan memulihkan timmu."
-            for pokemon_id in self.life.pokemon_party:
+            for pokemon_id in self.life.pokemon_party[:8]:
                 self.pokedex.request(pokemon_id)
                 self.pokedex.request_species(pokemon_id)
             return
         if action == "wood":
             if self.attack_cooldown <= 0:
+                self.life.record_daily_quest("wood")
                 self.life.bag["Kayu"] += 1
                 self.attack_cooldown = 1.5
+                self.play_action_sound("axe-chop", .45)
+                self.play_action_sound("pickup-item", .25)
                 self.notify("Mengumpulkan ranting: +1 kayu. Bisa dijual di market.")
             return
         if action.startswith("npc_"):
@@ -379,6 +559,8 @@ class Game:
                 return
             self.shop_npc = action[4:]
             self.shop_tab = "sell" if self.shop_npc == "Danu" else "buy"
+            self.sell_pokemon_pending = None
+            self.play_action_sound("shop-bell", .32)
             self.mode = "shop"
             return
         if action == "home":
@@ -390,18 +572,52 @@ class Game:
         elif action == "living":
             self.transition("house", 1015, 290)
         elif action.startswith("crop"):
-            self.notify(self.life.garden(int(action[-1])))
+            crop = self.life.crops[int(action[-1])]
+            stage = crop["stage"]
+            result = self.life.garden(int(action[-1]))
+            if stage == "empty":
+                self.play_action_sound("seed-plant", .45)
+            elif stage == "planted":
+                self.play_action_sound("watering", .35)
+            elif stage == "ready":
+                self.play_action_sound("harvest-pop", .5)
+                self.play_action_sound("pickup-item", .25)
+            else:
+                self.play_action_sound("ui-error", .25)
+            self.notify(result)
         elif action == "ranch":
-            self.notify(self.life.feed())
+            fed_at = self.life.fed_at
+            result = self.life.feed()
+            if self.life.fed_at != fed_at:
+                self.play_action_sound("chicken", .28)
+                self.queue_action_sound("egg-collect", .24, .4)
+            else:
+                self.play_action_sound("ui-error", .25)
+            self.notify(result)
         elif action == "pond":
             self.fishing = time.monotonic()
+            self.play_action_sound("fishing-cast", .42)
             self.notify("Umpan dilempar. Tunggu ikan menggigit...")
         elif action == "kitchen":
+            food_before = self.life.bag["Makanan"]
             self.notify(self.life.cook())
+            if self.life.bag["Makanan"] > food_before:
+                self.play_action_sound("door-wood-open", .24)
+                self.queue_action_sound("stove-on", .28, .25)
+                self.queue_action_sound("cook-sizzle", .48, .48)
+                self.queue_action_sound("door-wood-close", .8, .22)
+            else:
+                self.play_action_sound("ui-error", .25)
         elif action == "table":
+            food_before = self.life.bag["Makanan"]
             self.notify(self.life.eat())
+            if self.life.bag["Makanan"] < food_before:
+                self.play_action_sound("eat", .42)
+            else:
+                self.play_action_sound("ui-error", .25)
         elif action == "water":
             self.life.boost("Minum", 45)
+            self.play_action_sound("drink", .38)
             self.notify("Segelas air segar. Minum +45.")
         elif action in ("bench", "sofa"):
             self.life.boost("Senang", 20)
@@ -410,13 +626,17 @@ class Game:
             self.notify("Tarik napas, nikmati hari. Senang +20, energi +10.")
         elif action == "bed":
             self.life.day += 1
+            self.life.ensure_daily_quests()
             self.life.minutes = 420
             self.life.elapsed += 60
             self.life.boost("Energi", 100)
             self.life.health = 100
+            for ident in self.life.pokemon_active:
+                self.life.pokemon_health[str(ident)] = self.base_stat(self.pokemon_data(ident), "hp", 45) + self.pokemon_level(ident) * 2
             self.life.boost("Senang", 12)
             self.life.advance_time(0)
             self.life.grow_crops()
+            self.play_action_sound("sleep", .34)
             self.notify("Selamat pagi! Energi pulih. Kebun juga terus tumbuh.")
         elif action == "pc":
             self.terminal.start()
@@ -427,11 +647,13 @@ class Game:
 
     def toggle_mount(self):
         if self.life.mounted:
+            self.play_action_sound("step-wood", .28)
             self.life.mounted = False
             self.life.horse_scene = self.life.scene
             self.life.horse_x, self.life.horse_y = self.life.x, self.life.y
             self.notify("Turun dari kuda. Kuda menunggu di sini.")
         elif self.life.scene == self.life.horse_scene and math.hypot(self.life.x - self.life.horse_x, self.life.y - self.life.horse_y) < 85:
+            self.play_action_sound("step-grass", .3)
             self.life.mounted = True
             self.notify("Naik kuda! Bergerak lebih cepat. R untuk turun.")
         else:
@@ -448,6 +670,7 @@ class Game:
         if self.attack_cooldown > 0:
             return
         spec = WEAPONS[weapon]
+        self.play_action_sound("attack-swing", .32)
         direction = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}[self.facing]
         if weapon == "Busur":
             if self.life.bag["Panah"] <= 0:
@@ -463,7 +686,12 @@ class Game:
                 if distance < spec["reach"] and (distance < 35 or (dx * direction[0] + dy * direction[1]) / max(1, distance) > .2):
                     candidates.append((distance, animal))
             if candidates:
-                self.notify(self.wildlife.hit(min(candidates, key=lambda c: c[0])[1], spec["damage"]))
+                animal = min(candidates, key=lambda c: c[0])[1]
+                old_hp = animal["hp"]
+                self.notify(self.wildlife.hit(animal, spec["damage"]))
+                if animal["hp"] < old_hp:
+                    self.play_action_sound("wildlife-hurt", .44)
+                    self.play_wildlife_call(animal["species"])
         self.attack_cooldown = spec["cooldown"]
         self.attack_flash = .22
 
@@ -474,10 +702,34 @@ class Game:
         self.projectiles.clear()
         self.battle = None
         self.back()
-        self.life.save(self.save_path)
+        self.save_current()
         self.notify("Anda tumbang dan bangun di tempat tidur. Terminal / AI tetap berjalan.")
+        self.dead_active = False
+        self.dead_timer = 0.0
+
+    def start_dead_screen(self):
+        self.dead_active = True
+        self.dead_timer = 5.0
+        self.play_action_sound("jingle-fail", .32)
+        self.mode = "dead"
+        self.battle = None
+        self.fishing = None
+        self.projectiles.clear()
+        if self.countdown_tts_channel:
+            self.countdown_tts_channel.stop()
+
+    def draw_dead_screen(self):
+        veil = pg.Surface((W, H), pg.SRCALPHA)
+        veil.fill((12, 10, 18, 225))
+        self.canvas.blit(veil, (0, 0))
+        self.box((280, 185, 720, 430), (23, 26, 43), 12, retro.RED)
+        self.text("DEAD", W // 2, 270, retro.RED, self.logo_font, True)
+        self.text("Anda akan terbangun di kasur dalam", W // 2, 365, CREAM, self.medium, True)
+        self.text(f"{max(1, math.ceil(self.dead_timer))}", W // 2, 445, retro.GOLD, self.big, True)
+        self.text("Terminal dan pekerjaan OpenCode tetap berjalan.", W // 2, 525, GREEN, self.small, True)
 
     def skip_hour(self):
+        self.play_action_sound("ui-click", .18)
         self.life.skip_hour()
         self.fishing = None
         self.wildlife.update(.1, self.obstacles("forest"), player_active=False)
@@ -491,8 +743,76 @@ class Game:
         self.notify("Cuaca: " + self.life.weather + (" (otomatis)" if weather == "Otomatis" else "."))
 
     def trade(self, item, buying, quantity=1):
+        quantity_before = self.life.bag.get(item, 0)
         self.notify(self.life.trade(item, buying, quantity))
-        self.life.save(self.save_path)
+        if self.life.bag.get(item, 0) != quantity_before:
+            self.play_action_sound("buy" if buying else "sell-coins", .34)
+        else:
+            self.play_action_sound("not-enough-money", .25)
+        self.save_current()
+
+    def use_healing_item(self):
+        health_before = self.life.health
+        message = self.life.heal()
+        self.notify(message)
+        success = self.life.health > health_before
+        self.play_action_sound("pickup-item" if success else "ui-error", .32 if success else .22)
+
+    def eat_from_bag(self):
+        food_before = self.life.bag["Makanan"]
+        message = self.life.eat()
+        self.notify(message)
+        success = self.life.bag["Makanan"] < food_before
+        self.play_action_sound("eat" if success else "ui-error", .35 if success else .22)
+
+    def pokemon_sale_value(self, pokemon_id):
+        detail = self.pokemon_data(pokemon_id) or {}
+        level = self.pokemon_level(pokemon_id)
+        base_xp = int(detail.get("base_experience", 60))
+        return max(20, min(450, base_xp // 3 + level * 4))
+
+    def sell_party_pokemon(self, pokemon_id):
+        pokemon_id = int(pokemon_id)
+        if self.shop_npc != "Danu" or not self.life.market_open:
+            self.notify("Pokémon hanya bisa dijual kepada Danu saat market buka.")
+            self.sell_pokemon_pending = None
+            return
+        if pokemon_id not in self.life.pokemon_party:
+            self.notify("Pokémon itu tidak lagi ada di party.")
+            self.sell_pokemon_pending = None
+            return
+        if len(self.life.pokemon_party) <= 1:
+            self.notify("Simpan setidaknya satu Pokémon di party.")
+            self.sell_pokemon_pending = None
+            return
+        if pokemon_id in self.life.pokemon_active:
+            self.notify("Keluarkan Pokémon dari tim aktif di Pokémon Center sebelum menjualnya.")
+            self.sell_pokemon_pending = None
+            return
+        if self.sell_pokemon_pending != pokemon_id:
+            self.sell_pokemon_pending = pokemon_id
+            self.notify("Tekan KONFIRMASI di kartu Pokémon untuk menyelesaikan penjualan.")
+            return
+        value = self.pokemon_sale_value(pokemon_id)
+        detail = self.pokemon_data(pokemon_id) or {}
+        name = detail.get("name", f"Pokémon #{pokemon_id}").title()
+        self.life.pokemon_party.remove(pokemon_id)
+        self.life.pokemon_active = [ident for ident in self.life.pokemon_active if ident != pokemon_id]
+        self.life.money += value
+        self.life.record_daily_quest("sell", 1)
+        self.save_current()
+        self.sell_pokemon_pending = None
+        self.center_selected = min(self.center_selected, len(self.life.pokemon_party) - 1)
+        self.notify(f"{name} dijual kepada Danu seharga {value} koin.")
+        self.play_action_sound("sell-coins", .4)
+
+    def check_daily_quest_rewards(self):
+        for quest in self.life.daily_quests:
+            if quest.get("claimed") and not quest.get("notified"):
+                quest["notified"] = True
+                self.daily_rewarded_today += quest["reward"]
+                self.notify(f"MISI SELESAI: {quest['title']} · +{quest['reward']} koin!")
+                self.save_current()
 
     def spawn_map_pokemon(self):
         if not self.pokedex.catalog:
@@ -518,7 +838,19 @@ class Game:
             [86, 87, 124, 220, 221, 225, 361, 459, 582, 613, 712],
             [16, 21, 83, 142, 149, 198, 333, 357, 381, 384, 385],
             [63, 92, 201, 302, 337, 338, 374, 436, 524, 599, 703, 800],
+            [1, 3, 46, 102, 154, 182, 251, 465, 492, 640, 721, 801],
+            [7, 9, 72, 73, 131, 199, 260, 382, 484, 593, 594, 730],
+            [147, 148, 149, 230, 330, 334, 373, 380, 384, 445, 483, 780, 887],
+            [150, 151, 249, 250, 251, 382, 383, 384, 385, 386, 493, 800, 807, 888, 1007, 1024],
         ]
+        # Every PokéAPI species belongs to one rotating habitat pool. The
+        # familiar, biome-specific species remain common; the wider pool lets
+        # the complete catalogue appear over future encounters and restocks.
+        roaming_pools = [[] for _ in RESERVE_ZONES]
+        for entry in entries:
+            ident = int(entry.get("id", 0))
+            if ident > 0:
+                roaming_pools[(12 + ident % 4) if ident in RARE_POKEMON_IDS else (ident * 7 + 3) % len(RESERVE_ZONES)].append(entry)
         # Put familiar, already-cached sprites in the entrance clearing first.
         for pokemon_id, (x, y) in zip((1, 15, 16), ((265, 665), (700, 880), (1060, 665))):
             item = by_id.get(pokemon_id)
@@ -527,14 +859,14 @@ class Game:
                                           "moving": False, "state": "idle", "timer": self.pokemon_rng.uniform(1, 4), "vx": 0, "vy": 0, "level": 5, "requested": False})
                 self.pokedex.request(pokemon_id)
         self.reserve_trainers = []
-        trainer_names = ["Mira", "Raka", "Sari", "Danu", "Laras", "Banyu", "Genta", "Salju", "Awan", "Kirana", "Batu", "Juara Arena"]
+        trainer_names = ["Mira", "Raka", "Sari", "Danu", "Laras", "Banyu", "Genta", "Salju", "Awan", "Kirana", "Batu", "Reruntuhan", "Penjaga Purba", "Penjaga Palung", "Penjaga Naga", "Juara Legenda"]
         for index, zone in enumerate(RESERVE_ZONES):
             cx, cy = zone["x"] + RESERVE_ZONE_W // 2, zone["y"] + RESERVE_ZONE_H // 2
             level = 5 + index * 4
             trainer = {"id": f"ranger-{index}", "name": trainer_names[index], "x": float(cx), "y": float(cy), "zone": index,
                        "team": [biome_ids[index][0], biome_ids[index][min(1, len(biome_ids[index])-1)], biome_ids[index][-1]], "level": level,
                        "target": (cx + 90, cy), "defeated": False, "paid": False, "cooldown": 0}
-            if index == 11:
+            if index == len(RESERVE_ZONES) - 1:
                 trainer["id"] = "arena-champion"
             self.reserve_trainers.append(trainer)
             pool = [by_id[i] for i in biome_ids[index] if i in by_id]
@@ -556,15 +888,19 @@ class Game:
                 else:
                     continue
                 choices = pool
-                if index >= 7 and self.pokemon_rng.random() < .2:
-                    rare = [entry for entry in entries if entry.get("id", 0) >= 600]
+                if roaming_pools[index] and self.pokemon_rng.random() < .24:
+                    choices = roaming_pools[index]
+                rare_chance = min(.72, max(0.0, (index - 5) * .075))
+                if index >= 5 and self.pokemon_rng.random() < rare_chance:
+                    rare = [entry for entry in entries if entry.get("id", 0) in RARE_POKEMON_IDS]
                     if rare:
                         choices = rare
                 item = self.pokemon_rng.choice(choices)
-                lv = level + self.pokemon_rng.randint(0, 5)
+                is_rare = int(item["id"]) in RARE_POKEMON_IDS
+                lv = level + self.pokemon_rng.randint(0, 5) + (5 if is_rare else 0)
                 self.wild_pokemon.append({"id": item["id"], "x": float(x), "y": float(y), "home_x": float(x), "home_y": float(y),
                                           "moving": False, "state": "idle", "timer": self.pokemon_rng.uniform(1, 4), "vx": 0, "vy": 0,
-                                          "level": lv, "requested": False, "zone": index})
+                                          "level": lv, "requested": False, "zone": index, "rare": is_rare})
 
     def active_pokemon_team(self):
         team = [int(ident) for ident in self.life.pokemon_active if int(ident) in self.life.pokemon_party][:3]
@@ -585,6 +921,9 @@ class Game:
         return platforms
 
     def begin_pokemon_battle(self, pokemon_id, trainer=None, wild=None):
+        if self.needs_depleted():
+            self.notify("Kebutuhan habis: gerak melambat dan duel terkunci. Makan, minum, atau tidur dulu.")
+            return
         pokemon_id = int(pokemon_id)
         team = self.active_pokemon_team()
         living = [ident for ident in team if self.life.pokemon_health.get(str(ident), 1) > 0]
@@ -605,8 +944,11 @@ class Game:
             opponent_lineup.insert(0, pokemon_id)
             opponent_lineup = opponent_lineup[:3]
         self.life.pokemon_seen = list(dict.fromkeys(self.life.pokemon_seen + [pokemon_id]))
-        self.life.save(self.save_path)
+        self.save_current()
+        arena_style = self.pokemon_rng.choice(("meadow", "water", "cave", "sky"))
+        battle_weather = self.pokemon_rng.choice(("Cerah", "Berawan", "Hujan", "Salju", "Badai"))
         self.battle = {"wild_id": pokemon_id, "opponent_lineup": opponent_lineup, "opponent_index": 0,
+                       "music_track": self.choose_battle_music(),
                        "player_id": living[0], "player_lineup": team, "phase": "Memuat Pokémon…",
                        "player_x": 350.0, "enemy_x": 760.0, "player_y": 0.0, "enemy_y": 0.0,
                        "player_vy": 0.0, "player_facing": 1, "player_cooldown": 0.0,
@@ -620,7 +962,7 @@ class Game:
                        "time_left": 60.0, "timeout": False, "fruit_timer": self.pokemon_rng.uniform(3.0, 6.0),
                        "fruits": [],
                        "platforms": self.random_battle_platforms(),
-                       "arena_style": self.pokemon_rng.choice(("meadow", "water", "cave", "sky")), "api_moves": [],
+                       "arena_style": arena_style, "battle_weather": battle_weather, "api_moves": [],
                        "intro": {"step": "player", "timer": 1.35, "index": 0, "cry_requested": False, "cry_played": False},
                        "rewarded": False}
         self.battle_sprite = self.team_sprite = None
@@ -648,6 +990,8 @@ class Game:
         return default
 
     def finish_battle(self, message):
+        if self.countdown_tts_channel:
+            self.countdown_tts_channel.stop()
         battle = self.battle or {}
         trainer = battle.get("trainer")
         wild = battle.get("wild")
@@ -666,7 +1010,7 @@ class Game:
                 message = f"{trainer['name']} kalah! +{reward} koin dan Pokémon mendapat pengalaman. " + message
             trainer["defeated"] = True
             trainer["cooldown"] = 35
-            self.life.save(self.save_path)
+            self.save_current()
         self.battle = None
         self.mode = "game"
         self.notify(message)
@@ -723,10 +1067,247 @@ class Game:
         pokemon_id = int(pokemon_id)
         sound = self.pokemon_sounds.get(pokemon_id)
         if sound:
+            # Prevent a cry loaded asynchronously from playing twice in one moment.
+            last_id, last_at = self._last_pokemon_cry
+            if last_id == pokemon_id and time.monotonic() - last_at < .45:
+                return True
             sound.play()
+            self._last_pokemon_cry = (pokemon_id, time.monotonic())
             return True
         self.pokedex.request_cry(pokemon_id)
         return False
+
+    def queue_pokemon_cry(self, pokemon_id):
+        """Play a cached cry now, or play it when the async PokéAPI request finishes."""
+        pokemon_id = int(pokemon_id)
+        if self.play_pokemon_cry(pokemon_id):
+            return True
+        if self.battle:
+            self.battle["queued_cry"] = pokemon_id
+        return False
+
+    def play_battle_sound(self, sound_name, volume=0.52):
+        sound = self.battle_sounds.get(sound_name)
+        if sound:
+            sound.set_volume(volume)
+            sound.play()
+
+    def play_action_sound(self, sound_name, volume=0.42):
+        """Load small local action sounds only when an action first needs them."""
+        if not pg.mixer.get_init():
+            return
+        choices = {
+            "wildlife-hurt": ("hurt_01.ogg", "hurt_02.ogg"),
+            "lion-call": ("roar_01.ogg", "roar_02.ogg"),
+        }.get(sound_name)
+        if choices:
+            filename = self.pokemon_rng.choice(choices)
+        else:
+            filename = {
+                "chicken": "chicken.ogg", "wildlife-hurt": "hurt_01.ogg",
+                "cook-sizzle": "cook-sizzle.wav", "stove-on": "stove-on.ogg",
+                "attack-swing": "scythe-swish.wav", "grunt_01": "grunt_01.ogg",
+                "grunt_02": "grunt_02.ogg",
+                "sleep": "sleep.wav",
+            }.get(sound_name, f"{sound_name}.wav")
+        path = ROOT / "assets" / "audio" / "sfx" / "actions" / filename
+        if not path.is_file():
+            path = ROOT / "assets" / "audio" / "sfx" / filename
+        if not path.is_file():
+            return
+        try:
+            sound = self.action_sounds.get(filename)
+            if sound is None:
+                sound = pg.mixer.Sound(str(path))
+                self.action_sounds[filename] = sound
+            sound.set_volume(volume)
+            sound.play()
+        except (pg.error, OSError):
+            return
+
+    def queue_action_sound(self, sound_name, delay, volume=0.42):
+        self.pending_action_sounds.append((time.monotonic() + delay, sound_name, volume))
+
+    def play_wildlife_call(self, species):
+        if species == "Singa":
+            self.play_action_sound("lion-call", .28)
+        elif species in ("Hyena", "Babi hutan"):
+            self.play_action_sound("grunt_01", .22)
+        elif species == "Gajah":
+            self.play_action_sound("grunt_02", .24)
+
+    def play_type_sound(self, move_type, ultimate=False):
+        sound_name = {
+            "fire": "fire", "water": "water", "ground": "earth", "rock": "earth",
+            "flying": "wind", "grass": "leaf", "bug": "leaf", "ice": "water",
+            "electric": "ultimate_charge", "psychic": "ultimate_charge", "ghost": "ultimate_charge",
+            "dragon": "fire", "poison": "ultimate_charge", "fairy": "ultimate_charge",
+            "steel": "punch", "fighting": "punch", "normal": "punch", "dark": "wind",
+        }.get(move_type, "punch")
+        self.play_battle_sound(sound_name, .62 if ultimate else .42)
+
+    @staticmethod
+    def valid_countdown_audio(path):
+        # A interrupted OS speech renderer can leave a valid header with no PCM.
+        # SDL_mixer may accept that file but crash when its empty Sound is played.
+        try:
+            with wave.open(str(path), "rb") as audio:
+                frames = audio.getnframes()
+                return (frames > 0 and len(audio.readframes(frames)) ==
+                        frames * audio.getnchannels() * audio.getsampwidth())
+        except (OSError, EOFError, wave.Error):
+            return False
+
+    def prepare_countdown_audio(self):
+        """Pre-render free OS TTS words to WAV so each cue can drive its own text."""
+        def worker():
+            try:
+                self.countdown_tts_dir.mkdir(parents=True, exist_ok=True)
+                cues = {
+                    "id": (("READY", "Siap"), ("3", "Tiga"), ("2", "Dua"), ("1", "Satu")),
+                    "en": (("READY", "Ready"), ("3", "Three"), ("2", "Two"), ("1", "One")),
+                }
+                for language, entries in cues.items():
+                    for key, phrase in entries:
+                        path = self.countdown_tts_dir / f"{language}-{key.lower()}.wav"
+                        if not self.valid_countdown_audio(path):
+                            # Keep earlier cache files intact; repair into a separate file.
+                            path = self.countdown_tts_dir / f"{language}-{key.lower()}-complete.wav"
+                        if not self.valid_countdown_audio(path):
+                            try:
+                                if sys.platform == "darwin":
+                                    command = ["say", "-o", str(path), "--file-format=WAVE",
+                                               "--data-format=LEI16@22050", "-r", "165", phrase]
+                                elif sys.platform.startswith("win"):
+                                    safe_path = str(path).replace("'", "''")
+                                    safe_phrase = phrase.replace("'", "''")
+                                    script = ("Add-Type -AssemblyName System.Speech; "
+                                              "$s=New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                                              f"$s.SetOutputToWaveFile('{safe_path}'); $s.Speak('{safe_phrase}'); $s.Dispose()")
+                                    command = ["powershell", "-NoProfile", "-Command", script]
+                                else:
+                                    engine = shutil.which("espeak-ng") or shutil.which("espeak")
+                                    if not engine:
+                                        continue
+                                    command = [engine, "-s", "165", "-w", str(path), phrase]
+                                subprocess.run(command, stdout=subprocess.DEVNULL,
+                                               stderr=subprocess.DEVNULL, timeout=20, check=True)
+                            except (OSError, subprocess.SubprocessError):
+                                continue
+                        if self.valid_countdown_audio(path):
+                            with self.countdown_tts_lock:
+                                self.countdown_tts_pending.append((language, key, path))
+            finally:
+                self.countdown_tts_loading = False
+
+        threading.Thread(target=worker, name="openrpg-countdown-tts", daemon=True).start()
+
+    def load_countdown_audio(self):
+        if not pg.mixer.get_init():
+            return
+        with self.countdown_tts_lock:
+            pending, self.countdown_tts_pending = self.countdown_tts_pending, []
+        for language, key, path in pending:
+            try:
+                if not self.valid_countdown_audio(path):
+                    continue
+                sound = pg.mixer.Sound(str(path))
+                if sound.get_length() > 0:
+                    self.countdown_tts_sounds[language, key] = sound
+            except (pg.error, OSError):
+                pass
+
+    @staticmethod
+    def make_victory_sound():
+        """Short, locally generated 8-bit fanfare; no download or paid asset."""
+        import array
+        sample_rate = pg.mixer.get_init()[0]
+        channels = pg.mixer.get_init()[2]
+        notes = ((784, .12), (988, .12), (1175, .12), (1568, .32))
+        samples = array.array("h")
+        for frequency, duration in notes:
+            count = int(sample_rate * duration)
+            for index in range(count):
+                envelope = min(1.0, index / 160, (count - index) / 350)
+                value = int(7500 * envelope * (1 if math.sin(math.tau * frequency * index / sample_rate) >= 0 else -1))
+                samples.extend([value] * channels)
+        return pg.mixer.Sound(buffer=samples.tobytes())
+
+    def speak_free_tts(self, phrase, rate=235):
+        """Use the installed OS speech synthesizer asynchronously (free, offline)."""
+        if sys.platform == "darwin":
+            command = ["say", "-r", str(rate), phrase]
+        elif sys.platform.startswith("win"):
+            script = "Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Speak($args[0])"
+            command = ["powershell", "-NoProfile", "-Command", script, phrase]
+        elif shutil.which("espeak"):
+            command = ["espeak", phrase]
+        elif shutil.which("spd-say"):
+            command = ["spd-say", phrase]
+        else:
+            return
+        with self._tts_lock:
+            self._tts_queue.append(command)
+            if self._tts_worker_running:
+                return
+            self._tts_worker_running = True
+        threading.Thread(target=self._tts_worker, daemon=True).start()
+
+    def _tts_worker(self):
+        while True:
+            with self._tts_lock:
+                if not self._tts_queue:
+                    self._tts_worker_running = False
+                    return
+                command = self._tts_queue.pop(0)
+            try:
+                subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               timeout=4, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+    def needs_depleted(self):
+        return any(self.life.stats.get(key, 0) <= 0 for key in ("Kenyang", "Minum", "Energi"))
+
+    def play_hit_cry(self, pokemon_id):
+        now = time.monotonic()
+        if now - self.last_hit_cry < .65:
+            return
+        self.last_hit_cry = now
+        self.play_battle_sound("punch", .22)
+        self.queue_pokemon_cry(pokemon_id)
+
+    def hospitality_order(self, option):
+        if option == "meal":
+            message = self.life.restaurant_meal()
+        elif option == "drink":
+            message = self.life.restaurant_drink()
+        else:
+            message = self.life.hotel_stay()
+        self.notify(message)
+        if message.startswith(("Makan selesai", "Minuman disajikan", "Menginap selesai")):
+            self.play_action_sound({"meal": "eat", "drink": "drink"}.get(option, "sleep"), .36)
+            self.mode = "game"
+
+    def draw_hospitality(self):
+        restaurant = self.hospitality_kind == "restaurant"
+        self.text("RESTORAN · PEMULIHAN" if restaurant else "HOTEL · ISTIRAHAT",
+                  242, 183, CREAM, self.medium)
+        self.text(f"Koin {self.life.money} · kebutuhan kosong membuat gerak lambat dan duel terkunci.",
+                  245, 230, GREEN, self.small)
+        if restaurant:
+            self.button("Makan hangat · 10 koin", (245, 292, 788, 56),
+                        lambda: self.hospitality_order("meal"), True)
+            self.button("Minum segar · 5 koin", (245, 361, 788, 56),
+                        lambda: self.hospitality_order("drink"))
+            self.text("Makan memulihkan kenyang, energi, dan sedikit kesehatan.",
+                      245, 445, MUTED, self.small)
+        else:
+            self.button("Menginap 8 jam · 15 koin", (245, 292, 788, 56),
+                        lambda: self.hospitality_order("hotel"), True)
+            self.text("Tidur memulihkan seluruh kebutuhan dan HP. Waktu dunia maju 8 jam.",
+                      245, 374, MUTED, self.small)
+        self.button("Kembali · Esc", (245, 592, 788, 44), self.back)
 
     def choose_encounter_battle(self):
         pokemon = self.encounter_target
@@ -745,6 +1326,8 @@ class Game:
     def update_reserve_pokemon(self, dt):
         obstacles = self.obstacles("reserve")
         for pokemon in self.wild_pokemon:
+            if pokemon.get("approaching") or abs(pokemon["x"]-self.life.x)>1400 or abs(pokemon["y"]-self.life.y)>1700:
+                continue
             pokemon["timer"] = max(0, pokemon.get("timer", 0) - dt)
             dx, dy = self.life.x - pokemon["x"], self.life.y - pokemon["y"]
             distance = math.hypot(dx, dy)
@@ -793,6 +1376,8 @@ class Game:
 
     def update_trainers(self, dt):
         for trainer in self.reserve_trainers + self.route_trainers:
+            if trainer.get("approaching"):
+                continue
             trainer["cooldown"] = max(0, trainer.get("cooldown", 0) - dt)
             if "scene" in trainer and trainer["scene"] != self.life.scene:
                 continue
@@ -820,6 +1405,10 @@ class Game:
 
     def pokemon_attack(self, heavy=False):
         b = self.battle
+        if self.needs_depleted():
+            if b:
+                b["phase"] = "Kebutuhan habis · duel terkunci sampai makan, minum, atau tidur."
+            return
         if not b or "wild_hp" not in b or b.get("result") or b.get("player_cooldown", 0) > 0:
             return
         if heavy and b.get("special_cooldown", 0) > 0:
@@ -859,6 +1448,7 @@ class Game:
     def _set_battle_vfx(self, move_type, move_name, ultimate=False, emoji=None):
         b = self.battle
         profile = TYPE_MOVES.get(move_type, TYPE_MOVES["normal"])
+        self.play_type_sound(move_type, ultimate=ultimate)
         b["vfx"] = {"type": profile[2], "color": profile[1], "name": move_name,
                     "timer": 1.85 if ultimate else .48, "duration": 1.85 if ultimate else .48,
                     "ultimate": ultimate, "emoji": emoji or TYPE_EMOJI.get(move_type, "💥"),
@@ -868,6 +1458,10 @@ class Game:
 
     def pokemon_type_attack(self, slot=0):
         b = self.battle
+        if self.needs_depleted():
+            if b:
+                b["phase"] = "Kebutuhan habis · duel terkunci sampai makan, minum, atau tidur."
+            return
         if not b or "wild_hp" not in b or b.get("result") or b.get("type_cooldown", 0) > 0:
             return
         team, enemy = self.pokemon_data(b["player_id"]), self.pokemon_data(b["wild_id"])
@@ -929,6 +1523,10 @@ class Game:
 
     def pokemon_ultimate(self):
         b = self.battle
+        if self.needs_depleted():
+            if b:
+                b["phase"] = "Kebutuhan habis · duel terkunci sampai makan, minum, atau tidur."
+            return
         if not b or "wild_hp" not in b or b.get("result"):
             return
         if b.get("super_meter", 0) < 100:
@@ -942,8 +1540,23 @@ class Game:
         ultimate_emoji = ULTIMATE_EMOJI.get(move_type, "✨")
         move_name = ultimate_emoji + " Ultimate " + TYPE_MOVES.get(move_type, TYPE_MOVES["normal"])[0]
         b["super_meter"] = 0
-        b["player_cooldown"] = 1.0
-        self._set_battle_vfx(move_type, move_name, ultimate=True, emoji=ultimate_emoji)
+        b["player_cooldown"] = .9
+        b["ultimate_cutin"] = {"timer": .78, "duration": .78, "move_type": move_type,
+                                "move_name": move_name, "emoji": ultimate_emoji,
+                                "pokemon_id": b["player_id"]}
+        b["phase"] = f"ULTIMATE! {move_name}"
+        self.play_battle_sound("ultimate_charge", .7)
+        self.queue_pokemon_cry(b["player_id"])
+
+    def _resolve_ultimate(self, cutin):
+        b = self.battle
+        if not b or b.get("result"):
+            return
+        team, enemy = self.pokemon_data(b["player_id"]), self.pokemon_data(b["wild_id"])
+        if not team or not enemy:
+            return
+        self._set_battle_vfx(cutin["move_type"], cutin["move_name"], ultimate=True,
+                             emoji=cutin["emoji"])
         damage = max(30, int(self.base_stat(team, "special-attack", 55) * .95 + self.pokemon_level(b["player_id"]) * 2))
         if b.get("enemy_guard_timer", 0) > 0:
             damage = int(damage * .72)
@@ -954,9 +1567,14 @@ class Game:
 
     def _win_battle(self):
         b = self.battle
+        self.queue_pokemon_cry(b["player_id"])
         trainer = b.get("trainer")
         lineup = b.get("opponent_lineup", [b["wild_id"]])
         has_next = bool(trainer and b.get("opponent_index", 0) + 1 < len(lineup))
+        if not has_next and not b.get("victory_announced"):
+            b["victory_announced"] = True
+            self.play_battle_sound("victory", .55)
+            self.speak_free_tts("Menang!" if self.life.language == "id" else "Victory!")
         if has_next:
             b["result"] = f"Ronde {b['opponent_index'] + 1}/{len(lineup)} dimenangkan · lawan berikutnya bersiap…"
             effect_time = (b.get("vfx") or {}).get("timer", 0.0)
@@ -969,9 +1587,12 @@ class Game:
         if not b.get("rewarded"):
             leveled, level = self.award_pokemon_xp(b["player_id"], max(12, b.get("wild_level", 5) * 3))
             b["rewarded"] = True
+            if not b.get("daily_battle_recorded"):
+                self.life.record_daily_quest("battle", 1)
+                b["daily_battle_recorded"] = True
             if leveled:
                 b["phase"] = f"Naik level! {self.pokemon_data(b['player_id'])['name'].title()} sekarang Lv. {level}."
-            self.life.save(self.save_path)
+            self.save_current()
 
     def advance_trainer_opponent(self):
         b = self.battle
@@ -1053,10 +1674,14 @@ class Game:
                 capture.update(phase="break", timer=0.0, duration=.58)
                 b["phase"] = "Oh! Pokémon berhasil keluar dari Poké Ball!"
         elif phase == "success":
+            self.play_action_sound("pickup-rare", .42)
             pokemon_id = b["wild_id"]
             self.life.pokemon_caught = list(dict.fromkeys(self.life.pokemon_caught + [pokemon_id]))
-            if len(self.life.pokemon_party) < 6 and pokemon_id not in self.life.pokemon_party:
+            self.life.record_daily_quest("catch", 1)
+            added_to_party = False
+            if pokemon_id not in self.life.pokemon_party:
                 self.life.pokemon_party.append(pokemon_id)
+                added_to_party = True
                 if len(self.life.pokemon_active) < 3 and pokemon_id not in self.life.pokemon_active:
                     self.life.pokemon_active.append(pokemon_id)
             self.life.pokemon_levels.setdefault(str(pokemon_id), b.get("wild_level", 5))
@@ -1064,9 +1689,10 @@ class Game:
             self.life.pokemon_health[str(pokemon_id)] = max(1, int(b.get("wild_max", 40) * .65))
             if b.get("wild") in self.wild_pokemon:
                 self.wild_pokemon.remove(b["wild"])
-            self.life.save(self.save_path)
+            self.save_current()
             name = (self.pokemon_data(pokemon_id) or {}).get("name", f"Pokémon #{pokemon_id}").title()
-            self.finish_battle(f"Berhasil menangkap {name}! Sudah tersimpan di Pokédex.")
+            placement = "Masuk party." if added_to_party else "Tersimpan di koleksi."
+            self.finish_battle(f"Berhasil menangkap {name}! {placement}")
             return True
         elif phase == "break":
             b["capture"] = None
@@ -1086,24 +1712,72 @@ class Game:
         if intro:
             if not self.pokemon_data(b["player_id"]) or not self.pokemon_data(b["wild_id"]):
                 return
-            sequence = ("player", "enemy", "3", "2", "1")
+            sequence = ("player", "enemy", "READY", "3", "2", "1")
             step = intro["step"]
-            if step in ("player", "enemy") and not intro.get("cry_requested"):
-                pokemon_id = b["player_id"] if step == "player" else b["wild_id"]
-                intro["cry_requested"] = True
-                if not intro.get("cry_played"):
-                    intro["cry_played"] = self.play_pokemon_cry(pokemon_id)
-            intro["timer"] -= dt
-            if intro["timer"] <= 0:
-                next_index = intro["index"] + 1
-                if next_index >= len(sequence):
-                    b["intro"] = None
-                    b["phase"] = "MULAI!"
-                else:
-                    next_step = sequence[next_index]
-                    intro.update(step=next_step, index=next_index,
-                                 timer=1.35 if next_step in ("player", "enemy") else .68,
-                                 cry_requested=False, cry_played=False)
+            if step in ("player", "enemy"):
+                if not intro.get("cry_requested"):
+                    pokemon_id = b["player_id"] if step == "player" else b["wild_id"]
+                    intro["cry_requested"] = True
+                    if not intro.get("cry_played"):
+                        intro["cry_played"] = self.play_pokemon_cry(pokemon_id)
+                intro["timer"] -= dt
+                if intro["timer"] > 0:
+                    return
+            else:
+                cue = intro["step"]
+                sound = self.countdown_tts_sounds.get((self.life.language, cue))
+                if not intro.get("cue_started"):
+                    if sound is not None and sound.get_length() <= 0:
+                        sound = None
+                    if sound is None:
+                        if self.countdown_tts_loading:
+                            return
+                        # Fallback on systems without an offline TTS file renderer.
+                        phrase = ({"READY": "Siap", "3": "Tiga", "2": "Dua", "1": "Satu"}
+                                  if self.life.language == "id" else
+                                  {"READY": "Ready", "3": "Three", "2": "Two", "1": "One"})[cue]
+                        self.speak_free_tts(phrase)
+                        intro["fallback_timer"] = .75
+                        intro["cue_started"] = True
+                        intro["fallback_cue"] = True
+                        return
+                    if self.countdown_tts_channel is None:
+                        intro.update(cue_started=True, fallback_cue=True, fallback_timer=sound.get_length())
+                        return
+                    self.countdown_tts_channel.play(sound)
+                    intro["cue_started"] = True
+                    intro["fallback_cue"] = False
+                    return
+                if intro.get("fallback_cue"):
+                    intro["fallback_timer"] -= dt
+                    if intro["fallback_timer"] > 0:
+                        return
+                elif self.countdown_tts_channel and self.countdown_tts_channel.get_busy():
+                    return
+            next_index = intro["index"] + 1
+            if next_index >= len(sequence):
+                b["intro"] = None
+                b["phase"] = "MULAI!"
+                return
+            next_step = sequence[next_index]
+            intro.update(step=next_step, index=next_index,
+                         timer=1.35 if next_step in ("player", "enemy") else 0.0,
+                         cry_requested=False, cry_played=False, cue_started=False)
+            return
+        if not b.get("result") and not b.get("capture"):
+            b["time_left"] = max(0.0, b.get("time_left", 60.0) - dt)
+            if b["time_left"] <= 0:
+                b["timeout"] = True
+                b["result"] = ("Waktu habis! O untuk mencoba menangkap · Esc untuk melewati duel"
+                                if not b.get("trainer") else "Waktu habis! Lawan tidak dapat ditangkap · Esc untuk melewati")
+                b["phase"] = "Batas duel 60 detik tercapai."
+                return
+        cutin = b.get("ultimate_cutin")
+        if cutin:
+            cutin["timer"] = max(0, cutin["timer"] - dt)
+            if cutin["timer"] <= 0:
+                b.pop("ultimate_cutin", None)
+                self._resolve_ultimate(cutin)
             return
         if b.get("next_opponent_timer") is not None:
             b["next_opponent_timer"] -= dt
@@ -1115,139 +1789,8 @@ class Game:
             return
         if b.get("result"):
             return
-        b["time_left"] = max(0.0, b.get("time_left", 60.0) - dt)
-        if b["time_left"] <= 0:
-            b["timeout"] = True
-            b["result"] = ("Waktu habis! O untuk mencoba menangkap · Esc untuk melewati duel"
-                            if not b.get("trainer") else "Waktu habis! Lawan tidak dapat ditangkap · Esc untuk melewati")
-            b["phase"] = "Batas duel 60 detik tercapai."
-            return
         keys = pg.key.get_pressed()
-        b["player_cooldown"] = max(0, b["player_cooldown"] - dt)
-        b["special_cooldown"] = max(0, b["special_cooldown"] - dt)
-        b["type_cooldown"] = max(0, b.get("type_cooldown", 0) - dt)
-        b["enemy_cooldown"] = max(0, b["enemy_cooldown"] - dt)
-        b["hit_flash"] = max(0, b["hit_flash"] - dt)
-        b["enemy_flash"] = max(0, b["enemy_flash"] - dt)
-        b["block_flash"] = max(0, b["block_flash"] - dt)
-        b["attack_flash"] = max(0, b["attack_flash"] - dt)
-        b["enemy_attack_flash"] = max(0, b.get("enemy_attack_flash", 0) - dt)
-        if keys[pg.K_LEFT]:
-            b["player_x"] -= 270 * dt
-        if keys[pg.K_RIGHT]:
-            b["player_x"] += 270 * dt
-        team = self.pokemon_data(b["player_id"]) or {}
-        player_types = {entry["type"]["name"] for entry in team.get("types", [])}
-        flying = "flying" in player_types
-        # The arena provides climb routes for every Pokémon; type only changes
-        # its battle moves, not whether the player can explore the platforms.
-        nearby_platform = min((platform for platform in b.get("platforms", [])
-                              if abs(b["player_x"] - platform["x"]) <= platform["width"] / 2 + 24),
-                             key=lambda platform: abs(b["player_x"] - platform["x"]), default=None)
-        if keys[pg.K_UP]:
-            jump_limit = nearby_platform["height"] if nearby_platform else (-175 if flying else -82)
-            b["player_y"] = max(jump_limit, b.get("player_y", 0) - 190 * dt)
-        elif keys[pg.K_DOWN]:
-            dive_limit = 42 if ("water" in player_types and b.get("arena_style") == "water") or "ground" in player_types else 0
-            b["player_y"] = min(dive_limit, b.get("player_y", 0) + 190 * dt)
-        elif not flying and b.get("player_y", 0) < 0:
-            standing = (nearby_platform and
-                        abs(b.get("player_y", 0) - nearby_platform["height"]) <= 12)
-            if standing:
-                b["player_y"] = nearby_platform["height"]
-            else:
-                b["player_y"] = min(0, b["player_y"] + 175 * dt)
-        if flying and b.get("player_y", 0) < -8:
-            b["super_meter"] = max(0, b.get("super_meter", 0) - .85 * dt)
-            if b["super_meter"] <= 0:
-                b["player_y"] = min(0, b["player_y"] + 150 * dt)
-        elif flying:
-            b["super_meter"] = min(100, b.get("super_meter", 0) + .22 * dt)
-        b["player_x"] = max(100, min(1170, b["player_x"]))
-        b["enemy_x"] = max(100, min(1170, b["enemy_x"]))
-        b["enemy_ai_timer"] = max(0, b.get("enemy_ai_timer", 0) - dt)
-        b["enemy_guard_timer"] = max(0, b.get("enemy_guard_timer", 0) - dt)
-        dx = b["player_x"] - b["enemy_x"]
-        direction_to_player = 1 if dx >= 0 else -1
-        gap_x = abs(dx)
-        if b["enemy_ai_timer"] <= 0:
-            if gap_x < 235 and b["enemy_cooldown"] <= .15:
-                # Once in range the opponent commits to attacks most of the
-                # time, with occasional guards or sidesteps to avoid looking robotic.
-                action = self.pokemon_rng.choices(("attack", "guard", "retreat", "strafe"),
-                                                   weights=(8, 2, 1, 2))[0]
-            elif gap_x >= 235:
-                # Commit to closing range instead of endlessly changing direction.
-                action = self.pokemon_rng.choices(("approach", "jump"), weights=(8, 2))[0]
-            else:
-                action = self.pokemon_rng.choices(("approach", "strafe", "retreat", "guard", "jump"),
-                                                   weights=(2, 3, 2, 2, 1))[0]
-            b["enemy_action"] = action
-            b["enemy_ai_timer"] = self.pokemon_rng.uniform(.48, 1.05)
-            if action in ("approach", "attack", "jump"):
-                offset = self.pokemon_rng.randint(105, 185) if action == "approach" else self.pokemon_rng.randint(85, 155)
-                b["enemy_target_x"] = b["player_x"] - direction_to_player * offset
-            elif action == "retreat":
-                b["enemy_target_x"] = b["enemy_x"] - direction_to_player * self.pokemon_rng.randint(95, 210)
-            elif action == "strafe":
-                b["enemy_target_x"] = b["enemy_x"] + self.pokemon_rng.choice((-1, 1)) * self.pokemon_rng.randint(80, 175)
-            else:
-                b["enemy_target_x"] = b["enemy_x"]
-            b["enemy_target_x"] = max(100, min(1170, b["enemy_target_x"]))
-            b["enemy_target_y"] = -self.pokemon_rng.randint(55, 115) if action == "jump" else 0
-            if action == "guard":
-                b["enemy_guard_timer"] = self.pokemon_rng.uniform(.45, .85)
-        action = b.get("enemy_action", "approach")
-        enemy_speed = {"approach": 150, "attack": 220, "retreat": 190, "strafe": 118,
-                       "guard": 36, "jump": 90, "recover": 22}.get(action, 90)
-        remaining_x = b.get("enemy_target_x", b["enemy_x"]) - b["enemy_x"]
-        b["enemy_x"] += max(-enemy_speed * dt, min(enemy_speed * dt, remaining_x))
-        b["enemy_x"] = max(100, min(1170, b["enemy_x"]))
-        b["enemy_y"] += (b.get("enemy_target_y", 0) - b["enemy_y"]) * min(1, dt * 2.2)
-        b["player_facing"] = 1 if b["player_x"] <= b["enemy_x"] else -1
-        gap_x = abs(b["enemy_x"] - b["player_x"])
-        gap_y = abs(b.get("enemy_y", 0) - b.get("player_y", 0))
-        if gap_x < 235 and gap_y < 115 and b["enemy_cooldown"] <= 0 and action != "guard":
-            block = keys[pg.K_LSHIFT] or keys[pg.K_RSHIFT]
-            enemy = self.pokemon_data(b["wild_id"])
-            team = self.pokemon_data(b["player_id"])
-            hurt = max(5, self.base_stat(enemy, "attack", 49) // self.pokemon_rng.choice((9, 11, 13)))
-            if b["player_y"] < -45:
-                hurt = 0
-                b["phase"] = "Lompatan menghindari serangan! Balas sekarang."
-            elif block:
-                hurt = max(1, hurt // 4)
-                b["block_flash"] = .28
-                b["phase"] = f"Blok berhasil! Hanya −{hurt} HP."
-            else:
-                b["hit_flash"] = .25
-                b["phase"] = f"Lawan menyerang! −{hurt} HP. Tahan Shift untuk blok."
-            # Give opponent attacks a clear lunge and an animated, aimed impact.
-            outcome = ""
-            self._set_battle_vfx("fighting", "🥊 Serangan lawan", emoji="🥊")
-            b["vfx"].update(start_x=b["enemy_x"], start_y=500 + b.get("enemy_y", 0),
-                             target_x=b["player_x"], target_y=500 + b.get("player_y", 0), owner="enemy")
-            b["vfx"]["timer"] = b["vfx"]["duration"] = .82
-            if outcome:
-                b["phase"] = outcome
-            b["enemy_attack_flash"] = .42
-            b["enemy_action"] = "recover"
-            b["enemy_ai_timer"] = self.pokemon_rng.uniform(.35, .65)
-            b["player_hp"] = max(0, b["player_hp"] - hurt)
-            self.life.pokemon_health[str(b["player_id"])] = b["player_hp"]
-            b["super_meter"] = min(100, b.get("super_meter", 0) + 12)
-            b["enemy_cooldown"] = self.pokemon_rng.uniform(1.0, 1.7)
-            if b["player_hp"] <= 0:
-                fallen_id = b["player_id"]
-                b["player_hp"] = 0
-                self.life.pokemon_health[str(fallen_id)] = 0
-                next_team = [ident for ident in self.active_pokemon_team()
-                             if ident != fallen_id and self.life.pokemon_health.get(str(ident), 1) > 0]
-                if next_team:
-                    self.switch_battle_pokemon(next_team[0], automatic=True)
-                else:
-                    b["result"] = "Tim aktif tumbang · pulihkan Pokémon di Pokémon Center · Esc kembali"
-                    b["phase"] = "Semua Pokémon aktif kehabisan HP."
+        self.update_fighter_sim(dt, keys)
         # Random fruits appear on the arena floor and can be collected by
         # walking into them. They restore health or shorten move cooldowns.
         b["fruit_timer"] -= dt
@@ -1270,6 +1813,8 @@ class Game:
                 else:
                     b["type_cooldown"] = 0
                     b["special_cooldown"] = 0
+                    for key in b.get("cooldowns", {}):
+                        b["cooldowns"][key] = max(0, b["cooldowns"][key] - 2.0)
                     b["phase"] = f"{fruit['emoji']} Buah cepat! Jurus siap dipakai."
             else:
                 remaining_fruits.append(fruit)
@@ -1294,6 +1839,11 @@ class Game:
                     except (pg.error, OSError, ValueError):
                         pass
                 sound = self.pokemon_sounds.get(value["id"])
+                if sound:
+                    sound.set_volume(self.life.cry_volume)
+                if sound and self.battle and self.battle.get("queued_cry") == value["id"]:
+                    self.battle.pop("queued_cry", None)
+                    self.play_pokemon_cry(value["id"])
                 if sound and self.mode == "encounter" and self.encounter_target and self.encounter_target["id"] == value["id"]:
                     sound.play()
                 if sound and self.mode == "battle" and self.battle and self.battle.get("intro"):
@@ -1347,8 +1897,8 @@ class Game:
             if value["image"]:
                 try:
                     image = pg.image.load(BytesIO(value["image"])).convert_alpha()
-                    self.poke_surfaces[ident] = pg.transform.scale(image, (96, 96))
-                    self.poke_battle_surfaces[ident] = pg.transform.scale(image, (136, 136))
+                    self.poke_surfaces[ident] = self.fit_pokemon_sprite(image, 96)
+                    self.poke_battle_surfaces[ident] = self.fit_pokemon_sprite(image, 136)
                 except (pg.error, ValueError):
                     pass
             detail = value["detail"]
@@ -1359,6 +1909,12 @@ class Game:
                 if wild_id in self.pokedex.details and player_id in self.pokedex.details:
                     self.prepare_battle()
 
+    @staticmethod
+    def fit_pokemon_sprite(surface, target_size):
+        scale = target_size / max(1, surface.get_width(), surface.get_height())
+        size = (max(1, round(surface.get_width() * scale)), max(1, round(surface.get_height() * scale)))
+        return pg.transform.scale(surface, size)
+
     def pokemon_surface(self, pokemon_id, target_size=96):
         frames = self.poke_animations.get(int(pokemon_id))
         if frames:
@@ -1366,16 +1922,12 @@ class Game:
             tick = int((self.frame / 60 * 1000) % max(1, total))
             for surface, duration in frames:
                 if tick < duration:
-                    scale = min(target_size / max(1, surface.get_width()),
-                                target_size / max(1, surface.get_height()))
-                    size = (max(1, round(surface.get_width() * scale)),
-                            max(1, round(surface.get_height() * scale)))
-                    return pg.transform.scale(surface, size)
+                    return self.fit_pokemon_sprite(surface, target_size)
                 tick -= duration
         ident = int(pokemon_id)
         surface = self.poke_surfaces.get(ident) if target_size <= 100 else self.poke_battle_surfaces.get(ident, self.poke_surfaces.get(ident))
-        if surface and surface.get_width() != target_size:
-            surface = pg.transform.scale(surface, (target_size, target_size))
+        if surface and max(surface.get_width(), surface.get_height()) != target_size:
+            surface = self.fit_pokemon_sprite(surface, target_size)
         if surface is None:
             return None
         surface = surface.copy()
@@ -1415,6 +1967,7 @@ class Game:
         if next_id not in self.active_pokemon_team() or self.life.pokemon_health.get(str(next_id), 1) <= 0:
             return False
         b["player_id"] = next_id
+        b.pop("player_appearance", None)
         b["player_lineup"] = self.active_pokemon_team()
         b.pop("player_hp", None)
         b.pop("player_max", None)
@@ -1458,6 +2011,7 @@ class Game:
         self.notify(status)
 
     def open_phone(self):
+        self.play_action_sound("menu-open", .24)
         self.phone_unread = False
         self.terminal.start()
         self.mode = "terminal"
@@ -1465,12 +2019,14 @@ class Game:
         pg.key.set_repeat(350, 35)
 
     def open_dex(self):
+        self.play_action_sound("inventory-open", .24)
         self.dex_query = ""
         self.dex_page = 0
         self.dex_selected = 1
         self.dex_detail = self.pokemon_data(1)
         self.pokedex.request_catalog()
         self.pokedex.request(1)
+        self.pokedex.request_species(1)
         self.mode = "dex"
         pg.key.start_text_input()
         pg.key.set_repeat(350, 35)
@@ -1480,6 +2036,7 @@ class Game:
             self.notify("Pusat Pokémon berada di bangunan putih-merah dekat pintu masuk suaka.")
             return
         self.center_selected = max(0, min(self.center_selected, len(self.life.pokemon_party) - 1))
+        self.play_action_sound("menu-open", .24)
         self.center_message = "Pemeriksaan siap. Pilih anggota tim di kiri."
         for pokemon_id in self.life.pokemon_party:
             self.pokedex.request(pokemon_id)
@@ -1509,7 +2066,7 @@ class Game:
         else:
             active.append(pokemon_id)
             self.center_message = "Pokémon ditambahkan ke tim aktif."
-        self.life.save(self.save_path)
+        self.save_current()
 
     def heal_pokemon_party(self):
         for pokemon_id in self.life.pokemon_party:
@@ -1520,8 +2077,9 @@ class Game:
                 continue
             maximum = self.base_stat(detail, "hp", 45) + self.pokemon_level(pokemon_id) * 2
             self.life.pokemon_health[str(pokemon_id)] = maximum
-        self.life.save(self.save_path)
+        self.save_current()
         self.center_message = "Tim dipulihkan penuh. Semangat, pelatih!"
+        self.play_action_sound("pickup-rare", .3)
 
     def evolution_target(self, pokemon_id):
         species = self.pokedex.species.get(int(pokemon_id))
@@ -1566,6 +2124,8 @@ class Game:
         return walk(chain.get("chain", {}))
 
     def evolve_selected(self):
+        if self.evolution_anim:
+            return
         pokemon_id = self.center_pokemon_id()
         if pokemon_id is None:
             return
@@ -1575,6 +2135,19 @@ class Game:
             self.center_message = f"{detail.get('name', 'Pokémon').title()} belum memenuhi syarat evolusi."
             return
         new_id, name = target
+        old_detail = self.pokemon_data(pokemon_id) or {"name": f"Pokémon #{pokemon_id}"}
+        self.evolution_anim = {"from": pokemon_id, "to": new_id, "name": name,
+                               "old_name": old_detail.get("name", "Pokémon"), "timer": 0.0, "duration": 4.8}
+        self.pokedex.request(new_id)
+        self.pokedex.request_species(new_id)
+        self.mode = "evolution"
+        self.center_message = "Cahaya evolusi menyelimuti Pokémon…"
+
+    def finish_evolution(self):
+        animation = self.evolution_anim
+        if not animation:
+            return
+        pokemon_id, new_id, name = animation["from"], animation["to"], animation["name"]
         self.life.pokemon_party = list(dict.fromkeys(new_id if value == pokemon_id else value for value in self.life.pokemon_party))
         self.life.pokemon_active = list(dict.fromkeys(new_id if value == pokemon_id else value for value in self.life.pokemon_active))[:3]
         self.life.pokemon_caught = list(dict.fromkeys(self.life.pokemon_caught + [new_id]))
@@ -1582,10 +2155,19 @@ class Game:
         self.life.pokemon_levels[str(new_id)] = self.pokemon_level(pokemon_id)
         self.life.pokemon_xp[str(new_id)] = self.life.pokemon_xp.pop(str(pokemon_id), 0)
         self.life.pokemon_health[str(new_id)] = self.life.pokemon_health.pop(str(pokemon_id), 1)
-        self.pokedex.request(new_id)
-        self.pokedex.request_species(new_id)
-        self.life.save(self.save_path)
+        self.save_current()
+        self.center_selected = self.life.pokemon_party.index(new_id)
+        self.evolution_anim = None
+        self.mode = "center"
+        self.play_action_sound("jingle-level-up", .4)
         self.center_message = f"Berhasil berevolusi menjadi {name.title()}!"
+
+    def update_evolution(self, dt):
+        if not self.evolution_anim:
+            return
+        self.evolution_anim["timer"] += min(dt, .05)
+        if self.evolution_anim["timer"] >= self.evolution_anim["duration"]:
+            self.finish_evolution()
 
     def outdoors(self):
         self.art.outdoors(self.canvas, self.life, self.frame)
@@ -1650,6 +2232,16 @@ class Game:
         self.hud(self.nearest())
 
     def world_characters(self):
+        for action, x, y, _ in self.stations():
+            if action not in ("restaurant", "hotel"):
+                continue
+            roof = (205, 116, 69) if action == "restaurant" else (79, 127, 174)
+            pg.draw.ellipse(self.canvas, (62, 70, 54), (x - 46, y + 17, 92, 16))
+            pg.draw.rect(self.canvas, (222, 207, 170), (x - 38, y - 30, 76, 49))
+            pg.draw.rect(self.canvas, (105, 74, 54), (x - 47, y - 39, 94, 15))
+            pg.draw.polygon(self.canvas, roof, [(x - 48, y - 33), (x, y - 58), (x + 48, y - 33)])
+            pg.draw.rect(self.canvas, (105, 74, 54), (x - 7, y - 11, 14, 30))
+            self.label("RESTORAN" if action == "restaurant" else "HOTEL", x, y - 65)
         station = self.nearest()
         if station:
             pg.draw.ellipse(self.canvas, (241, 227, 168), (station[1] - 24, station[2] - 7, 48, 17), 3)
@@ -1729,7 +2321,7 @@ class Game:
                     bob = int(math.sin(self.frame / 5 + obj["id"]) * 4) if obj.get("moving") else int(math.sin(self.frame / 13 + obj["id"]) * 2)
                     image = pg.transform.flip(sprite, True, False) if obj.get("vx", 0) >= 0 else sprite
                     if obj.get("state") != "hide":
-                        self.world_canvas.blit(image, (px - 26, py - 47 + bob))
+                        self.world_canvas.blit(image, image.get_rect(midbottom=(int(px), int(py - 3 + bob))))
                         if obj.get("state") == "flee" and int(self.frame / 12) % 2 == 0:
                             pg.draw.circle(self.world_canvas, (244, 231, 153), (int(px), int(py - 66 + bob)), 5)
                     elif int(self.frame / 15) % 2 == 0:
@@ -1737,7 +2329,8 @@ class Game:
                     if math.hypot(obj["x"] - self.life.x, obj["y"] - self.life.y) < 155 and obj.get("state") != "hide":
                         detail = self.pokemon_data(obj["id"]) or {}
                         name = detail.get("name", "Pokémon liar").title()
-                        tag = self.small.render(f"{name} · Lv.{obj.get('level', 5)}", True, CREAM)
+                        rarity = " · ★ RARE" if obj.get("rare") else ""
+                        tag = self.small.render(self.tr(f"{name} · Lv.{obj.get('level', 5)}{rarity}"), True, CREAM)
                         self.world_canvas.blit(tag, tag.get_rect(center=(int(px), int(py + 11))))
             elif kind == "trainer":
                 self.art.character(self.world_canvas, px, py, 1, 1.8, self.frame, True, "down", npc="Hunter")
@@ -1762,8 +2355,22 @@ class Game:
         for gate in self.reserve_gates():
             gx, gy = sx(gate["x"]), sy(gate["y"])
             if -80 < gx < W + 80 and 190 < gy < 592 + 135:
-                self.label("GERBANG · " + gate["target"]["name"], gx, gy - 30)
-        self.label("POKÉMON CENTER · E", sx(157), sy(690) - 99)
+                required = gate["required_level"]
+                if self.player_progress_level() < required:
+                    gate_label = f"TERKUNCI · Lv.{required} · {gate['target']['name']}"
+                else:
+                    gate_label = "GERBANG · " + gate["target"]["name"]
+                self.label(gate_label, gx, gy - 30)
+        for index, (cx, cy) in enumerate(RESERVE_CENTERS):
+            if -130 < sx(cx) < W + 130 and 180 < sy(cy) < H + 100:
+                self.label("POKÉMON CENTER · E", sx(cx), sy(cy) - 114)
+        zone = self.reserve_zone_at(self.life.x, self.life.y)
+        self.label("RESTORAN · E", sx(zone["x"] + 250), sy(zone["y"] + 1070) - 59)
+        self.label("HOTEL · E", sx(zone["x"] + 1030), sy(zone["y"] + 1070) - 59)
+        if not any(zone["x"] <= cx < zone["x"] + RESERVE_ZONE_W
+                   and zone["y"] <= cy < zone["y"] + RESERVE_ZONE_H for cx, cy in RESERVE_CENTERS):
+            self.label("POKÉMON CENTER · E", sx(zone["x"] + RESERVE_ZONE_W // 2),
+                       sy(zone["y"] + RESERVE_ZONE_H // 2 + 155) - 114)
         self.label("ARENA TANTANGAN", sx(1280), sy(800) - 150)
         self.label("< KEMBALI", sx(92), sy(800) - 26)
         if station:
@@ -1774,11 +2381,88 @@ class Game:
         self.hud(station)
 
     def reserve_zone_at(self, x, y):
-        col = max(0, min(3, int(x // RESERVE_ZONE_W)))
-        row = max(0, min(2, int(y // RESERVE_ZONE_H)))
-        return RESERVE_ZONES[row * 4 + col]
+        col = max(0, min(RESERVE_COLUMNS - 1, int(x // RESERVE_ZONE_W)))
+        row = max(0, min(RESERVE_ROWS - 1, int(y // RESERVE_ZONE_H)))
+        return RESERVE_ZONES[row * RESERVE_COLUMNS + col]
+
+    def update_location_audio(self):
+        """Switch to locally bundled music when the player changes location."""
+        if not pg.mixer.get_init():
+            return
+        if self.mode == "title":
+            if self._music_key is not None:
+                pg.mixer.music.fadeout(500)
+                self._music_key = None
+            return
+
+        music_dir = ROOT / "assets" / "audio" / "music"
+        scene = self.life.scene
+        track = {
+            "outdoors": "meadow.ogg", "house": "home.ogg", "bedroom": "bedroom.ogg",
+            "forest": "forest.ogg", "market": "market.ogg", "coast": "ocean.ogg",
+            "mountain": "adventure.ogg",
+        }.get(scene, "adventure.ogg")
+        zone_name = ""
+        if scene == "reserve":
+            zone = self.reserve_zone_at(self.life.x, self.life.y)
+            zone_name = zone["biome"]
+            biome_tracks = {
+                "meadow": "meadow.ogg", "forest": "forest.ogg", "desert": "desert.ogg",
+                "coast": "ocean.ogg", "swamp": "swamp.ogg", "cave": "cavern.ogg",
+                "badlands": "ruins.ogg", "mountain": "adventure.ogg", "volcano": "tavern.ogg",
+                "snow": "snow.ogg", "sky": "sky.ogg", "crystal": "mystical.ogg",
+                "ancient_forest": "fairy.ogg", "deepsea": "ocean.ogg",
+                "dragon_valley": "tavern.ogg", "legendary_ruins": "cavern.ogg",
+            }
+            track = biome_tracks.get(zone_name, "adventure.ogg")
+
+        if self.mode == "battle":
+            track = (self.battle or {}).get("music_track", "battle.wav")
+        path = music_dir / track
+        music_key = f"battle:{track}" if self.mode == "battle" else f"{scene}:{zone_name}:{track}"
+        if path.is_file() and music_key != self._music_key:
+            try:
+                pg.mixer.music.load(str(path))
+                pg.mixer.music.play(-1, fade_ms=650)
+                pg.mixer.music.set_volume((.36 if self.mode == "battle" else .28) * self.life.music_volume)
+                self._music_key = music_key
+            except pg.error:
+                pass
+
+        in_market = scene == "market" and self.mode not in ("title", "battle", "dead") and self._market_ambience is not None and self._market_ambience_channel is not None
+        if in_market and not self._market_ambience_channel.get_busy():
+            self._market_ambience_channel.play(self._market_ambience, loops=-1, fade_ms=500)
+        elif not in_market and self._market_ambience_channel is not None and self._market_ambience_channel.get_busy():
+            self._market_ambience_channel.fadeout(650)
+
+        in_forest = scene == "forest" and self.mode not in ("title", "battle", "dead")
+        if in_forest and self._forest_ambience_channel is not None:
+            if self._forest_ambience is None:
+                try:
+                    self._forest_ambience = pg.mixer.Sound(str(ROOT / "assets" / "audio" / "ambience" / "forest_birds.ogg"))
+                    self._forest_ambience_channel.set_volume(.10)
+                except (pg.error, OSError):
+                    self._forest_ambience = None
+            if self._forest_ambience is not None and not self._forest_ambience_channel.get_busy():
+                self._forest_ambience_channel.play(self._forest_ambience, loops=-1, fade_ms=700)
+        elif self._forest_ambience_channel is not None and self._forest_ambience_channel.get_busy():
+            self._forest_ambience_channel.fadeout(700)
+
+    def choose_battle_music(self):
+        """Pick one locally bundled battle loop, avoiding the last battle's track."""
+        music_dir = ROOT / "assets" / "audio" / "music"
+        candidates = [name for name in (
+            "battle.wav", "adventure.ogg", "tavern.ogg", "ruins.ogg", "mystical.ogg",
+        ) if (music_dir / name).is_file()]
+        if not candidates:
+            return "battle.wav"
+        choices = [name for name in candidates if name != self._last_battle_track] or candidates
+        track = self.pokemon_rng.choice(choices)
+        self._last_battle_track = track
+        return track
 
     def open_global_map(self):
+        self.play_action_sound("menu-open", .24)
         if not self.pokedex.catalog:
             self.pokedex.request_catalog()
         elif not self.wild_pokemon:
@@ -1795,7 +2479,7 @@ class Game:
         self.box((36, 22, 1208, 755), INK, 22)
         self.text("PETA DUNIA", 66, 40, CREAM, self.medium)
         scene_name = {"outdoors": "Rumah & peternakan", "house": "Rumah", "bedroom": "Kamar", "forest": "Hutan", "market": "Market", "reserve": self.reserve_zone_at(self.life.x, self.life.y)["name"], "coast": "Pantai", "mountain": "Pegunungan"}.get(self.life.scene, self.life.scene.title())
-        self.text(f"12 bioma · habitat Pokémon · posisi kamu: {scene_name} · klik area untuk fokus", 68, 84, MUTED, self.small)
+        self.text(f"{len(RESERVE_ZONES)} bioma · {len(self.pokedex.catalog)} spesies · posisi: {scene_name} · klik untuk fokus", 68, 84, MUTED, self.small)
         board = pg.Rect(66, 119, 1148, 564)
         pg.draw.rect(self.canvas, (22, 37, 34), board, border_radius=0)
         clip = self.canvas.get_clip()
@@ -1812,17 +2496,30 @@ class Game:
             pg.draw.rect(self.canvas, zone["color"], rect)
             pg.draw.rect(self.canvas, (225, 229, 204), rect, 2)
             if rect.width > 78 and rect.height > 34:
-                title = self.small.render(zone["name"], True, CREAM)
-                chip = title.get_rect(center=rect.center).inflate(17, 11)
+                title = self.small.render(self.tr(zone["name"]), True, CREAM)
+                zone_index = RESERVE_ZONES.index(zone)
+                needed = RESERVE_LEVEL_REQUIREMENTS[zone_index]
+                access = ("TERBUKA" if self.player_progress_level() >= needed else f"TERKUNCI · Lv.{needed}")
+                access_surface = self.tiny.render(self.tr(access), True, GREEN if self.player_progress_level() >= needed else retro.GOLD)
+                chip = pg.Rect(0, 0, max(title.get_width(), access_surface.get_width()) + 20,
+                               title.get_height() + access_surface.get_height() + 13)
+                chip.center = rect.center
                 pg.draw.rect(self.canvas, (25, 43, 38), chip, border_radius=0)
-                self.canvas.blit(title, title.get_rect(center=rect.center))
+                self.canvas.blit(title, title.get_rect(midtop=(rect.centerx, chip.top + 4)))
+                self.canvas.blit(access_surface, access_surface.get_rect(midtop=(rect.centerx, chip.top + 7 + title.get_height())))
         # Trails and streams are visible as simple global route lines.
-        for y in (790, 2390, 3990):
+        for y in range(790, RESERVE_HEIGHT, RESERVE_ZONE_H // 2):
             py = board.centery + (y - self.map_center[1]) * sy
             pg.draw.line(self.canvas, (219, 165, 105), (board.left, py), (board.right, py), max(1, round(4 * self.map_zoom)))
-        for x in (1240, 2520, 3800):
+        for x in range(1240, RESERVE_WIDTH, RESERVE_ZONE_W):
             px = board.centerx + (x - self.map_center[0]) * sx
             pg.draw.line(self.canvas, (219, 165, 105), (px, board.top), (px, board.bottom), max(1, round(4 * self.map_zoom)))
+        for cx, cy in RESERVE_CENTERS:
+            px = board.centerx + (cx - self.map_center[0]) * sx
+            py = board.centery + (cy - self.map_center[1]) * sy
+            if board.collidepoint(px, py):
+                pg.draw.rect(self.canvas, (247, 224, 183), (round(px) - 5, round(py) - 5, 10, 10))
+                pg.draw.rect(self.canvas, (205, 79, 75), (round(px) - 4, round(py) - 7, 8, 5))
         for wild in self.wild_pokemon:
             px = board.centerx + (wild["x"] - self.map_center[0]) * sx
             py = board.centery + (wild["y"] - self.map_center[1]) * sy
@@ -1836,8 +2533,8 @@ class Game:
                 pg.draw.circle(self.canvas, (205, 79, 75), (round(px), round(py)), 5)
         self.canvas.set_clip(clip)
         self.box((82, 697, 1112, 47), (46, 65, 55), 12)
-        self.text(f"Zoom {round(self.map_zoom * 100)}%   ·   {len(self.wild_pokemon)} Pokémon dispersal", 101, 710, GREEN, self.small)
-        self.text("Panah geser / roda +/- zoom / klik fokus / M kembali", 685, 710, CREAM, self.small)
+        self.text(f"Zoom {round(self.map_zoom * 100)}% · {len(self.wild_pokemon)} aktif · {len(self.pokedex.catalog)} spesies", 101, 710, GREEN, self.small)
+        self.text("Panah geser / +/- zoom / Tab tombol / M kembali", 685, 710, CREAM, self.small)
         self.button("Jelajahi suaka", (914, 43, 194, 34), self.enter_reserve_from_map, True)
         self.button("−", (1127, 43, 34, 34), lambda: self.change_map_zoom(1 / 1.25))
         self.button("+", (1168, 43, 34, 34), lambda: self.change_map_zoom(1.25))
@@ -1851,12 +2548,12 @@ class Game:
             self.transition("reserve", 100, 800)
         if not self.wild_pokemon:
             self.spawn_map_pokemon()
-        self.notify("Suaka terbuka · 12 bioma dan habitat Pokémon tersebar di seluruh peta.")
+        self.notify(f"Suaka terbuka · {len(RESERVE_ZONES)} bioma dan habitat Pokémon tersebar di seluruh peta.")
 
     def hud(self, station):
         self.box((24, 18, 1232, 113), INK, 15)
         self.text("OPENRPG", 44, 30, CREAM, self.medium)
-        location = {"outdoors": "Rumah & peternakan", "house": "Ruang keluarga", "bedroom": "Kamar", "forest": "Hutan liar", "market": "Market", "reserve": "Suaka Pokémon · 12 bioma", "coast": "Pantai pasang surut", "mountain": "Pegunungan kabut"}[self.life.scene]
+        location = {"outdoors": "Rumah & peternakan", "house": "Ruang keluarga", "bedroom": "Kamar", "forest": "Hutan liar", "market": "Market", "reserve": f"Suaka Pokémon · {len(RESERVE_ZONES)} bioma", "coast": "Pantai pasang surut", "mountain": "Pegunungan kabut"}[self.life.scene]
         self.text(location, 45, 64, MUTED, self.tiny)
         self.text(f"${self.life.money} / {'KUDA' if self.life.mounted else 'JALAN'}", 45, 92, retro.GOLD, self.small)
         minute = int(self.life.minutes)
@@ -1879,6 +2576,7 @@ class Game:
         if self.phone_unread:
             self.text("HP · PESAN BARU", 985, 61, GREEN, self.small)
         if self.mode == "game":
+            self.button("Misi · J", (956, 81, 112, 35), lambda: self.open_overlay("daily_quests"))
             self.button("Cuaca · C", (1090, 81, 145, 35), lambda: self.open_overlay("weather"))
         self.box((24, 727, 1232, 54), INK, 12)
         self.text("WASD JALAN / T +1 JAM / M PETA", 44, 743, MUTED, self.tiny)
@@ -1900,16 +2598,43 @@ class Game:
             prompt = "E · TARIK SEKARANG!" if age >= 2.5 else "Tunggu ikan menggigit..."
         prompt = prompt if len(prompt) < 62 else prompt[:59] + "…"
         self.text(prompt, 648, 756, GREEN, self.small, True)
-        self.text("P POKEDEX / F1 BANTUAN / ESC MENU", 990, 743, MUTED, self.tiny)
+        self.draw_bag_icon(1007, 754, 18)
+        self.text("I TAS", 1022, 743, MUTED, self.tiny)
+        self.draw_pokedex_icon(1085, 754, 18)
+        self.text("P DEX", 1100, 743, MUTED, self.tiny)
+        self.text("F1 / ESC", 1185, 743, MUTED, self.tiny, True)
         if self.life.scene == "forest" and self.wildlife.events and time.monotonic() >= self.toast_until:
             self.text(self.wildlife.events[-1], 40, 681, CREAM, self.small)
-        if time.monotonic() < self.toast_until:
+        if self.mode not in ("center", "battle", "daily_quests") and time.monotonic() < self.toast_until:
             width = min(1170, self.font.size(self.toast)[0] + 40)
             self.box(((W - width) / 2, 672, width, 41), CREAM, 10)
             self.text(self.toast, W / 2, 692, center=True)
 
     def open_overlay(self, mode):
+        self.play_action_sound("menu-open", .24)
         self.mode = mode
+
+    def open_settings(self):
+        self.settings_return_mode = self.mode
+        self.mode = "settings"
+
+    def set_language(self, language):
+        if language not in ("id", "en"):
+            return
+        self.life.language = language
+        self.save_current()
+        self.notify("Bahasa diterapkan dan disimpan.")
+
+    def draw_settings(self):
+        self.text("Pengaturan Bahasa", 242, 183, CREAM, self.medium)
+        self.text("Pilih bahasa permainan", 245, 230, MUTED, self.small)
+        self.button("Bahasa Indonesia", (245, 290, 375, 110), lambda: self.set_language("id"),
+                    self.life.language == "id")
+        self.button("English", (658, 290, 375, 110), lambda: self.set_language("en"),
+                    self.life.language == "en")
+        self.text("Bahasa berlaku untuk menu, HUD, misi, Pokédex, dan pesan permainan.",
+                  245, 454, MUTED, self.small)
+        self.button("Kembali · Esc", (245, 592, 788, 44), self.back, True)
 
     def title(self):
         self.outdoors()
@@ -1922,6 +2647,7 @@ class Game:
                 pg.draw.rect(self.canvas, retro.EDGE, (x, y, 2, 2))
         self.text("OPENRPG", W / 2 + 4, 119, retro.EDGE, self.logo_font, True)
         self.text("OPENRPG", W / 2, 115, retro.GOLD, self.logo_font, True)
+        self.button("Pengaturan / Settings", (978, 31, 260, 38), self.open_settings)
         self.text("-  8-BIT ADVENTURE  -", W / 2, 57, GREEN, self.small, True)
         self.text("JELAJAHI DUNIA. LANJUTKAN IDEMU.", W / 2, 174, GREEN, self.medium, True)
         self.text("Pilih teman untuk menjalani hari", W / 2, 236, CREAM, center=True)
@@ -1956,32 +2682,44 @@ class Game:
         veil = pg.Surface((W, H), pg.SRCALPHA)
         veil.fill((18, 29, 23, 205)); self.canvas.blit(veil, (0, 0))
         self.box((205, 151, 870, 507), INK, 18)
-        if self.mode == "phone":
+        if self.mode == "settings":
+            self.draw_settings()
+        elif self.mode == "phone":
             self.draw_phone()
         elif self.mode == "dex":
             self.draw_dex()
         elif self.mode == "center":
             self.draw_center()
+        elif self.mode == "hospitality":
+            self.draw_hospitality()
+        elif self.mode == "daily_quests":
+            self.draw_daily_quests()
         elif self.mode == "battle":
             self.draw_pokemon_battle()
+        elif self.mode == "dead":
+            self.draw_dead_screen()
+        elif self.mode == "evolution":
+            self.draw_evolution()
         elif self.mode == "encounter":
             self.draw_encounter()
         elif self.mode == "pokemon_info":
             self.draw_pokemon_info()
         elif self.mode == "inventory":
-            self.text("Inventory", 242, 183, CREAM, self.medium)
-            self.text(f"Koin {self.life.money}  ·  HP {int(self.life.health)}/100  ·  Buruan {self.life.kills}", 453, 189, GREEN)
+            self.draw_bag_icon(250, 198, 26)
+            self.text("TAS & INVENTARIS", 272, 183, CREAM, self.medium)
+            self.text(f"Koin {self.life.money}  ·  HP {int(self.life.health)}/100  ·  Buruan {self.life.kills}", 245, 222, GREEN, self.small)
             for i, (name, count) in enumerate(self.life.bag.items()):
                 x, y = 248 + (i // 6) * 220, 251 + (i % 6) * 44
-                self.box((x - 8, y - 7, 198, 36), (48, 64, 52), 5)
-                self.text(name, x, y, CREAM if count else MUTED, self.small)
-                self.text(f"x {count}", x + 131, y, GREEN if count else MUTED, self.small)
+                self.box((x - 8, y - 7, 204, 36), (48, 64, 52), 5)
+                self.draw_item_icon(name, x + 11, y + 10)
+                self.text(name, x + 29, y, CREAM if count else MUTED, self.small)
+                self.text(f"×{count}", x + 163, y, GREEN if count else MUTED, self.small)
             self.text("Pasang senjata", 721, 245, CREAM)
             self.button("Tombak · 1", (716, 285, 317, 43), lambda: self.notify(self.life.equip("Tombak")), self.life.weapon == "Tombak")
             self.button("Busur · 2", (716, 337, 317, 43), lambda: self.notify(self.life.equip("Busur")), self.life.weapon == "Busur")
             self.button("Lepas senjata · 3", (716, 389, 317, 43), lambda: self.notify(self.life.equip("")))
-            self.button("Pakai obat · H", (716, 441, 317, 43), lambda: self.notify(self.life.heal()))
-            self.button("Makan bekal", (716, 493, 317, 43), lambda: self.notify(self.life.eat()))
+            self.button("Pakai obat · H", (716, 441, 317, 43), self.use_healing_item)
+            self.button("Makan bekal", (716, 493, 317, 43), self.eat_from_bag)
             self.text("Beli senjata di market. Busur memerlukan panah.", 248, 552, MUTED, self.small)
             self.button("Kembali · Esc / I", (245, 592, 788, 44), self.back, True)
         elif self.mode == "shop":
@@ -2017,10 +2755,11 @@ class Game:
             self.text("Istirahat sebentar", 242, 183, CREAM, self.medium)
             self.text("Dunia dijeda. Terminal dan AI tetap berjalan.", 245, 251, MUTED)
             self.button("Lanjut bermain", (245, 316, 788, 49), self.back, True)
-            self.button("Ganti karakter", (245, 377, 788, 49), self.to_title)
+            self.button("Profil / New Game / Load", (245, 377, 788, 49), self.to_title)
             self.button("Simpan & keluar", (245, 438, 788, 49), self.quit)
+            self.button("Pengaturan / Settings", (245, 499, 788, 43), self.open_settings)
             self.text("Keluar aplikasi menutup terminal dan pekerjaan dalam sesi tersebut.", 245, 537, CREAM, self.small)
-        if time.monotonic() < self.toast_until:
+        if self.mode not in ("center", "battle", "daily_quests") and time.monotonic() < self.toast_until:
             width = min(1170, self.font.size(self.toast)[0] + 40)
             self.box(((W - width) / 2, 678, width, 39), CREAM, 10)
             self.text(self.toast, W / 2, 697, center=True)
@@ -2044,6 +2783,27 @@ class Game:
         self.button("Buka Terminal.app", (511, 624, 270, 40), self.open_native_terminal)
         self.button("Tutup · B / Esc", (792, 624, 241, 40), self.back)
 
+    def draw_daily_quests(self):
+        self.life.ensure_daily_quests()
+        self.text(f"MISI HARIAN · HARI {self.life.day:02}", 242, 183, CREAM, self.medium)
+        self.text("Selesaikan kegiatan hari ini untuk mendapat koin bonus.", 245, 226, MUTED, self.small)
+        for index, quest in enumerate(self.life.daily_quests):
+            y = 276 + index * 91
+            self.box((245, y, 788, 76), (29, 39, 36), 8, (69, 91, 74))
+            self.text(quest["title"], 263, y + 11, CREAM, self.small)
+            progress = int(quest.get("progress", 0))
+            target = int(quest["target"])
+            complete = quest.get("claimed", False)
+            self.text("SELESAI" if complete else f"{progress}/{target}", 263, y + 43,
+                      GREEN if complete else MUTED, self.tiny)
+            retro.meter(self.canvas, (355, y + 46, 390, 10), progress, target,
+                        GREEN if complete else retro.GOLD)
+            self.text(f"+{quest['reward']} KOIN", 875, y + 28,
+                      retro.GOLD if complete else CREAM, self.small, True)
+        self.text(f"Tim: {len(self.life.pokemon_party)}/6 · Aktif: {len(self.life.pokemon_active)}/3",
+                  245, 558, MUTED, self.small)
+        self.button("Kembali · Esc / J", (245, 592, 788, 44), self.back, True)
+
     def dex_entries(self):
         query = self.dex_query.lower().strip()
         return [entry for entry in self.pokedex.catalog if not query or query in entry["name"].lower() or query == str(entry["id"])]
@@ -2052,12 +2812,30 @@ class Game:
         self.dex_selected = int(pokemon_id)
         self.dex_detail = self.pokemon_data(self.dex_selected)
         self.pokedex.request(self.dex_selected)
+        self.pokedex.request_species(self.dex_selected)
+        entries = self.dex_entries()
+        selected_index = next((i for i, item in enumerate(entries)
+                               if item["id"] == self.dex_selected), None)
+        if selected_index is not None:
+            self.dex_page = selected_index // 8
+
+    def move_dex_selection(self, offset):
+        entries = self.dex_entries()
+        if not entries:
+            return
+        current = next((i for i, item in enumerate(entries)
+                        if item["id"] == self.dex_selected), self.dex_page * 8)
+        target = max(0, min(len(entries) - 1, current + offset))
+        self.select_dex(entries[target]["id"])
 
     def draw_dex(self):
-        self.text("POKÉDEX · SEMUA SPESIES", 242, 183, CREAM, self.medium)
-        self.text(f"{len(self.life.pokemon_caught)} tertangkap · {len(self.life.pokemon_seen)} terlihat · {len(self.pokedex.catalog)} di katalog", 638, 190, GREEN, self.small)
-        self.box((245, 220, 788, 38), (29, 39, 36), 7)
+        self.draw_pokedex_icon(252, 198, 26)
+        self.text("POKÉDEX · SEMUA SPESIES", 274, 183, CREAM, self.medium)
+        self.text(f"{len(self.life.pokemon_caught)} tertangkap · {len(self.life.pokemon_seen)} terlihat · {len(self.pokedex.catalog)} spesies", 651, 190, GREEN, self.small)
+        self.box((245, 220, 470, 38), (29, 39, 36), 7)
         self.text("Cari nama / nomor: " + self.dex_query + "▏", 257, 228, GREEN, self.small)
+        self.button(f"Beli 5 Poké Ball · {BUY['Pokeball'] * 5} koin", (729, 220, 304, 38),
+                    lambda: self.trade("Pokeball", True, 5))
         entries = self.dex_entries()
         start = self.dex_page * 8
         visible = entries[start:start + 8]
@@ -2065,8 +2843,15 @@ class Game:
             y = 269 + row * 39
             selected = item["id"] == self.dex_selected
             self.box((245, y, 390, 35), (69, 91, 68) if selected else (43, 57, 49), 5)
+            self.pokedex.request(item["id"])
+            sprite = self.pokemon_surface(item["id"], 27)
+            if sprite:
+                self.canvas.blit(sprite, (252, y + 4))
+            else:
+                pg.draw.rect(self.canvas, (70, 92, 77), (253, y + 6, 24, 23))
+                self.text("…", 265, y + 8, MUTED, self.tiny, True)
             status = "●" if item["id"] in self.life.pokemon_caught else "○" if item["id"] in self.life.pokemon_seen else "·"
-            self.text(f"{status}  #{item['id']:04}  {item['name'].title()}", 258, y + 6, CREAM if selected else MUTED, self.small)
+            self.text(f"{status} #{item['id']:04} {item['name'].title()}", 286, y + 6, CREAM if selected else MUTED, self.small)
             self.buttons.append((pg.Rect(245, y, 390, 35), lambda ident=item["id"]: self.select_dex(ident)))
         if not self.pokedex.catalog:
             self.text("Mengunduh katalog resmi PokéAPI…", 264, 320, GREEN)
@@ -2077,9 +2862,10 @@ class Game:
         detail = self.dex_detail
         if detail and detail.get("id") == self.dex_selected:
             ident = detail["id"]
+            species = self.pokedex.species.get(ident)
             sprite = self.poke_surfaces.get(ident)
             if sprite:
-                self.canvas.blit(sprite, (769, 282))
+                self.canvas.blit(sprite, sprite.get_rect(center=(814, 327)))
             name = detail.get("name", "Pokémon").title()
             self.text(f"#{ident:04} {name}", 851, 392, CREAM, self.medium, True)
             types = " · ".join(t["type"]["name"].title() for t in detail.get("types", []))
@@ -2087,7 +2873,38 @@ class Game:
             self.text("Tertangkap" if ident in self.life.pokemon_caught else "Belum tertangkap", 851, 465, MUTED, center=True)
         else:
             self.text("Pilih spesies untuk memuat data dan sprite.", 840, 387, MUTED, self.small, True)
-        self.text("Gambar tersimpan untuk akses offline", 659, 555, MUTED, self.small)
+        if detail and detail.get("id") == self.dex_selected:
+            abilities = ", ".join(a.get("ability", {}).get("name", "").replace("-", " ").title()
+                                   for a in detail.get("abilities", []))
+            height = detail.get("height")
+            weight = detail.get("weight")
+            dimensions = (f"Tinggi {height / 10:.1f} m · Berat {weight / 10:.1f} kg"
+                          if isinstance(height, (int, float)) and isinstance(weight, (int, float))
+                          else "Memuat data ukuran…")
+            ability_label = f"Kemampuan: {abilities}" if abilities else "Kemampuan: memuat…"
+            self.text(dimensions, 840, 475, MUTED, self.tiny, True)
+            self.text(ability_label[:50], 650, 492, CREAM, self.tiny)
+            stat_labels = {"hp": "HP", "attack": "ATK", "defense": "DEF",
+                           "special-attack": "SP.A", "special-defense": "SP.D", "speed": "SPD"}
+            for index, stat in enumerate(detail.get("stats", [])[:6]):
+                stat_name = stat.get("stat", {}).get("name", "")
+                short = stat_labels.get(stat_name, stat_name[:4].upper())
+                value = int(stat.get("base_stat", 0))
+                col, row = index % 3, index // 3
+                x, y = 660 + col * 126, 512 + row * 20
+                self.text(f"{short} {value}", x, y, GREEN, self.tiny)
+            if species:
+                flavor = next((entry.get("flavor_text", "").replace("\n", " ").replace("\f", " ")
+                               for entry in species.get("flavor_text_entries", [])
+                               if entry.get("language", {}).get("name") == "en"), "")
+                words = flavor.split()
+                for row in range(2):
+                    line = ""
+                    while words and len(line) + len(words[0]) < 64:
+                        line = (line + " " + words.pop(0)).strip()
+                    if line:
+                        self.text(line, 650, 552 + row * 16, MUTED, self.tiny)
+        self.text("↑↓ pilih · ←→ halaman · Enter detail · Tab tombol", 245, 568, MUTED, self.tiny)
 
     def draw_encounter(self):
         pokemon = self.encounter_target
@@ -2203,10 +3020,65 @@ class Game:
                   245, 555, MUTED, self.small)
         self.button("Keluar center · Esc", (245, 592, 788, 42), self.back)
 
+    def draw_evolution(self):
+        animation = self.evolution_anim
+        if not animation:
+            self.mode = "center"
+            return
+        t = animation["timer"]
+        cx, cy = 640, 408
+        old_id, new_id = animation["from"], animation["to"]
+        self.draw_pokedex_icon(252, 198, 26)
+        self.text("EVOLUSI POKÉMON", 276, 183, CREAM, self.medium)
+        self.text(f"{animation['old_name'].title()}  →  {animation['name'].title()}",
+                  640, 237, GREEN, self.small, True)
+        intensity = max(0.0, min(1.0, t / 2.4))
+        pulse = 1 + .08 * math.sin(t * 9)
+        for ring in range(3):
+            radius = 76 + ring * 25 + int(12 * math.sin(t * 5 - ring))
+            color = ((151, 222, 132), (253, 220, 117), (117, 203, 208))[ring]
+            pg.draw.ellipse(self.canvas, color, (cx - radius * pulse, cy - radius * .45 * pulse,
+                                                 radius * 2 * pulse, radius * .9 * pulse), 2 if ring else 4)
+        # A ring of pixel stars makes the transformation read as a special event.
+        for index in range(18):
+            angle = t * (2.8 - min(t, 2.4) * .7) + index * math.tau / 18
+            radius = 105 + 18 * math.sin(t * 5 + index)
+            sx, sy = int(cx + math.cos(angle) * radius), int(cy + math.sin(angle) * radius * .48)
+            color = (255, 237, 157) if index % 2 else (181, 235, 167)
+            pg.draw.rect(self.canvas, color, (sx - 3, sy - 3, 6, 6))
+            pg.draw.rect(self.canvas, CREAM, (sx - 1, sy - 6, 2, 12))
+            pg.draw.rect(self.canvas, CREAM, (sx - 6, sy - 1, 12, 2))
+
+        old_surface = self.pokemon_surface(old_id, 112)
+        new_surface = self.pokemon_surface(new_id, 112)
+        if t < 2.45 and old_surface:
+            # Fast orbit eases down to a gentle final turn before the flash.
+            spin_time = min(t, 2.45)
+            angle = (720 * spin_time - 147 * spin_time * spin_time) % 360
+            scale = .84 + .22 * (.5 + .5 * math.sin(t * 10))
+            turned = pg.transform.rotozoom(old_surface, angle, scale)
+            self.canvas.blit(turned, turned.get_rect(center=(cx, cy)))
+        if t >= 2.42:
+            reveal = min(1.0, (t - 2.42) / .85)
+            if new_surface:
+                eased = 1 - (1 - reveal) ** 3
+                turned = pg.transform.rotozoom(new_surface, (1 - eased) * 210,
+                                               .48 + eased * .58)
+                self.canvas.blit(turned, turned.get_rect(center=(cx, cy)))
+            if 2.42 <= t <= 2.9:
+                flash = pg.Surface((W, H), pg.SRCALPHA)
+                flash.fill((255, 247, 210, int(120 * (1 - (t - 2.42) / .48))))
+                self.canvas.blit(flash, (0, 0))
+        caption = "Cahaya evolusi mengumpulkan energi…" if t < 2.42 else "Bintang-bintang menyatu menjadi bentuk baru!"
+        self.text(caption, cx, 542, CREAM, self.small, True)
+        self.button("Lewati animasi · Esc", (245, 592, 788, 42), self.finish_evolution)
+
     def change_dex_page(self, offset):
         entries = self.dex_entries()
         pages = max(1, (len(entries) + 7) // 8)
         self.dex_page = (self.dex_page + offset) % pages
+        if entries:
+            self.select_dex(entries[self.dex_page * 8]["id"])
 
     def draw_pokemon_battle(self):
         battle = self.battle
@@ -2217,6 +3089,23 @@ class Game:
         b = battle
         arena = b.get("arena_style", "meadow")
         retro.arena(self.canvas, arena)
+        weather = b.get("battle_weather", "Cerah")
+        # Compact animated weather pass over the already cached stage art.
+        if weather in ("Hujan", "Badai"):
+            color = (170, 211, 235, 82) if weather == "Hujan" else (190, 211, 230, 105)
+            overlay = pg.Surface((W, 800), pg.SRCALPHA)
+            for i in range(34):
+                x = (i * 173 + int(self.frame * (8 if weather == "Hujan" else 13))) % W
+                y = (i * 97 + int(self.frame * (14 if weather == "Hujan" else 21))) % 590
+                pg.draw.line(overlay, color, (x, y), (x - 5, y + 14), 2)
+            self.canvas.blit(overlay, (0, 0))
+        elif weather == "Salju":
+            for i in range(22):
+                x = (i * 211 + int(self.frame * 2)) % W
+                y = (i * 127 + int(self.frame * 5)) % 590
+                pg.draw.rect(self.canvas, (224, 239, 248), (x, y, 3, 3))
+        elif weather == "Cerah":
+            pg.draw.circle(self.canvas, (255, 219, 115), (1110, 265), 35, 4)
         # Fighter nameplates and HP bars.
         self.box((50, 24, 490, 105), (32, 51, 48), 14)
         self.box((740, 24, 490, 105), (32, 51, 48), 14)
@@ -2230,15 +3119,9 @@ class Game:
         if b.get("super_meter", 0):
             pg.draw.rect(self.canvas, (247, 194, 74), (76, 118, int(440 * b["super_meter"] / 100), 8), border_radius=0)
         self.text(f"ULTIMATE {int(b.get('super_meter', 0))}%", 76, 132, (255, 222, 121), self.small)
-        for row, ident in enumerate(self.active_pokemon_team()):
-            detail = self.pokemon_data(ident) or {}
-            name = detail.get("name", f"#{ident}").title()
-            hp = int(self.life.pokemon_health.get(str(ident), 0))
-            active_mark = "▶" if ident == b.get("player_id") else "·"
-            self.text(f"{active_mark} {name} · HP {hp}{' · KO' if hp <= 0 else ''}", 76, 151 + row * 17,
-                      GREEN if hp > 0 else (216, 118, 103), self.tiny)
         opponent_count = len(b.get("opponent_lineup", [b["wild_id"]]))
         self.text("TEAM BATTLE" if opponent_count > 1 else "WILD BATTLE", W // 2, 45, CREAM, self.small, True)
+        self.text(f"{BATTLE_WEATHER_EMOJI.get(weather, '☁')} {weather.upper()}  ·  {arena.upper()} ARENA", W // 2, 63, GREEN, self.tiny, True)
         if opponent_count > 1:
             self.text(f"RONDE {b.get('opponent_index', 0) + 1}/{opponent_count}", W // 2, 69, INK, self.tiny, True)
         # Sprites use the larger cached API art, with squash/stretch on impacts.
@@ -2271,7 +3154,7 @@ class Game:
             y = int(b.get(key + "_y", 0))
             if key == "player" and b.get("attack_flash", 0) > 0:
                 x += b["player_facing"] * (38 if b.get("attack_heavy") else 22)
-            sprite = self.pokemon_surface(ident, 104)
+            sprite = self.pokemon_surface(b.get(key + "_appearance", ident), self.fighter_size(ident))
             if sprite:
                 faces_right = b.get("player_facing", 1) > 0 if key == "player" else b.get("enemy_x", 930) < b.get("player_x", 350)
                 # PokeAPI front sprites face left by default; flip only when
@@ -2279,7 +3162,7 @@ class Game:
                 if faces_right:
                     sprite = pg.transform.flip(sprite, True, False)
                 flash = b.get("hit_flash", 0) if key == "player" else b.get("enemy_flash", 0)
-                if flash > 0 and int(flash * 50) % 2:
+                if flash > 0 and not self.life.reduced_motion and int(flash * 50) % 2:
                     # Brighten RGB only; RGBA blending changes transparent GIF pixels too.
                     white = sprite.copy(); white.fill((150, 150, 150), special_flags=pg.BLEND_RGB_ADD); sprite = white
                 shadow_x = x - 34
@@ -2345,6 +3228,42 @@ class Game:
             self.text("Enter / Esc · kembali ke peta", W // 2, 608, CREAM, self.small, True)
         if b.get("intro"):
             self.draw_battle_intro(b)
+        if b.get("ultimate_cutin"):
+            self.draw_ultimate_cutin(b, b["ultimate_cutin"])
+
+    def draw_ultimate_cutin(self, battle, cutin):
+        """Brief full-frame character splash before the ultimate impact lands."""
+        progress = 1 - cutin["timer"] / max(.01, cutin["duration"])
+        pulse = 1.0 + .035 * math.sin(progress * math.pi * 8)
+        # Replacing the arena for a few frames creates a readable, anime-like cut-in.
+        self.canvas.fill((18, 22, 50))
+        for offset in range(-H, W + H, 88):
+            pg.draw.polygon(self.canvas, (28, 34, 73),
+                            [(offset, 0), (offset + 42, 0), (offset - 218, H), (offset - 260, H)])
+        accent = TYPE_MOVES.get(cutin["move_type"], TYPE_MOVES["normal"])[1]
+        veil = pg.Surface((W, H), pg.SRCALPHA)
+        veil.fill((*accent, 34))
+        self.canvas.blit(veil, (0, 0))
+        # Slanted frame and speed lines converge on the Pokémon portrait.
+        pg.draw.polygon(self.canvas, accent, [(0, 0), (540, 0), (365, H), (0, H)])
+        pg.draw.polygon(self.canvas, (21, 26, 55), [(10, 10), (518, 10), (354, H - 10), (10, H - 10)])
+        for index in range(7):
+            y = 105 + index * 84
+            pg.draw.line(self.canvas, (239, 232, 218), (0, y), (210 + index * 17, y - 28), 3)
+        pokemon_id = cutin["pokemon_id"]
+        detail = self.pokemon_data(pokemon_id) or {}
+        sprite = self.pokemon_surface(pokemon_id, int(220 * pulse))
+        if sprite:
+            if battle.get("player_facing", 1) > 0:
+                sprite = pg.transform.flip(sprite, True, False)
+            self.canvas.blit(sprite, sprite.get_rect(center=(280, 439)))
+        self.text("ULTIMATE!", 610, 190, (255, 226, 124), self.big, True)
+        self.text(detail.get("name", "Pokémon Anda").title(), 625, 280, CREAM, self.medium, True)
+        self.text(cutin["move_name"], 625, 345, accent, self.medium, True)
+        glyph = self.ultimate_font.render(cutin["emoji"], True, CREAM)
+        glyph = pg.transform.scale(glyph, (116, 116))
+        self.canvas.blit(glyph, glyph.get_rect(center=(625, 487)))
+        pg.draw.rect(self.canvas, accent, (485, 584, 565, 8))
 
     def draw_battle_intro(self, battle):
         intro = battle["intro"]
@@ -2361,16 +3280,25 @@ class Game:
             maximum = battle.get("player_max", 0) if player_side else battle.get("wild_max", 0)
             health = battle.get("player_hp", 0) if player_side else battle.get("wild_hp", 0)
             types = " · ".join(entry["type"]["name"].title() for entry in detail.get("types", []))
-            self.box((330, 226, 620, 360), (30, 48, 45), 20, (239, 207, 116))
-            self.text("POKÉMON ANDA" if player_side else "LAWAN MENANTANG", W // 2, 264, GREEN if player_side else (242, 151, 123), self.medium, True)
+            self.box((330, 205, 620, 424), (30, 48, 45), 20, (239, 207, 116))
+            weather = battle.get("battle_weather", "Cerah")
+            arena = battle.get("arena_style", "meadow")
+            self.text(f"{BATTLE_WEATHER_EMOJI.get(weather, '☁')} {weather.upper()}  ·  {arena.upper()} ARENA", W // 2, 230, GREEN, self.small, True)
+            self.text("POKÉMON ANDA" if player_side else "LAWAN MENANTANG", W // 2, 263, GREEN if player_side else (242, 151, 123), self.medium, True)
             sprite = self.pokemon_surface(pokemon_id, 128)
             if sprite:
                 if not player_side:
                     sprite = pg.transform.flip(sprite, True, False)
                 self.canvas.blit(sprite, sprite.get_rect(center=(W // 2, 397)))
-            self.text(name, W // 2, 496, CREAM, self.big, True)
-            self.text(f"Lv. {level}   ·   {types or 'Pokédex sedang memuat tipe…'}", W // 2, 540, GREEN, self.small, True)
-            self.text(f"HP {int(health)}/{int(maximum)}   ·   Cry asli PokéAPI", W // 2, 570, CREAM, self.small, True)
+            self.text(name, W // 2, 478, CREAM, self.big, True)
+            self.text(f"Lv. {level}   ·   {types or 'Pokédex sedang memuat tipe…'}", W // 2, 518, GREEN, self.small, True)
+            self.text(f"HP {int(health)}/{int(maximum)}   ·   Cry asli PokéAPI", W // 2, 548, CREAM, self.small, True)
+            mods = battle.get('environment_mods', {}).get(str(pokemon_id), {})
+            attack = int(mods.get('attack', 0)); defense = int(mods.get('defense', 0))
+            buff_color = (120, 226, 151) if attack >= 0 else (247, 143, 126)
+            def_color = (120, 226, 151) if defense >= 0 else (247, 143, 126)
+            self.text(f"ATK {'+' if attack >= 0 else ''}{attack}%  ·  {'NAIK' if attack > 0 else 'TURUN' if attack < 0 else 'STABIL'}", W // 2, 580, buff_color, self.small, True)
+            self.text(f"DEF {'+' if defense >= 0 else ''}{defense}%  ·  {'NAIK' if defense > 0 else 'TURUN' if defense < 0 else 'STABIL'}", W // 2, 607, def_color, self.small, True)
         else:
             self.text("PERTARUNGAN DIMULAI", W // 2, 300, CREAM, self.medium, True)
             self.text(step, W // 2, 435, (255, 220, 115), self.big, True)
@@ -2528,8 +3456,13 @@ class Game:
     def draw_shop(self):
         self.text(self.shop_npc + " · Market", 242, 183, CREAM, self.medium)
         self.text(f"Koin {self.life.money}  /  Buka 06:00–22:00", 668, 190, GREEN)
-        self.button("Beli", (245, 226, 176, 40), lambda: self.set_shop_tab("buy"), self.shop_tab == "buy")
-        self.button("Jual hasil", (431, 226, 176, 40), lambda: self.set_shop_tab("sell"), self.shop_tab == "sell")
+        self.button("Beli", (245, 226, 170, 40), lambda: self.set_shop_tab("buy"), self.shop_tab == "buy")
+        self.button("Jual hasil", (423, 226, 170, 40), lambda: self.set_shop_tab("sell"), self.shop_tab == "sell")
+        if self.shop_npc == "Danu":
+            self.button("Jual Pokémon", (601, 226, 190, 40), lambda: self.set_shop_tab("pokemon"), self.shop_tab == "pokemon")
+        if self.shop_tab == "pokemon":
+            self.draw_pokemon_market()
+            return
         items = [k for k in BUY if (k in ("Tombak", "Busur", "Panah")) == (self.shop_npc == "Budi")] if self.shop_tab == "buy" else list(SELL)
         if self.shop_npc == "Danu" and self.shop_tab == "buy":
             self.text("Danu menerima hasil kebun, peternakan, dan buruan.", 245, 288, CREAM)
@@ -2550,11 +3483,51 @@ class Game:
             self.text("Market sudah tutup. Kembali pukul 06:00.", 245, 577, (232, 153, 102), self.small)
         self.button("Selesai · Esc", (245, 607, 788, 34), self.back, True)
 
+    def draw_pokemon_market(self):
+        if self.shop_npc != "Danu":
+            self.text("Bicara dengan Danu untuk menjual Pokémon.", 245, 288, MUTED, self.small)
+            return
+        self.text("Pokémon aktif harus dikeluarkan di Pokémon Center sebelum dijual.",
+                  245, 276, MUTED, self.tiny)
+        if not self.life.pokemon_party:
+            self.text("Party kosong.", 245, 328, MUTED)
+        page=getattr(self,"market_page",0) % max(1,math.ceil(len(self.life.pokemon_party)/5))
+        for index, pokemon_id in enumerate(self.life.pokemon_party[page*5:page*5+5]):
+            y = 302 + index * 48
+            detail = self.pokemon_data(pokemon_id) or {}
+            name = detail.get("name", f"Pokémon #{pokemon_id}").title()
+            value = self.pokemon_sale_value(pokemon_id)
+            active = pokemon_id in self.life.pokemon_active
+            self.box((245, y, 788, 41), (29, 39, 36), 6, (69, 91, 74))
+            self.text(f"{index + 1}. {name} · Lv.{self.pokemon_level(pokemon_id)}",
+                      258, y + 11, CREAM, self.small)
+            self.text(f"{value} koin", 604, y + 11, retro.GOLD, self.small)
+            if active:
+                self.button("Aktif · Center", (735, y + 4, 137, 33),
+                            lambda: self.notify("Keluarkan Pokémon ini dari tim aktif di Pokémon Center dulu."))
+            elif len(self.life.pokemon_party) <= 1:
+                self.button("Simpan satu", (735, y + 4, 137, 33),
+                            lambda: self.notify("Simpan setidaknya satu Pokémon di party."))
+            else:
+                pending = self.sell_pokemon_pending == pokemon_id
+                self.button("Konfirmasi jual" if pending else "Jual Pokémon",
+                            (735, y + 4, 137, 33), lambda ident=pokemon_id: self.sell_party_pokemon(ident), pending)
+                if pending:
+                    self.button("Batal", (881, y + 4, 137, 33),
+                                lambda: setattr(self, "sell_pokemon_pending", None))
+        self.button("<",(245,554,60,35),lambda:setattr(self,"market_page",page-1))
+        self.button(">",(973,554,60,35),lambda:setattr(self,"market_page",page+1))
+        self.text(f"{page+1} / {max(1,math.ceil(len(self.life.pokemon_party)/5))}",640,568,MUTED,self.small,True)
+        self.text("Pokédex tetap menyimpan catatan spesies yang pernah ditangkap.",
+                  245, 596, MUTED, self.tiny)
+        self.button("Selesai · Esc", (245, 625, 788, 34), self.back, True)
+
     def set_shop_tab(self, tab):
         self.shop_tab = tab
 
     def back(self):
-        self.mode = "game"
+        self.play_action_sound("ui-back", .2)
+        self.mode = self.settings_return_mode if self.mode == "settings" else "game"
         pg.key.stop_text_input()
         pg.key.set_repeat()
 
@@ -2577,7 +3550,7 @@ class Game:
     def draw_terminal(self):
         self.canvas.fill(INK)
         self.box((39, 28, 1202, 716), (18, 25, 26), 24, (88, 108, 91))
-        self.text("NARA / PERSONAL COMPUTER".replace("NARA", CHARACTERS[self.life.character][0].upper()), 73, 53, CREAM, self.medium)
+        self.text("NARA / PERSONAL COMPUTER".replace("NARA", self.life.player_name.upper()), 73, 53, CREAM, self.medium)
         self.text(self.terminal.shell_name.upper() + "  ·  TERMINAL LOKAL", 73, 96, GREEN, self.small)
         self.button("Terminal.app · buka", (728, 56, 214, 45), self.open_native_terminal)
         self.button("Tinggalkan PC · Esc", (956, 56, 246, 45), self.back, True)
@@ -2665,6 +3638,9 @@ class Game:
             self.dex_query = (self.dex_query + event.text.lower())[-32:]
             self.dex_page = 0
             self.dex_detail = None
+            entries = self.dex_entries()
+            if entries:
+                self.select_dex(entries[0]["id"])
         if event.type == pg.MOUSEWHEEL and self.mode == "terminal":
             self.terminal.scroll(event.y)
         elif event.type == pg.MOUSEWHEEL and self.mode == "map":
@@ -2672,16 +3648,25 @@ class Game:
         if event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
             for rect, callback in self.buttons:
                 if rect.collidepoint(self.mouse()):
+                    self.play_action_sound("ui-confirm", .22)
                     callback()
                     return
             if self.mode == "map":
                 point = self.mouse()
                 for rect, zone in self.map_zone_rects:
                     if rect.collidepoint(point):
+                        self.play_action_sound("ui-click", .16)
                         self.map_center[:] = [zone["x"] + RESERVE_ZONE_W / 2, zone["y"] + RESERVE_ZONE_H / 2]
                         self.map_zoom = max(self.map_zoom, 1.55)
                         return
         if event.type == pg.KEYDOWN:
+            if self.mode in ("inventory", "shop", "weather", "dex", "center", "encounter",
+                             "pokemon_info", "daily_quests", "evolution", "settings", "hospitality", "map"):
+                if event.key in (pg.K_UP, pg.K_DOWN, pg.K_LEFT, pg.K_RIGHT, pg.K_1, pg.K_2, pg.K_3,
+                                 pg.K_TAB, pg.K_PAGEUP, pg.K_PAGEDOWN):
+                    self.play_action_sound("ui-click", .16)
+                elif event.key in (pg.K_RETURN, pg.K_KP_ENTER):
+                    self.play_action_sound("ui-confirm", .22)
             if self.mode == "terminal":
                 self.terminal_key(event)
             elif self.mode == "phone":
@@ -2729,8 +3714,21 @@ class Game:
                 if event.key == pg.K_BACKSPACE:
                     self.dex_query = self.dex_query[:-1]
                     self.dex_page = 0
+                    entries = self.dex_entries()
+                    if entries:
+                        self.select_dex(entries[0]["id"])
+                    else:
+                        self.dex_detail = None
+                elif event.key == pg.K_UP:
+                    self.move_dex_selection(-1)
+                elif event.key == pg.K_DOWN:
+                    self.move_dex_selection(1)
                 elif event.key == pg.K_RETURN:
-                    self.select_dex(self.dex_entries()[self.dex_page * 8]["id"] if self.dex_entries() else 1)
+                    entries = self.dex_entries()
+                    if entries:
+                        selected = next((item for item in entries if item["id"] == self.dex_selected),
+                                        entries[self.dex_page * 8])
+                        self.select_dex(selected["id"])
                 elif event.key == pg.K_LEFT:
                     self.change_dex_page(-1)
                 elif event.key == pg.K_RIGHT:
@@ -2746,6 +3744,19 @@ class Game:
                     self.heal_pokemon_party()
                 elif event.key in (pg.K_ESCAPE, pg.K_n, pg.K_RETURN):
                     self.back()
+            elif self.mode == "hospitality":
+                if event.key == pg.K_1:
+                    self.hospitality_order("meal" if self.hospitality_kind == "restaurant" else "hotel")
+                elif event.key == pg.K_2 and self.hospitality_kind == "restaurant":
+                    self.hospitality_order("drink")
+                elif event.key in (pg.K_ESCAPE, pg.K_RETURN):
+                    self.back()
+            elif self.mode == "daily_quests":
+                if event.key in (pg.K_ESCAPE, pg.K_j, pg.K_RETURN):
+                    self.back()
+            elif self.mode == "evolution":
+                if event.key in (pg.K_ESCAPE, pg.K_RETURN):
+                    self.finish_evolution()
             elif self.mode == "battle":
                 if self.battle and self.battle.get("intro"):
                     if event.key == pg.K_ESCAPE:
@@ -2772,21 +3783,30 @@ class Game:
                     self.finish_battle("Anda kembali menjelajah.")
             elif self.mode == "title":
                 if event.key in (pg.K_1, pg.K_2, pg.K_3):
+                    self.play_action_sound("ui-click", .16)
                     self.choose(event.key - pg.K_1)
                 elif event.key in (pg.K_LEFT, pg.K_RIGHT):
+                    self.play_action_sound("ui-click", .16)
                     self.selected = (self.selected + (1 if event.key == pg.K_RIGHT else -1)) % 3
                 elif event.key == pg.K_RETURN:
+                    self.play_action_sound("ui-confirm", .22)
                     self.begin()
                 elif event.key == pg.K_ESCAPE:
+                    self.play_action_sound("menu-open", .22)
                     self.mode = "menu"
+            elif self.mode == "settings":
+                if event.key in (pg.K_ESCAPE, pg.K_RETURN):
+                    self.back()
             elif self.mode == "game":
                 if event.key == pg.K_e:
                     self.interact()
                 elif event.key == pg.K_i:
+                    self.play_action_sound("inventory-open", .25)
                     self.mode = "inventory"
                 elif event.key == pg.K_F1:
-                    self.mode = "help"
+                    self.open_overlay("help")
                 elif event.key == pg.K_ESCAPE:
+                    self.play_action_sound("menu-open", .24)
                     self.mode = "menu"
                 elif event.key == pg.K_SPACE:
                     if self.life.scene == "reserve" or self.closest_trainer(112):
@@ -2798,13 +3818,15 @@ class Game:
                 elif event.key == pg.K_t:
                     self.skip_hour()
                 elif event.key == pg.K_c:
-                    self.mode = "weather"
+                    self.open_overlay("weather")
                 elif event.key == pg.K_h:
-                    self.notify(self.life.heal())
+                    self.use_healing_item()
                 elif event.key == pg.K_b:
                     self.open_phone()
                 elif event.key == pg.K_p:
                     self.open_dex()
+                elif event.key == pg.K_j:
+                    self.open_overlay("daily_quests")
                 elif event.key == pg.K_n:
                     self.open_pokemon_center()
                 elif event.key == pg.K_m:
@@ -2814,15 +3836,33 @@ class Game:
                         self.spawn_map_pokemon()
                     self.open_global_map()
                 elif event.key in (pg.K_1, pg.K_2, pg.K_3):
+                    self.play_action_sound("ui-confirm", .18)
                     self.notify(self.life.equip({pg.K_1: "Tombak", pg.K_2: "Busur", pg.K_3: ""}[event.key]))
             elif self.mode == "inventory" and event.key in (pg.K_1, pg.K_2, pg.K_3, pg.K_h):
-                self.notify(self.life.heal() if event.key == pg.K_h else self.life.equip({pg.K_1: "Tombak", pg.K_2: "Busur", pg.K_3: ""}[event.key]))
+                if event.key == pg.K_h:
+                    self.use_healing_item()
+                else:
+                    self.notify(self.life.equip({pg.K_1: "Tombak", pg.K_2: "Busur", pg.K_3: ""}[event.key]))
             elif event.key in (pg.K_ESCAPE, pg.K_i, pg.K_F1, pg.K_RETURN):
                 self.back()
 
     def update(self, dt):
         self.frame += dt * 60
+        now = time.monotonic()
+        queued, self.pending_action_sounds = self.pending_action_sounds, []
+        for play_at, sound_name, volume in queued:
+            if play_at <= now:
+                self.play_action_sound(sound_name, volume)
+            else:
+                self.pending_action_sounds.append((play_at, sound_name, volume))
+        self.footstep_timer = max(0.0, self.footstep_timer - dt)
+        if self.door_close_timer > 0:
+            self.door_close_timer = max(0.0, self.door_close_timer - dt)
+            if self.door_close_timer == 0:
+                self.play_action_sound("door-wood-close", .28)
+        self.update_location_audio()
         self.terminal.poll()
+        self.load_countdown_audio()
         self.load_pokemon_events()
         if self.phone_terminal.phone_marker and any(self.phone_terminal.phone_marker in row for row in self.phone_terminal.screen.display):
             self.phone_terminal.phone_marker = ""
@@ -2832,12 +3872,14 @@ class Game:
             self.notify("PONSEL: OpenCode selesai merespons · notifikasi baru diterima.")
         self.environment.update(dt)
         self.moving = False
-        active = self.mode in ("game", "map", "terminal", "inventory", "shop", "weather", "phone", "dex", "center", "battle", "encounter", "pokemon_info")
+        active = self.mode in ("game", "map", "terminal", "inventory", "shop", "weather", "phone", "dex", "center", "battle", "encounter", "pokemon_info", "daily_quests", "evolution", "settings", "hospitality", "dead")
         if active:
             if self.mode == "map" and not self.wild_pokemon and self.pokedex.catalog:
                 self.spawn_map_pokemon()
             if self.mode == "battle":
                 self.update_battle(dt)
+            elif self.mode == "evolution":
+                self.update_evolution(dt)
             self.attack_cooldown = max(0, self.attack_cooldown - dt)
             self.attack_flash = max(0, self.attack_flash - dt)
             if self.mode == "game" and not self.fishing and self.battle is None:
@@ -2849,6 +3891,8 @@ class Game:
                     self.moving = True
                     self.facing = "left" if abs(direction.x) >= abs(direction.y) and direction.x < 0 else "right" if abs(direction.x) >= abs(direction.y) else "up" if direction.y < 0 else "down"
                     speed = 300 if self.life.mounted else 180 if self.life.stats["Energi"] > 10 else 105
+                    if self.needs_depleted():
+                        speed = 58 if self.life.mounted else 72
                     if self.life.scene in OUTSIDE and self.life.weather == "Salju":
                         speed *= .8
                     step = direction.normalize() * dt * speed
@@ -2871,8 +3915,23 @@ class Game:
                         self.life.y = max(281, min(655, self.life.y))
             if self.life.mounted:
                 self.life.horse_x, self.life.horse_y, self.life.horse_scene = self.life.x, self.life.y, self.life.scene
+            if self.mode == "game" and self.moving and self.footstep_timer <= 0:
+                footstep = ("step-wood" if self.life.scene in ("house", "bedroom", "market")
+                            else "step-dirt" if self.life.scene in ("forest", "reserve", "coast", "mountain")
+                            else "step-grass")
+                self.play_action_sound(footstep, .19 if not self.life.mounted else .13)
+                self.footstep_timer = .43 if self.life.mounted else .31
             self.life.tick(dt, self.moving)
-            self.wildlife.update(dt, self.obstacles("forest"), player_active=self.mode not in ("terminal", "phone", "dex", "battle", "encounter", "pokemon_info"))
+            self.check_daily_quest_rewards()
+            health_before_animals = self.life.health
+            self.wildlife.update(dt, self.obstacles("forest"), player_active=self.mode not in ("terminal", "phone", "dex", "battle", "encounter", "pokemon_info", "dead"))
+            if self.life.health < health_before_animals and self.life.scene == "forest":
+                attackers = [animal for animal in self.wildlife.living
+                             if animal["species"] in ("Singa", "Hyena", "Babi hutan")
+                             and math.hypot(animal["x"] - self.life.x, animal["y"] - self.life.y) < 100]
+                if attackers:
+                    self.play_action_sound("wildlife-hurt", .28)
+                    self.play_wildlife_call(attackers[0]["species"])
             if self.mode == "game":
                 if self.life.scene == "reserve":
                     if not self.wild_pokemon and self.pokedex.catalog:
@@ -2881,13 +3940,17 @@ class Game:
                 self.update_trainers(dt)
             if self.life.scene == "forest":
                 self.update_arrows(dt)
-            if self.life.health <= 0:
-                self.respawn()
+            if self.life.health <= 0 and not self.dead_active:
+                self.start_dead_screen()
+            if self.dead_active:
+                self.dead_timer = max(0.0, self.dead_timer - dt)
+                if self.dead_timer <= 0:
+                    self.respawn()
             if self.fishing and time.monotonic() - self.fishing > 4.2:
                 self.fishing = None
                 self.notify("Ikannya lepas. Tekan E untuk mencoba lagi.")
             if self.life.elapsed - self.last_save > 15:
-                self.life.save(self.save_path)
+                self.save_current()
                 self.last_save = self.life.elapsed
 
     def check_edges(self):
@@ -2917,6 +3980,8 @@ class Game:
                 size = SPECIES[animal["species"]]["size"]
                 if math.hypot(arrow["x"] - animal["x"], arrow["y"] - (animal["y"] - size * .45)) < size * .34 + 6:
                     self.notify(self.wildlife.hit(animal, WEAPONS["Busur"]["damage"]))
+                    self.play_action_sound("wildlife-hurt", .4)
+                    self.play_wildlife_call(animal["species"])
                     hit = True
                     break
             if not hit and arrow["travel"] < WEAPONS["Busur"]["reach"] and not any(r.collidepoint(arrow["x"], arrow["y"]) for r in self.obstacles("forest")):
@@ -2941,7 +4006,7 @@ class Game:
         pg.display.flip()
 
     def quit(self):
-        self.life.save(self.save_path)
+        self.save_current()
         self.running = False
 
     def run(self):
@@ -2953,10 +4018,16 @@ class Game:
                 self.update(dt)
                 self.draw()
         finally:
-            self.life.save(self.save_path)
+            self.save_current()
             self.terminal.close()
             pg.quit()
 
+
+from adventure_flow import FlowMixin
+from fighter import FighterMixin
+
+class Game(FlowMixin, FighterMixin, LegacyGame):
+    pass
 
 def main():
     parser = argparse.ArgumentParser(description="OpenRPG — RPG kehidupan dengan PC terminal shell asli")

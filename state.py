@@ -15,6 +15,16 @@ WEAPONS = {"Tombak": {"damage": 28, "reach": 88, "cooldown": .55},
 
 @dataclass
 class Life:
+    player_name: str = "Adventurer"
+    gender: str = "male"
+    music_volume: float = 1.0
+    effects_volume: float = 1.0
+    cry_volume: float = 1.0
+    reduced_motion: bool = False
+    gacha_tickets: int = 0
+    quest_bonus_day: int = 0
+    quest_archive: list = field(default_factory=list)
+    saved_at: str = ""
     character: int = 0
     scene: str = "outdoors"
     x: float = 490
@@ -47,11 +57,80 @@ class Life:
     pokemon_levels: dict = field(default_factory=lambda: {"1": 5})
     pokemon_xp: dict = field(default_factory=lambda: {"1": 0})
     pokemon_health: dict = field(default_factory=lambda: {"1": 100})
-    version: int = 3
+    daily_quests: list = field(default_factory=list)
+    quest_day: int = 0
+    language: str = "id"
+    version: int = 4
 
     def __post_init__(self):
         for item in ITEMS:
             self.bag.setdefault(item, 0)
+        self.ensure_daily_quests()
+
+    @staticmethod
+    def daily_quest_pool():
+        return [
+            {"action": action, "target": target, "title": title, "title_en": en,
+             "reward": coins, "group": group, "emoji": emoji}
+            for action,target,title,en,coins,group,emoji in [
+                ("plant",3,"Tanam 3 benih","Plant 3 seeds",20,"home","🌱"),
+                ("water",3,"Siram 3 tanaman","Water 3 crops",20,"home","💧"),
+                ("harvest",2,"Panen 2 sayur","Harvest 2 vegetables",30,"home","🥕"),
+                ("feed",1,"Rawat ayam dan ambil telur","Feed chickens and collect eggs",25,"home","🥚"),
+                ("cook",2,"Masak 2 makanan","Cook 2 meals",30,"home","🍳"),
+                ("explore",2,"Kunjungi 2 tempat berbeda","Visit 2 different locations",25,"explore","🧭"),
+                ("fish",1,"Tangkap 1 ikan","Catch 1 fish",35,"explore","🐟"),
+                ("wood",2,"Kumpulkan 2 kayu","Collect 2 wood",25,"explore","🪵"),
+                ("sell",3,"Jual 3 hasil tani","Sell 3 farm goods",35,"extra","🪙"),
+                ("eat",1,"Nikmati masakan sendiri","Eat a home-cooked meal",15,"extra","🍲"),
+                ("catch",1,"Tangkap 1 Pokémon","Catch 1 Pokémon",45,"extra","⭐"),
+                ("battle",1,"Menangkan 1 duel","Win 1 battle",40,"extra","🥊"),
+            ]]
+
+    def ensure_daily_quests(self):
+        if self.quest_day == self.day and self.daily_quests:
+            return
+        # Completed rewards survive a day change until claimed.
+        for quest in self.daily_quests:
+            if not quest.get("claimed") and quest.get("progress",0) >= quest["target"]:
+                self.quest_archive.append(dict(quest, day=self.quest_day))
+        rng = random.Random(self.day * 7919 + sum(map(ord,self.player_name)))
+        pool = self.daily_quest_pool()
+        self.daily_quests = [dict(rng.choice([q for q in pool if q["group"] == group]),
+                                 progress=0, claimed=False, notified=False, visited=[])
+                             for group in ("home","explore","extra")]
+        self.quest_day = self.day
+
+    def record_daily_quest(self, action, amount=1, unique=None):
+        self.ensure_daily_quests()
+        completed = []
+        for quest in self.daily_quests:
+            if quest["action"] != action or quest["claimed"]:
+                continue
+            if unique is not None:
+                if unique in quest.setdefault("visited",[]):
+                    continue
+                quest["visited"].append(unique)
+            before = quest.get("progress",0)
+            quest["progress"] = min(quest["target"], before + amount)
+            if before < quest["target"] <= quest["progress"]:
+                completed.append(quest)
+        return completed
+
+    def claim_quest(self, quest):
+        if quest.get("claimed") or quest.get("progress",0) < quest["target"]:
+            return 0
+        quest["claimed"] = True
+        self.money += quest["reward"]
+        return quest["reward"]
+
+    def claim_daily_bonus(self):
+        if self.quest_bonus_day == self.day or not all(q.get("claimed") for q in self.daily_quests):
+            return False
+        self.quest_bonus_day = self.day
+        self.gacha_tickets += 1
+        self.money += 25
+        return True
 
     @property
     def hour(self):
@@ -70,10 +149,13 @@ class Life:
         return 6 <= self.hour < 22
 
     def advance_time(self, minutes):
+        previous_day = self.day
         self.minutes += minutes
         while self.minutes >= 1440:
             self.minutes -= 1440
             self.day += 1
+        if self.day != previous_day:
+            self.ensure_daily_quests()
         hour_id = self.day * 24 + self.hour
         if hour_id != self.weather_hour:
             self.weather_hour = hour_id
@@ -119,11 +201,13 @@ class Life:
 
     def trade(self, item, buying, quantity=1):
         prices = BUY if buying else SELL
-        if not self.market_open:
+        if not self.market_open and item != "Pokeball":
             return "Market buka pukul 06:00–22:00. Tekan T untuk maju satu jam."
         if item not in prices or quantity < 1:
             return "Barang tidak tersedia."
         if buying:
+            if item == "Pokeball" and self.bag.get(item, 0) + quantity > 10:
+                return "Poké Ball: kapasitas tas 10. / Bag limit: 10."
             total = prices[item] * quantity
             if self.money < total:
                 return "Uang belum cukup. Jual hasil kebun atau peternakan."
@@ -137,7 +221,36 @@ class Life:
         self.bag[item] -= quantity
         total = prices[item] * quantity
         self.money += total
+        self.record_daily_quest("sell", quantity)
         return f"Menjual {quantity} {item.lower()}: +{total} koin."
+
+    def restaurant_meal(self):
+        if self.money < 10:
+            return "Uang belum cukup untuk makan."
+        self.money -= 10
+        self.boost("Kenyang", 58)
+        self.boost("Energi", 24)
+        self.health = min(100, self.health + 12)
+        return "Makan selesai · kenyang +58, energi +24, HP +12."
+
+    def restaurant_drink(self):
+        if self.money < 5:
+            return "Uang belum cukup untuk minum."
+        self.money -= 5
+        self.boost("Minum", 62)
+        return "Minuman disajikan · minum +62."
+
+    def hotel_stay(self):
+        if self.money < 15:
+            return "Uang belum cukup untuk menginap."
+        self.money -= 15
+        self.advance_time(480)
+        self.elapsed += 369.23
+        for name in self.stats:
+            self.stats[name] = 100
+        self.health = 100
+        self.grow_crops()
+        return "Menginap selesai · seluruh kebutuhan dan HP pulih setelah tidur 8 jam."
 
     def respawn(self):
         self.scene, self.x, self.y = "bedroom", 370, 460
@@ -158,16 +271,19 @@ class Life:
         crop = self.crops[index]
         if crop["stage"] == "empty":
             crop["stage"] = "planted"
+            self.record_daily_quest("plant")
             return "Benih ditanam. Tekan E lagi untuk menyiram."
         if crop["stage"] == "planted":
             crop.update(stage="growing", ready=self.elapsed + 45)
             self.complete("Berkebun")
+            self.record_daily_quest("water")
             return "Sudah disiram! Sayur siap dipanen dalam 45 detik."
         if crop["stage"] == "growing":
             return f"Tumbuh... sekitar {max(1, int(crop['ready'] - self.elapsed))} detik lagi."
         crop["stage"] = "empty"
         self.bag["Sayur"] += 2
         self.boost("Senang", 8)
+        self.record_daily_quest("harvest", 2)
         return "Panen berhasil! +2 sayur masuk ke tas."
 
     def cook(self):
@@ -176,6 +292,7 @@ class Life:
                 self.bag[item] -= 1
                 self.bag["Makanan"] += 1
                 self.complete("Memasak")
+                self.record_daily_quest("cook")
                 return f"Memasak {item.lower()}. +1 makanan. Bawa ke meja makan!"
         return "Bahan habis. Panen sayur, memancing, atau ambil telur dahulu."
 
@@ -186,6 +303,7 @@ class Life:
         self.boost("Kenyang", 38)
         self.boost("Energi", 8)
         self.complete("Makan")
+        self.record_daily_quest("eat")
         return "Makan di meja. Kenyang +38, energi +8."
 
     def feed(self):
@@ -198,9 +316,12 @@ class Life:
         self.fed_at = self.elapsed
         self.boost("Senang", 12)
         self.complete("Merawat ayam")
+        self.record_daily_quest("feed")
         return "Ayam senang! +2 telur masuk ke tas."
 
     def save(self, path: Path):
+        from datetime import datetime
+        self.saved_at = datetime.now().isoformat(timespec="seconds")
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
@@ -213,7 +334,7 @@ class Life:
             state = cls(**{k: v for k, v in raw.items() if k in cls.__dataclass_fields__})
             if state.scene not in ("outdoors", "house", "bedroom", "forest", "market", "reserve", "coast", "mountain"):
                 raise ValueError("invalid scene")
-            state.character = int(state.character) % 3
+            state.character = int(state.character) % 9
             state.x, state.y = float(state.x), float(state.y)
             if set(state.stats) != {"Kenyang", "Minum", "Energi", "Senang"} or len(state.crops) != 6:
                 raise ValueError("invalid save")
@@ -223,6 +344,8 @@ class Life:
                 state.bag[key] = max(0, int(state.bag[key]))
             state.health = max(0, min(100, float(state.health)))
             state.money = max(0, int(state.money))
+            if state.language not in ("id", "en"):
+                state.language = "id"
             for key in ITEMS:
                 state.bag[key] = max(0, int(state.bag.get(key, 0)))
             if not isinstance(raw.get("bag"), dict) or "Pokeball" not in raw["bag"]:
@@ -235,7 +358,11 @@ class Life:
                 values = getattr(state, field_name)
                 if not isinstance(values, list):
                     raise ValueError("invalid pokedex")
-                setattr(state, field_name, list(dict.fromkeys(max(1, int(value)) for value in values))[:1025])
+                limit = 10000
+                setattr(state, field_name, list(dict.fromkeys(max(1, int(value)) for value in values))[:limit])
+            if int(raw.get("version", 3)) < 4:
+                state.pokemon_party = list(dict.fromkeys(state.pokemon_party + state.pokemon_caught))
+            state.version = 4
             if not state.pokemon_party:
                 state.pokemon_party = [1]
             active = raw.get("pokemon_active", state.pokemon_party[:3])

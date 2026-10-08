@@ -3,11 +3,11 @@ import math
 import random
 
 SPECIES = {
-    "Singa": {"hp": 100, "speed": 84, "damage": 15, "size": 65, "meat": 4, "hide": 2},
+    "Singa": {"hp": 100, "speed": 120, "damage": 15, "size": 44, "meat": 4, "hide": 2},
     "Gajah": {"hp": 200, "speed": 40, "damage": 25, "size": 96, "meat": 7, "hide": 3},
     "Kelinci": {"hp": 28, "speed": 86, "damage": 0, "size": 35, "meat": 1, "hide": 1},
     "Babi hutan": {"hp": 75, "speed": 60, "damage": 9, "size": 52, "meat": 3, "hide": 1},
-    "Hyena": {"hp": 70, "speed": 92, "damage": 10, "size": 48, "meat": 2, "hide": 1},
+    "Hyena": {"hp": 70, "speed": 135, "damage": 10, "size": 36, "meat": 2, "hide": 1},
     "Monyet": {"hp": 38, "speed": 76, "damage": 0, "size": 40, "meat": 1, "hide": 1},
 }
 PREY = {"Singa": ("Kelinci", "Babi hutan", "Monyet", "Hyena"), "Hyena": ("Kelinci", "Monyet")}
@@ -29,7 +29,7 @@ class Wildlife:
         required = {"species", "id", "x", "y", "hp", "state", "facing", "goal_x", "goal_y", "until", "cooldown", "provoked", "respawn", "moving"}
         life.animals[:] = [a for a in life.animals if isinstance(a, dict) and a.get("species") in SPECIES and required.issubset(a)]
         if not life.animals:
-            for species, count in (("Singa", 3), ("Gajah", 3), ("Kelinci", 12), ("Babi hutan", 4), ("Hyena", 3), ("Monyet", 5)):
+            for species, count in (("Singa", 1), ("Gajah", 1), ("Kelinci", 4), ("Babi hutan", 2), ("Hyena", 1), ("Monyet", 2)):
                 for _ in range(count):
                     life.animals.append(self.spawn(species, len(life.animals)))
 
@@ -40,8 +40,20 @@ class Wildlife:
                 "cooldown": 0, "provoked": 0, "respawn": 0, "moving": False}
 
     @property
+    def population(self):
+        # Keep legacy animals in the save, but only simulate a sparse population.
+        caps = {"Singa":1,"Hyena":1,"Gajah":1,"Kelinci":4,"Babi hutan":2,"Monyet":2}
+        counts, result = {}, []
+        for animal in self.life.animals:
+            species = animal["species"]
+            if counts.get(species, 0) < caps[species]:
+                result.append(animal)
+                counts[species] = counts.get(species, 0) + 1
+        return result
+
+    @property
     def living(self):
-        return [a for a in self.life.animals if a["hp"] > 0]
+        return [a for a in self.population if a["hp"] > 0]
 
     def log(self, text):
         self.events.append(text)
@@ -96,7 +108,7 @@ class Wildlife:
     def update(self, dt, obstacles=(), player_active=True):
         life = self.life
         now = life.elapsed
-        for animal in life.animals:
+        for animal in self.population:
             if animal["hp"] <= 0:
                 if now >= animal["respawn"]:
                     animal.update(self.spawn(animal["species"], animal["id"]))

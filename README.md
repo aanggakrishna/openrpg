@@ -150,3 +150,40 @@ The retro UI check uses mock Pokémon data and requires no network. Tests use is
 ## License
 
 Original OpenRPG code is released under the [MIT License](LICENSE). Third-party assets retain their respective licenses; see the [asset credits and license list](assets/CREDITS.md) and the license files included with each pack. The MIT License for OpenRPG code does not cover trademarks or Pokémon data and artwork.
+
+## Adventure flow update
+
+The main menu provides **New Game**, **Load Game**, **Save Game**, and **Settings**. Create an adventurer with a name, gender and animated appearance, then receive a random basic Pokémon at level 3–5. Four additional profile slots are available alongside the original save. Existing downloads and the original save are retained.
+
+Menus support mouse input or **arrow keys + Enter**; **Esc** goes back. In the Pokédex and global map, **Tab** switches between browsing/panning and button navigation. **B** opens the live terminal; keys are passed to the shell while it is focused.
+
+- **J:** daily quests, manual reward claims, daily completion bonus and ticket gacha. Completed unclaimed rewards remain available after a day change. Gacha pools are shown in the UI; duplicates award coins.
+- **Pokémon Center:** browse a paginated collection, select a Pokémon and choose one of three active slots. Healing the active team costs 5–20 coins depending on missing HP (free when already healthy). Sleeping at home can restore the active team for free.
+- Carry up to **10 empty Poké Balls**, with **3 active Pokémon** and a collection that is no longer limited to six species. Duplicate species share their collection entry.
+- **Combat:** arrows move/jump/drop, **A** strikes at close range, **S/D** use learnset-based skills, **F** uses an ultimate, **Shift** guards and **1/2/3** switches the active fighter. Skill cards show names and individual cooldowns. Attacks travel toward the target's position and can miss. Guarding uses a separate guard meter.
+- Wild Pokémon and trainers have a **30% chance per encounter** to approach and offer a battle, with a cooldown and accept/decline choice. Menus and the terminal are safe from interruptions.
+- Settings include language, music/effect/cry volumes and reduced flashes.
+
+### Local Pokémon database
+
+Build the local database from official PokéAPI CSV data before playing the updated fighter mode:
+
+```sh
+.venv/bin/python tools/build_pokedex.py
+```
+
+Optionally download all standard species sprites and unmodified cries for offline use:
+
+```sh
+.venv/bin/python tools/cache_pokemon_media.py
+```
+
+Both commands resume existing downloads. Database files live in `.openrpg/database/`; media remain in `.openrpg/pokedex/`; new profiles are in `.openrpg/profiles/`. The original save remains `.openrpg/save.json`. CSV metadata are queried on demand and map artwork is cached by area, so downloading the collection does not load all media into memory.
+
+Validation:
+
+```sh
+.venv/bin/python -m unittest discover -s tests -p 'test*.py'
+```
+
+Evolution at a Pokémon Center costs 10 coins and currently supports ordinary level evolutions. Item, trade, friendship and other special evolution conditions are retained in the source database but are not automatically treated as level evolutions.
