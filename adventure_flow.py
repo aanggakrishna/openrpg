@@ -735,6 +735,10 @@ class FlowMixin:
         if self.life.money<10:
             self.center_message=self.words('Evolusi membutuhkan 10 koin.','Evolution service costs 10 coins.')
             return
+        if getattr(self.life, 'trainer_xp', 0) < 100:
+            self.center_message=self.words('Evolusi membutuhkan 100 XP pelatih dan syarat level Pokémon.',
+                                           'Evolution requires 100 trainer XP and the Pokémon level condition.')
+            return
         super().evolve_selected()
 
     def finish_evolution(self):
@@ -742,4 +746,5 @@ class FlowMixin:
         super().finish_evolution()
         if was_active:
             self.life.money=max(0,self.life.money-10)
+            self.life.trainer_xp=max(0,self.life.trainer_xp-100)
             self.save_current()

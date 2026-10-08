@@ -39,6 +39,8 @@ class Life:
     accomplishments: list = field(default_factory=list)
     health: float = 100
     money: int = 150
+    trainer_xp: int = 0
+    trainer_level: int = 1
     weapon: str = ""
     mounted: bool = False
     horse_x: float = 1075

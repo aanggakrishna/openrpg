@@ -1,0 +1,13 @@
+services:
+  openrpg:
+    build:
+      context: .
+      dockerfile: Dockerfile.online
+    ports:
+      - "8765:8765"
+    volumes:
+      - openrpg-online:/app/.openrpg
+    command: ["python", "online_server.py", "--join-code", "${OPENRPG_JOIN_CODE:?Set OPENRPG_JOIN_CODE before starting}"]
+    restart: unless-stopped
+volumes:
+  openrpg-online:

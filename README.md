@@ -2,7 +2,7 @@
 
 **A 2D life RPG built with Python and Pygame.** Explore a home, garden, farm, forest, market, and Pokémon sanctuary in an 8-bit pixel-art world. Take care of your character, collect Pokémon, fight real-time battles, and open a real shell terminal inside the game.
 
-[Getting started](#getting-started) · [Controls](#controls) · [Activities](#activities) · [Real terminal](#real-terminal) · [Asset credits](assets/CREDITS.md) · [License](#license)
+[Online multiplayer](docs/ONLINE.md) · [Getting started](#getting-started) · [Controls](#controls) · [Activities](#activities) · [Real terminal](#real-terminal) · [Asset credits](assets/CREDITS.md) · [License](#license)
 
 ## Getting started
 
@@ -191,3 +191,9 @@ Validation:
 ```
 
 Evolution at a Pokémon Center costs 10 coins and currently supports ordinary level evolutions. Item, trade, friendship and other special evolution conditions are retained in the source database but are not automatically treated as level evolutions.
+
+## Online gym and dungeons
+
+Walk north from the home clearing and press **E** at **ONLINE GYM**. Connect to your own HTTP server for room chat, consent-based PvP, Pokémon trading, and four-player co-op dungeon runs across ten level tiers. The server stores online progress separately from offline saves.
+
+Run `python3 online_server.py --port 8765 --join-code YOUR_ROOM_CODE` on the host, then enter `http://YOUR_SERVER_IP:8765` in the game. See the [server setup, controls, progression, and limitations](docs/ONLINE.md).

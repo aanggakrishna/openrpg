@@ -63,7 +63,10 @@ class RPGArt:
             path = ROOT / "generated" / file
             if path.exists():
                 self.animal_sheets[name] = pg.image.load(path).convert_alpha()
-        self.trees = {"outdoors": [(76, 250), (105, 514), (1200, 271), (1138, 434), (460, 661), (735, 221), (616, 252)],
+        # Keep the north road to the online gym clear. The two former trees at
+        # (616,252) and (735,221) visually narrowed the entrance and blocked
+        # the player's collision box.
+        self.trees = {"outdoors": [(76, 250), (105, 514), (1200, 271), (1138, 434), (460, 661)],
                       "forest": [(65 + i * 108, 238 + (i % 3) * 15) for i in range(11)] +
                                 [(78 + i * 105, 660 - (i % 3) * 16) for i in range(11)] +
                                 [(202, 337), (410, 310), (730, 302), (930, 335), (1123, 320),
@@ -102,7 +105,7 @@ class RPGArt:
         # Sanctuary terrain is split into independently cached 1280×1600 zones.
         # A small LRU cache caps map-background memory regardless of world size.
         self.reserve_chunks = {}
-        self.reserve_chunk_limit = 4
+        self.reserve_chunk_limit = 2
         self.coast_background = None
         self.mountain_background = None
 

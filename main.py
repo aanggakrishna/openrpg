@@ -423,6 +423,7 @@ class LegacyGame:
         if self.life.mounted:
             self.life.horse_x, self.life.horse_y = x, y
         self.projectiles.clear()
+        self.spawn_map_pokemon()
         self.notify(f"Memasuki {target['name']} · {target['biome']} · Pokémon lebih langka dan kuat")
 
     def obstacles(self, scene=None):
@@ -820,6 +821,8 @@ class LegacyGame:
             self.notify("Memuat daftar Pokémon dari PokéAPI. Coba lagi sebentar.")
             return
         entries = self.pokedex.catalog
+        current_zone = self.reserve_zone_at(self.life.x, self.life.y)
+        self.loaded_reserve_zone = RESERVE_ZONES.index(current_zone)
         self.wild_pokemon = []
         self.map_requested_pokemon.clear()
         by_id = {entry["id"]: entry for entry in entries}
@@ -854,13 +857,15 @@ class LegacyGame:
         # Put familiar, already-cached sprites in the entrance clearing first.
         for pokemon_id, (x, y) in zip((1, 15, 16), ((265, 665), (700, 880), (1060, 665))):
             item = by_id.get(pokemon_id)
-            if item:
+            if item and self.loaded_reserve_zone == 0:
                 self.wild_pokemon.append({"id": pokemon_id, "x": float(x), "y": float(y), "home_x": float(x), "home_y": float(y),
                                           "moving": False, "state": "idle", "timer": self.pokemon_rng.uniform(1, 4), "vx": 0, "vy": 0, "level": 5, "requested": False})
                 self.pokedex.request(pokemon_id)
         self.reserve_trainers = []
         trainer_names = ["Mira", "Raka", "Sari", "Danu", "Laras", "Banyu", "Genta", "Salju", "Awan", "Kirana", "Batu", "Reruntuhan", "Penjaga Purba", "Penjaga Palung", "Penjaga Naga", "Juara Legenda"]
         for index, zone in enumerate(RESERVE_ZONES):
+            if index != self.loaded_reserve_zone:
+                continue
             cx, cy = zone["x"] + RESERVE_ZONE_W // 2, zone["y"] + RESERVE_ZONE_H // 2
             level = 5 + index * 4
             trainer = {"id": f"ranger-{index}", "name": trainer_names[index], "x": float(cx), "y": float(cy), "zone": index,
@@ -1028,6 +1033,18 @@ class LegacyGame:
             level += 1
             leveled = True
         self.life.pokemon_levels[key], self.life.pokemon_xp[key] = level, xp
+        return leveled, level
+
+    def award_trainer_xp(self, amount):
+        """Award account XP; every level-scaled XP threshold raises the trainer."""
+        xp = int(getattr(self.life, "trainer_xp", 0)) + max(0, int(amount))
+        level = max(1, int(getattr(self.life, "trainer_level", 1)))
+        leveled = False
+        while level < 100 and xp >= level * 100:
+            xp -= level * 100
+            level += 1
+            leveled = True
+        self.life.trainer_xp, self.life.trainer_level = xp, level
         return leveled, level
 
     def closest_pokemon(self, max_distance=150, include_hidden=False):
@@ -1586,12 +1603,15 @@ class LegacyGame:
         b["phase"] = "Lawan tumbang!"
         if not b.get("rewarded"):
             leveled, level = self.award_pokemon_xp(b["player_id"], max(12, b.get("wild_level", 5) * 3))
+            trainer_leveled, trainer_level = self.award_trainer_xp(max(20, b.get("wild_level", 5) * 5))
             b["rewarded"] = True
             if not b.get("daily_battle_recorded"):
                 self.life.record_daily_quest("battle", 1)
                 b["daily_battle_recorded"] = True
             if leveled:
                 b["phase"] = f"Naik level! {self.pokemon_data(b['player_id'])['name'].title()} sekarang Lv. {level}."
+            if trainer_leveled:
+                b["phase"] = f"Trainer naik ke Lv.{trainer_level}! XP disimpan untuk evolusi."
             self.save_current()
 
     def advance_trainer_opponent(self):
@@ -3016,6 +3036,8 @@ class LegacyGame:
         self.button("Evolusi · V", (510, 496, 205, 43), self.evolve_selected, bool(target))
         self.button("Aktifkan / keluarkan", (728, 496, 305, 43), self.toggle_active_pokemon,
                     bool(pokemon_id in self.life.pokemon_active if pokemon_id else False))
+        self.text(f"Trainer Lv.{self.life.trainer_level} · XP {self.life.trainer_xp}/{self.life.trainer_level * 100} · Evolusi: 100 XP + level + 10 koin",
+                  245, 532, MUTED, self.small)
         self.text(f"Tim aktif {len(self.life.pokemon_active)}/3 · Tab mengganti saat duel · anggota mati otomatis diganti",
                   245, 555, MUTED, self.small)
         self.button("Keluar center · Esc", (245, 592, 788, 42), self.back)
@@ -4041,7 +4063,9 @@ class LegacyGame:
 from adventure_flow import FlowMixin
 from fighter import FighterMixin
 
-class Game(FlowMixin, FighterMixin, LegacyGame):
+from online_ui import OnlineMixin
+
+class Game(OnlineMixin, FlowMixin, FighterMixin, LegacyGame):
     pass
 
 def main():
