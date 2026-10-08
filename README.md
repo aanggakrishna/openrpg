@@ -1,18 +1,34 @@
 # OpenRPG
 
-Game kehidupan 2D berbasis Python: karakter beranimasi, kebun, peternakan, hutan dengan satwa, market NPC, dan **terminal shell sungguhan di monitor PC dalam kamar**.
+**Game RPG kehidupan 2D berbasis Python dan Pygame.** Jelajahi rumah, kebun, peternakan, hutan, market, serta suaka Pokémon dalam dunia pixel art 8-bit. Rawat kebutuhan karakter, kumpulkan Pokémon, bertarung dalam duel real-time, dan buka terminal shell sungguhan di dalam game.
+
+[Instalasi](#jalankan) · [Kontrol](#kontrol) · [Fitur](#aktivitas) · [Terminal](#terminal-sungguhan) · [Kredit aset](assets/CREDITS.md) · [Lisensi](#lisensi)
 
 ## Jalankan
 
-Di macOS, klik dua kali `run.command`, atau:
+**Persyaratan:** Python 3.10+ dan macOS atau Linux. Katalog dan gambar Pokémon diunduh dari PokéAPI saat pertama kali dibutuhkan; setelah itu data tersimpan dalam cache lokal.
+
+Di macOS, klik dua kali `run.command`. Atau jalankan dari Terminal:
 
 ```sh
+git clone https://github.com/aanggakrishna/openrpg.git
+cd openrpg
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python main.py
 ```
 
-Pilih Nara, Bima, atau Ayu, lalu Enter. Posisi, kesehatan, kebutuhan, tas, uang, kebun, kuda, satwa, cuaca, dan waktu tersimpan otomatis setiap 15 detik serta saat keluar, di `.openrpg/save.json`. Penyimpanan versi lama tetap bisa dibuka.
+Pilih Nara, Bima, atau Ayu, lalu tekan Enter. Progres tersimpan otomatis pada `.openrpg/save.json`; save lama tetap didukung.
+
+## Sekilas fitur
+
+- **Simulasi kehidupan:** makan, minum, istirahat, memasak, berkebun, beternak, memancing, dan merawat kesehatan.
+- **Dunia untuk dijelajahi:** rumah, peternakan, hutan, market, pantai, gunung, serta suaka berukuran **5.120 × 4.800 piksel** dengan 12 habitat.
+- **Satwa dan berkuda:** hewan bergerak dan berinteraksi dengan lingkungannya; beli perlengkapan, berburu, dan tunggangi kuda.
+- **Pokémon:** katalog Pokédex PokéAPI, Pokémon yang berkeliaran, tim hingga tiga Pokémon aktif, Pokémon Center, evolusi, serta pertarungan melawan AI dan pelatih.
+- **Duel arcade real-time:** arena berpanggung, lompatan, tangkisan, serangan, jurus, ultimate, item pemulih, dan Poké Ball dengan peluang tangkap.
+- **Terminal asli:** jalankan shell dan OpenCode dari PC di kamar. Sesi terminal yang sama bisa dibuka di Terminal.app dan terus bekerja saat kamu kembali menjelajahi game.
+- **Retro 8-bit:** dunia pixel art, font piksel, HUD arcade, animasi, dan efek jurus.
 
 ## Aset RPG
 
@@ -25,40 +41,35 @@ Grafis dunia memakai tileset dan sprite PNG asli dari Kenney, diperbesar tanpa s
 
 Paket Kenney berlisensi **CC0**. Karakter kini memakai animasi berjalan empat arah dari [Ninja Adventure](https://pixel-boy.itch.io/ninja-adventure-asset-pack), karya Pixel-Boy dan AAA, juga CC0. Paket tersebut menyediakan NPC, pohon lebih detail, singa, kuda, ayam, babi hutan, hyena, dan monyet. Gajah dan kelinci memakai sprite sheet orisinal yang dibuat dengan ImageGen, masing-masing empat arah dan empat pose berjalan. Satwa Ninja Adventure memakai pose arah dengan gerak bob. Gaya visual tetap pixel art. Kredit dan lisensi tersedia di `assets/CREDITS.md`.
 
-## Kontrol dan aktivitas
+## Kontrol
 
-| Kontrol | Fungsi |
+| Tombol | Fungsi |
 | --- | --- |
 | WASD / panah | Berjalan |
-| E | Interaksi benda terdekat |
-| I | Tas dan catatan aktivitas |
-| Space | Serang dengan senjata; dekat Pokémon atau pelatih untuk mulai duel |
-| 1 / 2 / 3 saat bermain | Pakai tombak / busur / simpan senjata |
-| H | Gunakan obat dari tas |
-| R | Naik kuda terdekat / turun |
-| T / tombol +1 jam | Majukan waktu satu jam |
-| C | Pilih cuaca atau kembali ke cuaca otomatis |
-| B | Buka ponsel dan kirim prompt ke OpenCode |
-| P | Buka Pokédex; ketik nama untuk mencari |
-| N / E di center suaka | Periksa, pulihkan, dan evolusikan tim Pokémon |
-| M | Langsung masuk ke suaka Pokémon |
-| F1 | Bantuan |
-| Esc | Menu; saat di PC, tinggalkan monitor |
-| 1 / 2 / 3 | Pilih karakter di layar awal |
+| E | Berinteraksi; memilih duel atau informasi saat bertemu Pokémon |
+| I | Inventory |
+| H | Memakai obat |
+| R | Naik atau turun dari kuda |
+| T | Memajukan waktu satu jam |
+| C | Membuka pilihan cuaca |
+| B | Membuka tampilan terminal bersama |
+| P | Membuka Pokédex |
+| M | Membuka peta suaka Pokémon; gunakan roda atau +/- untuk zoom |
+| N | Membuka Pokémon Center |
+| Space | Menyerang dengan senjata atau memulai duel jika dekat Pokémon |
+| F1 / Esc | Bantuan / menu |
 
-- **Rumah:** pintu depan. Dapur memasak 1 bahan menjadi 1 makanan, meja makan untuk makan. Air memulihkan minum, sofa memulihkan senang dan energi.
-- **Kamar:** pintu kanan atas ruang keluarga. Tidur mengawali hari berikutnya dan mengisi energi. PC membuka terminal.
-- **Kebun:** E tanam, E siram, tunggu 45 detik waktu bermain, E panen 2 sayur. Benih dan air tidak terbatas.
-- **Peternakan:** beri ayam 1 sayur untuk menerima 2 telur. Jeda 40 detik sebelum pemberian berikutnya.
-- **Kolam:** E melempar umpan, tunggu 2,5 detik hingga TARIK, E dalam 1,7 detik untuk menangkap ikan.
-- **Taman:** bangku untuk bersantai.
-- **Hutan:** ikuti jalan ke kiri halaman. Ada 30 satwa dari enam jenis; satwa berjalan, beristirahat, kabur, dan predator mengejar mangsa. E pada tumpukan kayu untuk mengumpulkan kayu.
-- **Suaka Pokémon:** tekan M kapan saja saat bermain, atau gunakan portal bertanda Pokémon di halaman. Peta seluas 2.560 × 1.600 piksel mengikuti pemain, dengan jalan ke pantai dan gunung. Pokémon berkeliaran, lari menjauh, dan kadang bersembunyi di semak. Dekati lalu tekan Space untuk memulai duel. Spesies generasi awal banyak di dekat pintu; spesies yang lebih langka dan level lebih tinggi muncul makin jauh.
-- **Pokédex:** tekan P untuk melihat daftar PokéAPI, cari berdasarkan nama atau nomor, dan periksa tipe, gambar, serta koleksi. Katalog, detail, evolusi, gambar resmi, dan GIF sprite battle yang telah diunduh disimpan lokal di `.openrpg/pokedex`.
-- **Duel Pokémon real-time:** jelajahi suaka, pantai, atau gunung untuk bertemu Pokémon liar, lalu bertarung satu lawan satu melawan AI. A/D bergerak, W melompat, S menangkis, J / Space menyerang, Q memakai jurus sesuai tipe Pokémon, dan K memakai ultimate setelah meter terisi. Efek api, air, daun, listrik, dan tipe lain punya animasi visual bertema. O / 2 melempar Poké Ball, Tab mengganti Pokémon tim, dan Esc kembali ke peta. HP rendah memberi tanda untuk menangkap. Pertarungan pelatih di arena dan sepanjang jalan memberi uang serta XP.
-- **Pokémon Center:** dekati bangunan putih-merah dekat pintu masuk suaka dan tekan E. N juga membukanya saat berdiri dekat. Periksa tipe, level, XP, dan HP; pulihkan tim; dan evolusikan Pokémon yang memenuhi syarat level-up. Menang duel memberi XP dan level yang tersimpan.
-- **Market:** ikuti jalan ke kanan halaman. Buka 06:00–22:00. Dekati Sari untuk makanan/obat, Budi untuk senjata/panah, atau Danu untuk menjual sayur, telur, ikan, daging, kulit, dan kayu. E membuka perdagangan; pilih jual satu atau semua.
-- **Kuda:** berada di peternakan. Dekati lalu R atau E untuk naik; bisa dibawa menyeberang ke hutan dan market. Masuk rumah otomatis menurunkan penunggang.
+### Aktivitas
+
+- **Rumah dan kamar:** masak dan makan di dapur; isi kebutuhan di ruang keluarga; tidur untuk memulihkan kesehatan dan energi; gunakan PC untuk membuka terminal.
+- **Kebun dan peternakan:** tanam, siram, dan panen sayur; beri makan ayam untuk mengumpulkan telur. Jual hasil panen di market.
+- **Memancing:** lempar umpan di kolam, tunggu ikan menggigit, lalu tarik dengan E.
+- **Hutan:** jelajahi habitat satwa. Predator berburu sesuai waktu; hewan dapat lari, melawan, dan muncul kembali.
+- **Suaka Pokémon:** tekan M atau gunakan portal di halaman. Peta 5.120 × 4.800 terbagi dalam 12 habitat yang terhubung. Pokémon liar berpindah, bersembunyi, dan spesies langka muncul lebih jauh dari pintu masuk.
+- **Pertemuan Pokémon:** dekati Pokémon lalu tekan E untuk memilih duel atau informasi Pokédex. Katalog, sprite, dan data yang sudah diambil disimpan di `.openrpg/pokedex`.
+- **Pokémon Center:** periksa dan pulihkan Pokémon, atur hingga tiga anggota tim aktif, dan evolusikan Pokémon yang memenuhi syarat.
+- **Duel:** bergerak dengan panah; panah atas untuk melompat atau memanjat; Shift untuk menangkis; A untuk pukulan jarak dekat; S dan D untuk jurus; F untuk ultimate; tombol 1–3 untuk mengganti Pokémon; O untuk melempar Poké Ball. Setiap duel dibatasi 60 detik. Pelatih juga menantang pemain di jalan dan arena.
+- **Market:** Sari menjual makanan dan obat, Budi menjual senjata, dan Danu membeli hasil kebun, ternak, ikan, serta buruan. Market buka pukul 06:00–22:00.
 
 ### Berburu dan kesehatan
 
@@ -76,7 +87,7 @@ Lompatan satu jam langsung mengganti jadwal satwa; gerakan satwa selama jam yang
 
 ## Terminal sungguhan
 
-Ponsel dalam game: tekan B, ketik prompt, lalu Enter. Game menjalankan opencode run dengan prompt tersebut di sesi terminal latar belakang, pada folder proyek PC. Awali input dengan ! untuk menjalankan perintah shell biasa. Setelah perintah selesai, game menampilkan notifikasi ponsel. OpenCode memerlukan instalasi dan autentikasi provider yang sudah dikonfigurasi.
+Buka terminal dengan menekan B di mana saja atau gunakan PC di kamar. Terminal menjalankan shell lokal; ketik `opencode` untuk membuka OpenCode, atau gunakan perintah `opencode run` seperti biasa. OpenCode memerlukan instalasi dan autentikasi provider di komputer.
 
 PC membuka **shell login interaktif lokal** menggunakan `$SHELL`, biasanya zsh di macOS atau bash di Linux. Shell memiliki controlling pseudo-terminal untuk mendukung job control dan Ctrl+C. Input keyboard, paste, perintah, file, dan proses adalah nyata.
 
@@ -116,7 +127,7 @@ Anda dapat meninggalkan monitor untuk berkebun atau memancing sementara perintah
 
 Riwayat scroll berisi hingga 2.000 baris. Output baru atau input mengembalikan tampilan ke bagian bawah. Aplikasi CLI yang memakai alternate screen dapat kembali ke layar shell setelah selesai.
 
-## Cakupan
+## Platform dan catatan
 
 Lokasi mencakup halaman, hutan, suaka Pokémon, pantai, gunung, market, rumah, dan kamar. Data katalog PokéAPI memerlukan internet saat pertama dimuat; katalog, detail Pokémon, serta setiap gambar yang sudah diambil dicache lokal. Terminal tertanam mendukung macOS/Linux. Mouse di aplikasi TUI, emoji kompleks, dan protokol gambar terminal belum didukung; gunakan keyboard untuk aplikasi CLI.
 
@@ -139,6 +150,9 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy .venv/bin/python tests/check_game.py
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy .venv/bin/python tests/check_retro.py
 ```
 
-Pemeriksaan retro memakai cache Pokémon 1, 4, 7, dan 15 yang sudah tersedia
-lokal, tanpa permintaan jaringan. Save dan shell pemeriksaan terpisah dari
+Pemeriksaan retro menggunakan data Pokémon contoh dan tidak memerlukan jaringan. Save dan shell pemeriksaan terpisah dari
 save pemain. Hasil render tersimpan di `artifacts/retro/`.
+
+## Lisensi
+
+Kode asli OpenRPG dirilis di bawah [MIT License](LICENSE). Aset pihak ketiga mengikuti lisensinya masing-masing; lihat [daftar kredit dan lisensi aset](assets/CREDITS.md) serta file lisensi yang disertakan pada setiap paket. Lisensi MIT untuk kode OpenRPG tidak mencakup merek dagang atau data dan artwork Pokémon.
