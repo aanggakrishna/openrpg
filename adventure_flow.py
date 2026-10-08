@@ -557,8 +557,16 @@ class FlowMixin:
         if self.mode=='setup' and self.wizard.get('step')==0:
             if event.type==pg.TEXTINPUT:
                 self.wizard['name']=''.join(c for c in self.wizard['name']+event.text if c.isprintable())[:18];return
-            if event.type==pg.KEYDOWN and event.key==pg.K_BACKSPACE:
-                self.wizard['name']=self.wizard['name'][:-1];return
+            if event.type==pg.KEYDOWN:
+                if event.key==pg.K_BACKSPACE:
+                    self.wizard['name']=self.wizard['name'][:-1]
+                elif event.key in (pg.K_RETURN,pg.K_KP_ENTER):
+                    self.next_setup()
+                elif event.key==pg.K_ESCAPE:
+                    self.set_mode('title');pg.key.stop_text_input()
+                # Consume every key while editing the name so letters that are
+                # also game shortcuts cannot activate menus or leave setup.
+                return
         if self.mode=='battle' and event.type==pg.KEYDOWN and self.battle and any(self.battle.get(k) for k in ('ultimate_cutin','capture')) and event.key!=pg.K_ESCAPE:
             return
         if self.mode=='battle' and event.type==pg.KEYDOWN and event.key==pg.K_UP and self.battle:

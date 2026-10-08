@@ -3120,10 +3120,11 @@ class LegacyGame:
             pg.draw.rect(self.canvas, (247, 194, 74), (76, 118, int(440 * b["super_meter"] / 100), 8), border_radius=0)
         self.text(f"ULTIMATE {int(b.get('super_meter', 0))}%", 76, 132, (255, 222, 121), self.small)
         opponent_count = len(b.get("opponent_lineup", [b["wild_id"]]))
-        self.text("TEAM BATTLE" if opponent_count > 1 else "WILD BATTLE", W // 2, 45, CREAM, self.small, True)
-        self.text(f"{BATTLE_WEATHER_EMOJI.get(weather, '☁')} {weather.upper()}  ·  {arena.upper()} ARENA", W // 2, 63, GREEN, self.tiny, True)
+        battle_kind="TEAM BATTLE" if opponent_count > 1 else "WILD BATTLE"
+        self.text(f"{battle_kind}  ·  Lv.{b.get('wild_level',5)}  ·  {b.get('difficulty_label','BALANCED')}", W // 2, 47, CREAM, self.tiny, True)
+        self.text(f"{BATTLE_WEATHER_EMOJI.get(weather, '☁')} {weather.upper()}  ·  {arena.upper()} ARENA", W // 2, 68, GREEN, self.tiny, True)
         if opponent_count > 1:
-            self.text(f"RONDE {b.get('opponent_index', 0) + 1}/{opponent_count}", W // 2, 69, INK, self.tiny, True)
+            self.text(f"RONDE {b.get('opponent_index', 0) + 1}/{opponent_count}", W // 2, 87, CREAM, self.tiny, True)
         # Sprites use the larger cached API art, with squash/stretch on impacts.
         ground = 606
         for platform in b.get("platforms", []):
@@ -3184,9 +3185,22 @@ class LegacyGame:
                     x = int(x + (capture["start_x"] - x) * progress)
                     self.canvas.blit(sprite, (x - size // 2, ground - size + fighter_y))
                 else:
-                    self.canvas.blit(sprite, (x - sprite.get_width() // 2,
-                                              ground - sprite.get_height() + fighter_y))
-                if key == "enemy" and b.get("enemy_guard_timer", 0) > 0:
+                    ko=b.get("ko_anim")
+                    if ko and ko.get("owner")==key and ko.get("pokemon_id")==ident:
+                        progress=1-ko["timer"]/ko["duration"]
+                        eased=progress*progress*(3-2*progress)
+                        turned=pg.transform.rotate(sprite,90*eased)
+                        center=(x,ground-sprite.get_height() / 2 + fighter_y)
+                        self.canvas.blit(turned,turned.get_rect(center=center))
+                        skull_size=int(24+58*eased)
+                        skull_y=int(ground-sprite.get_height()-20-76*eased+fighter_y)
+                        skull=self.emoji_font.render("💀",True,CREAM)
+                        skull=pg.transform.scale(skull,(skull_size,skull_size))
+                        self.canvas.blit(skull,skull.get_rect(center=(x,skull_y)))
+                    else:
+                        self.canvas.blit(sprite, (x - sprite.get_width() // 2,
+                                                  ground - sprite.get_height() + fighter_y))
+                if key == "enemy" and b.get("enemy_guard_timer", 0) > 0 and not (b.get("ko_anim") or {}).get("owner") == key:
                     pg.draw.ellipse(self.canvas, (125, 207, 246),
                                     (x - 58, ground - 124 + fighter_y, 116, 121), 4)
                     shield = self.fruit_font.render("🛡️", True, CREAM)
@@ -3291,7 +3305,8 @@ class LegacyGame:
                     sprite = pg.transform.flip(sprite, True, False)
                 self.canvas.blit(sprite, sprite.get_rect(center=(W // 2, 397)))
             self.text(name, W // 2, 478, CREAM, self.big, True)
-            self.text(f"Lv. {level}   ·   {types or 'Pokédex sedang memuat tipe…'}", W // 2, 518, GREEN, self.small, True)
+            difficulty=(f"   ·   {battle.get('difficulty_label','BALANCED')}" if not player_side else '')
+            self.text(f"Lv. {level}   ·   {types or 'Pokédex sedang memuat tipe…'}{difficulty}", W // 2, 518, GREEN, self.small, True)
             self.text(f"HP {int(health)}/{int(maximum)}   ·   Cry asli PokéAPI", W // 2, 548, CREAM, self.small, True)
             mods = battle.get('environment_mods', {}).get(str(pokemon_id), {})
             attack = int(mods.get('attack', 0)); defense = int(mods.get('defense', 0))

@@ -33,6 +33,14 @@ def skill(move,ultimate=False):
 
 class FighterMixin:
     def update_battle(self,dt):
+        b=self.battle
+        if b and b.get('ko_anim'):
+            ko=b['ko_anim'];ko['timer']=max(0,ko['timer']-dt)
+            if ko['timer']<=0:
+                b.pop('ko_anim',None)
+                if ko.get('next_pokemon') is not None and not b.get('result'):
+                    self.switch_battle_pokemon(ko['next_pokemon'],True)
+            return
         super().update_battle(dt)
         if self.battle and self.battle.get('result'):
             self.update_shots(dt)
@@ -48,11 +56,27 @@ class FighterMixin:
         b.setdefault('guard',100.0);b.setdefault('player_vx',0.0);b.setdefault('enemy_vy',0.0)
         b.setdefault('guard_break',0.0);b.setdefault('enemy_decision',.6)
         b['api_moves']=[m['name'] for m in pokemon_db.loadout(b['player_id'])[:2]]
+        self.refresh_battle_difficulty()
         if b.get('player_max'):
             b['environment_mods']={
                 str(b['player_id']):self.environment_modifiers(b['player_id']),
                 str(b['wild_id']):self.environment_modifiers(b['wild_id']),
             }
+
+    def refresh_battle_difficulty(self):
+        b=self.battle
+        if not b:return
+        player_level=self.pokemon_level(int(b['player_id']))
+        enemy_level=max(1,int(b.get('wild_level',5)))
+        gap=enemy_level-player_level
+        b['level_gap']=gap
+        if gap<=-10:label=self.words('MUDAH','EASY')
+        elif gap<=7:label=self.words('SEIMBANG','BALANCED')
+        elif gap<=17:label=self.words('SULIT','HARD')
+        else:label=self.words('ELITE','ELITE')
+        b['difficulty_label']=label
+        b['enemy_power_factor']=max(.8,min(1.28,1+gap*.006))
+        b['enemy_reflex_factor']=max(.62,min(1.28,1+gap*.009))
 
     def environment_modifiers(self,ident):
         """Small, visible attack/defence shifts from stage affinity and weather."""
@@ -98,7 +122,7 @@ class FighterMixin:
 
     def can_attack(self):
         b=self.battle
-        return bool(b and 'wild_hp' in b and not any(b.get(k) for k in ('result','intro','capture','ultimate_cutin')) and not self.needs_depleted() and b.get('player_cooldown',0)<=0)
+        return bool(b and 'wild_hp' in b and not any(b.get(k) for k in ('result','intro','capture','ultimate_cutin','ko_anim')) and not self.needs_depleted() and b.get('player_cooldown',0)<=0)
 
     def pokemon_attack(self,heavy=False):
         if not self.can_attack():return
@@ -221,8 +245,14 @@ class FighterMixin:
         b['enemy_decision']=max(0,b.get('enemy_decision',.5)-dt)
         if b['enemy_decision']==0:
             gap=abs(b['player_x']-b['enemy_x']);direction=1 if b['player_x']>b['enemy_x'] else -1
-            action=self.pokemon_rng.choices(('approach','attack','guard','retreat','jump'),(5 if gap>400 else 1,6,2,1,1))[0]
-            b['enemy_action']=action;b['enemy_decision']=self.pokemon_rng.uniform(.45,.95)
+            level_gap=b.get('level_gap',0)
+            attack_weight=max(3,min(10,6+level_gap*.12))
+            guard_weight=max(1,min(4,2-level_gap*.06))
+            action=self.pokemon_rng.choices(('approach','attack','guard','retreat','jump'),
+                (5 if gap>400 else 1,attack_weight,guard_weight,1,1))[0]
+            b['enemy_action']=action
+            low=max(.3,min(.85,.7-level_gap*.009));high=max(low+.16,min(1.15,1.02-level_gap*.01))
+            b['enemy_decision']=self.pokemon_rng.uniform(low,high)/b.get('enemy_reflex_factor',1)
             b['enemy_axis']=direction if action=='approach' else -direction if action=='retreat' else 0
             if action=='guard':b['enemy_guard_timer']=.7
             if action=='attack' and b['enemy_cooldown']<=0:
@@ -230,7 +260,9 @@ class FighterMixin:
                 if moves:
                     move=self.pokemon_rng.choice(moves[:2])
                     if gap<=move['range']:
-                        self.cast_move('enemy',move);b['enemy_cooldown']=self.pokemon_rng.uniform(1.3,2.2)
+                        self.cast_move('enemy',move)
+                        cooldown_scale=max(.68,min(1.22,1-(level_gap*.009)))
+                        b['enemy_cooldown']=self.pokemon_rng.uniform(1.3,2.2)*cooldown_scale
                     else:b['enemy_axis']=direction
         self.physics('enemy',dt,b.get('enemy_axis',0),b.get('enemy_action')=='jump',True)
         self.update_shots(dt)
@@ -260,6 +292,9 @@ class FighterMixin:
             if hit:
                 self.apply_hit(shot,target)
                 b['impacts'].append({'x':shot['x'],'y':shot['y'],'timer':.35,'color':COLORS.get(shot['type'],retro.GOLD),'emoji':shot['emoji']})
+                if b.get('ko_anim'):
+                    remaining.clear()
+                    break
             elif not expired:remaining.append(shot)
             else:b['impacts'].append({'x':shot['x'],'y':shot['y'],'timer':.18,'color':retro.MUTED,'emoji':'💨'})
         b['shots']=remaining
@@ -276,6 +311,11 @@ class FighterMixin:
         attacker=self.pokemon_data(shot['source_id']);defender=self.pokemon_data(ident)
         factor=pokemon_db.effectiveness(shot['type'],tuple(t['type']['name'] for t in (defender or {}).get('types',[])))
         power=shot['power'];damage=max(4,int(power*.16+self.base_stat(attacker,'special-attack',50)*.045-self.base_stat(defender,'special-defense',50)*.025))
+        attacker_level=(int(b.get('wild_level',5)) if shot['source_id']==b.get('wild_id') else self.pokemon_level(int(shot['source_id'])))
+        defender_level=(int(b.get('wild_level',5)) if ident==b.get('wild_id') else self.pokemon_level(int(ident)))
+        level_factor=max(.8,min(1.35,1+(attacker_level-defender_level)*.009))
+        damage=int(damage*level_factor)
+        if target=='player':damage=int(damage*b.get('enemy_power_factor',1))
         mods=b.get('environment_mods',{})
         attack_mod=mods.get(str(shot['source_id']),{}).get('attack',0)
         defense_mod=mods.get(str(ident),{}).get('defense',0)
@@ -295,9 +335,16 @@ class FighterMixin:
             self.life.pokemon_health[str(ident)]=b['player_hp']
             if b['player_hp']<=0:
                 living=[i for i in self.active_pokemon_team() if i!=ident and self.life.pokemon_health.get(str(i),0)>0]
-                if living:self.switch_battle_pokemon(living[0],True)
-                else:b['result']=self.words('Tim KO / Esc kembali','Team KO / Esc to return')
-        elif b['wild_hp']<=0:self._win_battle()
+                b['ko_anim']={'owner':'player','pokemon_id':ident,'timer':.82,'duration':.82,
+                              'next_pokemon':living[0] if living else None}
+                b['shots']=[]
+                name=(self.pokemon_data(ident) or {}).get('name','Pokémon').title()
+                b['phase']=self.words(f'{name} tumbang!',f'{name} fainted!')
+                if not living:b['result']=self.words('Tim KO / Esc kembali','Team KO / Esc to return')
+        elif b['wild_hp']<=0:
+            b['ko_anim']={'owner':'enemy','pokemon_id':ident,'timer':.82,'duration':.82,'next_pokemon':None}
+            b['shots']=[]
+            self._win_battle()
 
     def draw_fight_vfx(self,b):
         for shot in b.get('shots',[]):

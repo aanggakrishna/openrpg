@@ -6,7 +6,7 @@
 
 ## Getting started
 
-**Requirements:** Python 3.10+ and macOS or Linux. Pokémon catalog entries and images are fetched from PokéAPI when first needed and stored in a local cache.
+**Requirements:** Python 3.10+ and macOS or Linux. The Pokédex database is included in a compressed seed file and installed into the local cache the first time the game starts. Pokémon artwork is fetched from PokéAPI when needed and cached locally.
 
 On macOS, double-click `run.command`. Or launch from a terminal:
 
@@ -18,7 +18,7 @@ python3 -m venv .venv
 .venv/bin/python main.py
 ```
 
-Choose Nara, Bima, or Ayu, then press Enter. Progress is saved automatically to `.openrpg/save.json`; existing saves remain supported.
+Select **New Game**, choose an empty profile, enter a name, and finish character setup. The game gives you a random low-level starter Pokémon. Progress is saved automatically; existing saves remain supported.
 
 ## Features at a glance
 
@@ -164,21 +164,23 @@ Menus support mouse input or **arrow keys + Enter**; **Esc** goes back. In the P
 - Wild Pokémon and trainers have a **30% chance per encounter** to approach and offer a battle, with a cooldown and accept/decline choice. Menus and the terminal are safe from interruptions.
 - Settings include language, music/effect/cry volumes and reduced flashes.
 
-### Local Pokémon database
+### Pokémon data and offline setup
 
-Build the local database from official PokéAPI CSV data before playing the updated fighter mode:
+A compact Pokédex database seed is bundled at `assets/data/pokedex.sqlite3.gz`. On first launch it is expanded to `.openrpg/database/pokedex.sqlite3`, so new clones have Pokémon species, stats, moves, types, and encounters without running a separate setup command. The game downloads a Pokémon's sprite when that Pokémon is first needed and reuses the cached image on later visits. An internet connection is needed for sprites that are not already cached.
+
+To refresh the local database from the upstream PokéAPI CSV tables:
 
 ```sh
 .venv/bin/python tools/build_pokedex.py
 ```
 
-Optionally download all standard species sprites and unmodified cries for offline use:
+Optionally download all standard species sprites and unmodified cries for offline use (a large download):
 
 ```sh
 .venv/bin/python tools/cache_pokemon_media.py
 ```
 
-Both commands resume existing downloads. Database files live in `.openrpg/database/`; media remain in `.openrpg/pokedex/`; new profiles are in `.openrpg/profiles/`. The original save remains `.openrpg/save.json`. CSV metadata are queried on demand and map artwork is cached by area, so downloading the collection does not load all media into memory.
+Both commands resume existing downloads. The bundled database seed is only a starter and contains no sprite artwork; downloaded media remain in `.openrpg/pokedex/`, and are not needed in Git for a normal online game. New profiles are in `.openrpg/profiles/`; the original save remains `.openrpg/save.json`. Species metadata is queried on demand, and map artwork is cached by area, so the full collection is not loaded into memory at once.
 
 Validation:
 

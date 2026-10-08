@@ -1,9 +1,32 @@
 """Read-only, on-demand access to the official local PokéAPI dataset."""
+import gzip
+import shutil
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 from functools import lru_cache
 PATH = Path(__file__).resolve().parent / '.openrpg/database/pokedex.sqlite3'
+PACKAGED_PATH = Path(__file__).resolve().parent / 'assets/data/pokedex.sqlite3.gz'
+
+def _install_packaged_database():
+    """Install the small bundled Pokédex database on a fresh checkout.
+
+    The writable cache stays under .openrpg/ (and is intentionally ignored by
+    git); this compressed seed makes a clone immediately playable without a
+    separate CSV download/build step. Existing user databases are preserved.
+    """
+    if PATH.exists() or not PACKAGED_PATH.is_file():
+        return
+    PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = PATH.with_suffix('.sqlite3.tmp')
+    try:
+        with gzip.open(PACKAGED_PATH, 'rb') as source, temporary.open('wb') as target:
+            shutil.copyfileobj(source, target)
+        temporary.replace(PATH)
+    except (OSError, EOFError):
+        temporary.unlink(missing_ok=True)
+
+_install_packaged_database()
 
 @lru_cache(maxsize=256)
 def detail(ident):
