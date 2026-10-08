@@ -436,13 +436,62 @@ class FlowMixin:
     def draw_invitation(self):
         inv=self.invitation
         self.canvas.fill((12,19,38))
-        self.text(self.words('TANTANGAN BARU','A NEW CHALLENGER'),640,166,GOLD,self.big,True)
         trainer=inv.get('trainer');pokemon=inv.get('wild')
-        name=trainer['name'] if trainer else (self.pokemon_data(pokemon['id']) or pokemon_db.detail(pokemon['id']) or {}).get('name','Pokémon').title()
-        self.text(name,640,288,C,self.big,True)
-        self.text(self.words('Ingin bertarung? Kamu boleh menolak.','Ready for a battle? You can decline.'),640,376,M,self.font,True)
-        self.button(self.words('Terima','Accept'),(300,500,310,60),self.accept_invitation,True)
-        self.button(self.words('Tolak','Decline'),(670,500,310,60),self.decline_invitation)
+        opponent_id=int(pokemon['id']) if pokemon else int((trainer or {}).get('team',[1])[0])
+        opponent_detail=self.pokemon_data(opponent_id) or pokemon_db.detail(opponent_id) or {}
+        opponent_name=opponent_detail.get('name',f'Pokémon #{opponent_id}').title()
+        title=(trainer['name'] if trainer else opponent_name)
+        self.text(self.words('TANTANGAN BARU','A NEW CHALLENGER'),640,72,GOLD,self.big,True)
+        self.text(title,640,125,C,self.medium,True)
+        self.text(self.words('Ingin bertarung? Kamu boleh menolak.','Ready for a battle? You can decline.'),640,165,M,self.small,True)
+
+        # Rival card: show the actual Pokémon sprite, even when an NPC trainer
+        # initiated the challenge. Missing media gets requested from PokéAPI.
+        self.box((126,205,358,330),retro.PANEL,10,retro.MUTED)
+        self.text(self.words('POKÉMON LAWAN','OPPONENT POKÉMON'),305,230,retro.GOLD,self.small,True)
+        if opponent_id not in self.poke_surfaces:
+            self.pokedex.request(opponent_id)
+        rival_sprite=self.pokemon_surface(opponent_id,174)
+        if rival_sprite:
+            rival_sprite=rival_sprite.copy()
+            rival_sprite=pg.transform.flip(rival_sprite,True,False)
+            self.canvas.blit(rival_sprite,rival_sprite.get_rect(center=(305,356)))
+        else:
+            self.text('…',305,355,C,self.big,True)
+        opponent_level=pokemon.get('level',5) if pokemon else (trainer or {}).get('level',5)
+        opponent_types=' · '.join(t['type']['name'].title() for t in opponent_detail.get('types',[]))
+        self.text(opponent_name,305,465,C,self.font,True)
+        self.text(self.words(f'Lv. {opponent_level}',f'Lv. {opponent_level}')+'  ·  '+(opponent_types or self.words('Memuat tipe…','Loading types…')),
+                  305,499,retro.GREEN,self.tiny,True)
+
+        # Show the player's whole active lineup (at most three) so the player
+        # can see which team will enter the battle before accepting.
+        team=self.active_pokemon_team()[:3]
+        self.box((524,205,630,330),retro.PANEL,10,retro.MUTED)
+        self.text(self.words('TIM AKTIF ANDA','YOUR ACTIVE TEAM'),839,230,retro.GOLD,self.small,True)
+        card_w=184;gap=17;total=len(team)*card_w+max(0,len(team)-1)*gap
+        start_x=839-total/2
+        for i,ident in enumerate(team):
+            x=int(start_x+i*(card_w+gap));y=257
+            self.box((x,y,card_w,248),retro.INK,8,retro.MUTED)
+            if ident not in self.poke_surfaces:
+                self.pokedex.request(ident)
+            sprite=self.pokemon_surface(ident,112)
+            if sprite:
+                self.canvas.blit(sprite,sprite.get_rect(center=(x+card_w//2,y+77)))
+            detail=self.pokemon_data(ident) or pokemon_db.detail(ident) or {}
+            member_name=detail.get('name',f'Pokémon #{ident}').title()
+            self.text(f'{i+1}. {member_name}',x+card_w//2,y+151,C,self.tiny,True)
+            level=self.pokemon_level(ident)
+            hp=self.life.pokemon_health.get(str(ident),0)
+            maximum=self.base_stat(detail,'hp',45)+level*2
+            self.text(f'Lv. {level}  ·  HP {min(hp,maximum)}/{maximum}',x+card_w//2,y+179,retro.GREEN,self.tiny,True)
+            member_types=' / '.join(t['type']['name'].upper() for t in detail.get('types',[]))
+            if member_types:self.text(member_types,x+card_w//2,y+209,retro.MUTED,self.tiny,True)
+
+        self.text(self.words('Satu Pokémon akan turun lebih dulu; tim aktif maksimal 3.','One Pokémon enters first; active team limit is 3.'),640,568,M,self.tiny,True)
+        self.button(self.words('Terima','Accept'),(300,630,310,58),self.accept_invitation,True)
+        self.button(self.words('Tolak','Decline'),(670,630,310,58),self.decline_invitation)
 
     def accept_invitation(self):
         inv=self.invitation;self.encounter_grace=25
