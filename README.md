@@ -18,6 +18,8 @@ python3 -m venv .venv
 .venv/bin/python main.py
 ```
 
+After pulling updates, run the `pip install -r requirements.txt` command again so Python installs the bundled CA certificates used for secure PokéAPI downloads.
+
 Select **New Game**, choose an empty profile, enter a name, and finish character setup. The game gives you a random low-level starter Pokémon. Progress is saved automatically; existing saves remain supported.
 
 ## Features at a glance

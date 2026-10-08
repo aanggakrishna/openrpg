@@ -5,10 +5,16 @@ import json
 import pokemon_db
 from pathlib import Path
 import queue
+import ssl
 import threading
 from urllib.request import Request, urlopen
+try:
+    import certifi
+except ImportError:  # Keep offline/cached play working before dependencies are refreshed.
+    certifi = None
 
 API = "https://pokeapi.co/api/v2"
+TLS_CONTEXT = ssl.create_default_context(cafile=certifi.where()) if certifi else ssl.create_default_context()
 
 
 class PokedexClient:
@@ -50,7 +56,7 @@ class PokedexClient:
 
     def _get(self, url):
         request = Request(url, headers={"User-Agent": "OpenRPG/0.3 (Pokédex cache)"})
-        with urlopen(request, timeout=14) as response:
+        with urlopen(request, timeout=14, context=TLS_CONTEXT) as response:
             return response.read()
 
     def request_catalog(self):
