@@ -217,9 +217,16 @@ class PokedexClient:
                         tmp = detail_path.with_suffix(".tmp")
                         tmp.write_text(json.dumps(detail), encoding="utf-8")
                         tmp.replace(detail_path)
-                    image = sprite_path.read_bytes() if sprite_path.exists() else None
+                    packaged_sprite = (Path(__file__).resolve().parent / "assets" /
+                                       "pokemon-sprites" / f"{pokemon_id}.png")
+                    if sprite_path.exists():
+                        image = sprite_path.read_bytes()
+                    else:
+                        image = None
                     if image is not None and not image.startswith(b"\x89PNG\r\n\x1a\n"):
                         image = None
+                    if image is None and packaged_sprite.is_file():
+                        image = packaged_sprite.read_bytes()
                     if image is None:
                         sprites = detail.get("sprites", {})
                         image_urls = (
