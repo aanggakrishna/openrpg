@@ -119,6 +119,22 @@ class RedesignTests(unittest.TestCase):
         self.assertEqual(g.center_cost(),0)
         g.draw();pg.image.save(g.canvas,str(ROOT/'artifacts/redesign-center.png'))
 
+    def test_pokemon_center_pokeball_purchase_and_capacity(self):
+        g=self.game;g.life=Life(money=200);g.life.bag['Pokeball']=5
+        g.buy_center_pokeballs()
+        self.assertEqual(g.life.bag['Pokeball'],10)
+        self.assertEqual(g.life.money,140)
+        # Partial purchase fits the remaining capacity instead of rejecting it.
+        g.life.bag['Pokeball']=8;g.buy_center_pokeballs()
+        self.assertEqual(g.life.bag['Pokeball'],10)
+        self.assertEqual(g.life.money,116)
+        g.buy_center_pokeballs()
+        self.assertEqual(g.life.bag['Pokeball'],10)
+        self.assertEqual(g.life.money,116)
+        g.life.bag['Pokeball']=5;g.life.money=10;g.buy_center_pokeballs()
+        self.assertEqual(g.life.bag['Pokeball'],5)
+        self.assertEqual(g.life.money,10)
+
     def test_05_combat_gravity_projectiles_and_ai(self):
         g=self.game;g.life=Life();g.begin_pokemon_battle(4);b=g.battle;b['intro']=None;b['platforms']=[]
         for ident in (1,4):

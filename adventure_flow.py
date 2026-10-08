@@ -8,7 +8,7 @@ import time
 import pygame as pg
 import retro
 import pokemon_db
-from state import Life
+from state import Life, BUY
 from wildlife import Wildlife
 from art import PLAYER_STYLES, RESERVE_CENTERS
 ROOT = Path(__file__).resolve().parent
@@ -276,6 +276,15 @@ class FlowMixin:
         self.center_message=self.words(f'Tim pulih! Biaya {cost} koin.',f'Team restored! Cost: {cost} coins.')
         self.save_current();self.play_action_sound('pickup-rare',.3)
 
+    def buy_center_pokeballs(self):
+        remaining=max(0,10-int(self.life.bag.get('Pokeball',0)))
+        quantity=min(5,remaining)
+        if quantity<=0:
+            self.center_message=self.words('Tas sudah penuh: maksimal 10 Poké Ball.','Bag is full: maximum 10 Poké Balls.')
+            self.play_action_sound('not-enough-money',.25)
+            return
+        self.trade('Pokeball',True,quantity)
+
     def open_pokemon_center(self):
         if self.life.scene!='reserve' or min(math.hypot(self.life.x-x,self.life.y-y) for x,y in RESERVE_CENTERS)>150:
             self.notify(self.words('Dekati Pokémon Center untuk perawatan.','Approach a Pokémon Center for service.'));return
@@ -312,6 +321,13 @@ class FlowMixin:
         selected=self.pokemon_data(ident) or {}
         self.text(' / '.join(t['type']['name'].upper() for t in selected.get('types',[]))+f'   Lv.{self.pokemon_level(ident)}',610,555,M,self.small)
         self.text(' / '.join(m['name'] for m in self.skills_for(ident)[:2])[:64],610,649,G,self.small)
+        balls=int(self.life.bag.get('Pokeball',0));quantity=min(5,max(0,10-balls))
+        self.text(self.words(f'Poké Ball {balls}/10  ·  Uang {self.life.money} koin',
+                             f'Poké Balls {balls}/10  ·  Money {self.life.money} coins'),65,548,M,self.small)
+        purchase_label=(self.words(f'Beli {quantity} Poké Ball · {quantity*BUY["Pokeball"]} koin',
+                                   f'Buy {quantity} Poké Balls · {quantity*BUY["Pokeball"]} coins')
+                        if quantity else self.words('Kapasitas Poké Ball penuh','Poké Ball capacity full'))
+        self.button(purchase_label,(65,575,473,45),self.buy_center_pokeballs,quantity>0)
         self.button(self.words('Pulihkan tim','Heal team')+f' / ${self.center_cost()}',(610,575,285,50),self.heal_pokemon_party)
         self.button(self.words('Evolusi','Evolve')+' / $10',(915,575,285,50),self.evolve_selected)
         self.button('<',(65,632,75,45),lambda:self.page_center(-1))
