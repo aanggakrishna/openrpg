@@ -2,6 +2,34 @@
 
 **A 2D life RPG built with Python and Pygame.** Explore a home, garden, farm, forest, market, and Pokémon sanctuary in an 8-bit pixel-art world. Take care of your character, collect Pokémon, fight real-time battles, and open a real shell terminal inside the game.
 
+## Web edition (Vercel)
+
+This branch also includes an early browser edition. It has a separate HTML Canvas client and Vercel Node.js API routes; the Pygame desktop edition remains available. Web accounts use a username and password, with bcrypt password hashes and secure session cookies. Game saves use Neon Postgres. The browser edition does not expose a machine terminal.
+
+### Deploy
+
+1. Create a [Neon Postgres](https://neon.tech/) database and copy its connection string.
+2. Import this repository into Vercel, with the **`openrpg-web` branch** selected.
+3. Set `DATABASE_URL` and a random `SESSION_SECRET` (at least 32 bytes) in Vercel Project Settings → Environment Variables. `NEXT_PUBLIC_ONLINE_SERVER_URL` is optional and sets the default multiplayer server address.
+4. Deploy. Vercel builds the local Pokédex JSON and copies bundled Pokémon sprites into the static output. The database schema is created on the first account request.
+
+Local web development requires Node.js 20 or newer:
+
+```sh
+npm install
+cp .env.example .env.local
+# Fill in DATABASE_URL and SESSION_SECRET in .env.local
+npm run dev
+```
+
+The Vercel CLI serves the static client and account/save functions locally. The browser edition implements exploration across 16 lazy-populated biomes, local real-time Pokémon battles, the 1,025-species Pokédex, inventory and three active Pokémon, daily quests, basic home/garden/market/center activities, account saves, and a client for OpenRPG's multiplayer server. Music and effects are fetched when played; Pokédex sprites load when displayed. It is a web port in progress, not yet a feature-for-feature replacement for every desktop activity.
+
+### Multiplayer server
+
+Multiplayer stays on the separate OpenRPG server. Set its URL in the optional `NEXT_PUBLIC_ONLINE_SERVER_URL` variable, or enter it in the game. Update the server to the version in this branch so it includes browser CORS support. A deployed Vercel site uses HTTPS, so the multiplayer server must also be reachable through HTTPS; browsers block calls from the secure game site to an `http://` server. Configure TLS on your server or a reverse proxy and allow the game site's origin. The desktop Pygame client can continue using the server over HTTP on a trusted network.
+
+Web save accounts and the multiplayer server's player profiles are separate: when a browser player connects for the first time, the game creates/uses the server's own profile token in that browser. Friends must use the same server URL and room code to meet in the same room.
+
 [Online multiplayer](docs/ONLINE.md) · [Getting started](#getting-started) · [Controls](#controls) · [Activities](#activities) · [Real terminal](#real-terminal) · [Asset credits](assets/CREDITS.md) · [License](#license)
 
 ## Getting started
@@ -70,7 +98,7 @@ The Kenney packs are licensed **CC0**. Four-direction walking animations come fr
 - **Pokémon sanctuary:** press M or use the portal in the yard. The 5,120 × 4,800 map contains 12 connected habitats. Wild Pokémon roam and hide; rarer species appear farther from the entrance.
 - **Pokémon encounters:** approach a Pokémon and press E to choose a battle or view Pokédex information. Downloaded catalog data and sprites are cached in `.openrpg/pokedex`.
 - **Pokémon Center:** inspect and heal Pokémon, choose up to three active party members, and evolve Pokémon that meet the requirements.
-- **Battles:** move with the arrow keys; press Up to jump or climb, Shift to guard, A for a close-range punch, S/D for moves, F for an ultimate, 1–3 to switch Pokémon, and O to throw a Poké Ball. Battles have a 60-second limit. Trainers also challenge you on the road and in the arena.
+- **Battles:** move with the arrow keys; press Up to jump or climb, **A** for a close-range attack, **S** to guard, **Q** for a stun skill, **W** for a close-range skill, **E** for a ranged skill, and **R** for an ultimate. These controls match in local and online PvP. Guard lets 15% of regular damage and 40% of ultimate damage through. Use 1–3 to switch Pokémon and O to throw a Poké Ball. Battles have a 60-second limit. Trainers also challenge you on the road and in the arena.
 - **Market:** Sari sells food and medicine, Budi sells weapons, and Danu buys crops, farm goods, fish, and hunting loot. The market is open from 06:00 to 22:00.
 
 ### Hunting and health
@@ -162,7 +190,7 @@ Menus support mouse input or **arrow keys + Enter**; **Esc** goes back. In the P
 - **J:** daily quests, manual reward claims, daily completion bonus and ticket gacha. Completed unclaimed rewards remain available after a day change. Gacha pools are shown in the UI; duplicates award coins.
 - **Pokémon Center:** browse a paginated collection, select a Pokémon and choose one of three active slots. Healing the active team costs 5–20 coins depending on missing HP (free when already healthy). Sleeping at home can restore the active team for free.
 - Carry up to **10 empty Poké Balls**, with **3 active Pokémon** and a collection that is no longer limited to six species. Duplicate species share their collection entry.
-- **Combat:** arrows move/jump/drop, **A** strikes at close range, **S/D** use learnset-based skills, **F** uses an ultimate, **Shift** guards and **1/2/3** switches the active fighter. Skill cards show names and individual cooldowns. Attacks travel toward the target's position and can miss. Guarding uses a separate guard meter.
+- **Combat:** arrows move/jump/drop, **A** attacks at close range, **S** guards, **Q** uses a Pokédex-based stun skill, **W** uses a close-range skill, **E** uses a ranged skill, and **R** launches the type-themed ultimate. Local and online PvP share these controls. Ultimate attacks use a character cut-in, fast beam, and elemental explosion; guarding reduces regular damage by 85% and ultimate damage by 60%. **1/2/3** switches the active fighter. Skill cards show names and cooldowns, and attacks can miss.
 - Wild Pokémon and trainers have a **30% chance per encounter** to approach and offer a battle, with a cooldown and accept/decline choice. Menus and the terminal are safe from interruptions.
 - Settings include language, music/effect/cry volumes and reduced flashes.
 

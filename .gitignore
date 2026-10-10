@@ -3,3 +3,7 @@ __pycache__/
 .openrpg/
 computer-workspace/
 artifacts/
+/public/assets/pokemon-sprites/
+/public/assets/audio/
+/node_modules/
+/.vercel/
