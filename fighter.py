@@ -18,6 +18,8 @@ from combat_rules import EMOJI, VARIANTS, skill, fighter_loadout
 class FighterMixin:
     def update_battle(self,dt):
         b=self.battle
+        if b and b.get('matchup_tip_timer',0)>0:
+            b['matchup_tip_timer']=max(0,b['matchup_tip_timer']-dt)
         if b and b.get('ko_anim'):
             ko=b['ko_anim'];ko['timer']=max(0,ko['timer']-dt)
             for impact in b.get('impacts',[]):impact['timer']=max(0,impact['timer']-dt)
@@ -42,13 +44,57 @@ class FighterMixin:
         b.setdefault('guard',100.0);b.setdefault('player_vx',0.0);b.setdefault('enemy_vy',0.0)
         b.setdefault('guard_break',0.0);b.setdefault('enemy_decision',.6)
         b.setdefault('player_stun_timer',0.0);b.setdefault('enemy_stun_timer',0.0)
-        b['api_moves']=[m['name'] for m in pokemon_db.loadout(b['player_id'])[:2]]
+        b['api_moves']=[m['name'] for m in pokemon_db.loadout(b['player_id'])[:3]]
+        b['matchup_tip']=self.matchup_tips(b['player_id'],b['wild_id'])
+        b['matchup_tip_timer']=5.8 if b['matchup_tip'] else 0.0
         self.refresh_battle_difficulty()
         if b.get('player_max'):
             b['environment_mods']={
                 str(b['player_id']):self.environment_modifiers(b['player_id']),
                 str(b['wild_id']):self.environment_modifiers(b['wild_id']),
             }
+
+    def matchup_tips(self,attacker_id,defender_id):
+        """Give a short, offline-only reminder based on the real type chart."""
+        defender=self.pokemon_data(defender_id) or {}
+        attacker=self.pokemon_data(attacker_id) or {}
+        defense=tuple(t.get('type',{}).get('name','normal') for t in defender.get('types',[]))
+        target=defender.get('name','opponent').title()
+        result=[]
+        for move in pokemon_db.loadout(attacker_id):
+            attack_type=move['type']['name']
+            factor=pokemon_db.effectiveness(attack_type,defense)
+            label=f"{attack_type.title()} → {target}: ×{factor:g}"
+            if factor>=2:
+                result.append((0,EMOJI.get(attack_type,'✨'),self.words(f"Kuat · {label}",f"Strong · {label}")))
+            elif factor==0:
+                result.append((1,EMOJI.get(attack_type,'✨'),self.words(f"Tak mempan · {label}",f"No effect · {label}")))
+            elif factor<=.5:
+                result.append((2,EMOJI.get(attack_type,'✨'),self.words(f"Ditahan · {label}",f"Resisted · {label}")))
+        if not result:
+            for move in pokemon_db.loadout(defender_id):
+                attack_type=move['type']['name']
+                factor=pokemon_db.effectiveness(attack_type,
+                    tuple(t.get('type',{}).get('name','normal') for t in attacker.get('types',[])))
+                if factor>=2:
+                    result.append((3,EMOJI.get(attack_type,'✨'),self.words(
+                        f"Waspada · serangan {attack_type.title()} lawan ×{factor:g}",
+                        f"Watch out · enemy {attack_type.title()} move ×{factor:g}")))
+                    break
+        if not result:
+            for move in pokemon_db.loadout(attacker_id):
+                attack_type=move['type']['name']
+                factor=pokemon_db.effectiveness(attack_type,defense)
+                if factor==1:
+                    result.append((4,EMOJI.get(attack_type,'✨'),self.words(
+                        f"Netral · {attack_type.title()} → {target}: ×1",
+                        f"Neutral · {attack_type.title()} → {target}: ×1")))
+                    break
+        if not result:
+            result.append((5,'✨',self.words('Kuat ×2 · ditahan ×½ · kebal ×0',
+                                             'Strong ×2 · resisted ×½ · immune ×0')))
+        result.sort(key=lambda item:item[0])
+        return [(emoji,text) for _,emoji,text in result[:2]]
 
     def refresh_battle_difficulty(self):
         b=self.battle
@@ -108,8 +154,33 @@ class FighterMixin:
         return result
 
     def fighter_size(self,ident):
-        height=(self.pokemon_data(ident) or {}).get('height',7)
-        return int(max(48,min(98,48+math.sqrt(height)*9)))
+        # PokéAPI height is in decimetres. Scale proportionally with soft
+        # bounds so tiny and enormous species read differently without
+        # becoming invisible or covering the whole arena.
+        height_dm=(self.pokemon_data(ident) or {}).get('height',10)
+        height_m=max(.1,float(height_dm)/10)
+        return int(round(max(44,min(112,68*height_m**.42))))
+
+    def fighter_speed(self,ident,who='player'):
+        detail=self.pokemon_data(ident) or {}
+        speed=next((int(row.get('base_stat',70)) for row in detail.get('stats',[])
+                    if row.get('stat',{}).get('name')=='speed'),70)
+        base=206 if who=='player' else 166
+        return max(125,min(270,base+(speed-70)*.52))
+
+    def spawn_jump_dust(self,who,ident,floor_y):
+        b=self.battle
+        if not b or self.life.reduced_motion:return
+        detail=self.pokemon_data(ident) or {}
+        weight_kg=max(.1,float(detail.get('weight',100))/10)
+        count=3+min(10,int(math.log10(weight_kg+1)*3.2))
+        rng=self.pokemon_rng
+        for _ in range(count):
+            b.setdefault('dust_particles',[]).append({
+                'x':b[who+'_x']+rng.uniform(-14,14),'y':606+floor_y+rng.uniform(-2,2),
+                'vx':rng.uniform(-62,62),'vy':rng.uniform(-105,-32),
+                'ttl':rng.uniform(.22,.48),'duration':.48,
+                'size':rng.uniform(3.5,6.5)+min(3,math.log10(weight_kg+1)*.7)})
 
     def skill_key(self,ident,slot):return f'{ident}:{slot}'
 
@@ -189,7 +260,7 @@ class FighterMixin:
     def physics(self,who,dt,axis,jump=False,hold=False,down=False):
         b=self.battle;ident=b['player_id' if who=='player' else 'wild_id']
         x=b[who+'_x'];y=b[who+'_y'];vy=b.get(who+'_vy',0)
-        target_speed=axis*(240 if who=='player' else 175)
+        target_speed=axis*self.fighter_speed(ident,who)
         vx=b.get(who+'_vx',0)
         acceleration=1600 if axis else 1900
         vx+=max(-acceleration*dt,min(acceleration*dt,target_speed-vx))
@@ -204,7 +275,11 @@ class FighterMixin:
         grounded=support is not None and vy>=0 and not down
         b[who+'_coyote']=.1 if grounded else max(0,b.get(who+'_coyote',0)-dt)
         if jump and b[who+'_coyote']>0:
-            vy=-610;grounded=False;b[who+'_coyote']=0
+            weight_kg=max(.1,float((self.pokemon_data(ident) or {}).get('weight',100))/10)
+            jump_scale=max(.82,min(1.08,1.08-math.log10(weight_kg+1)*.075))
+            vy=-610*jump_scale;grounded=False
+            self.spawn_jump_dust(who,ident,0 if support is None else support)
+            b[who+'_coyote']=0
             if who=='player':b['jump_buffer']=0
         if grounded:vy=0;y=support
         else:
@@ -218,7 +293,9 @@ class FighterMixin:
             if vy>=0:
                 surfaces=[0]+[p['height'] for p in b['platforms'] if abs(x-p['x'])<p['width']/2+5 and not down]
                 crossed=[height for height in surfaces if old<=height<=y]
-                if crossed:y=min(crossed);vy=0
+                if crossed:
+                    y=min(crossed);vy=0
+                    self.spawn_jump_dust(who,ident,y)
             y=max(-315,min(0,y))
         b[who+'_x']=x;b[who+'_y']=y;b[who+'_vy']=vy;b[who+'_vx']=vx
 
@@ -226,6 +303,13 @@ class FighterMixin:
         b=self.battle
         for timer in ('player_cooldown','special_cooldown','type_cooldown','enemy_cooldown','hit_flash','enemy_flash','block_flash','attack_flash','enemy_attack_flash','enemy_guard_timer','guard_break','player_stun_timer','enemy_stun_timer'):
             b[timer]=max(0,b.get(timer,0)-dt)
+        dust=[]
+        for puff in b.setdefault('dust_particles',[]):
+            puff['ttl']-=dt
+            puff['x']+=puff['vx']*dt;puff['y']+=puff['vy']*dt
+            puff['vy']+=125*dt
+            if puff['ttl']>0:dust.append(puff)
+        b['dust_particles']=dust
         for key in b['cooldowns']:b['cooldowns'][key]=max(0,b['cooldowns'][key]-dt)
         b['jump_buffer']=max(0,b.get('jump_buffer',0)-dt)
         guarding=keys[pg.K_s] and b['guard']>0 and not b['guard_break'] and b['player_stun_timer']<=0
@@ -321,6 +405,9 @@ class FighterMixin:
         defense_mod=mods.get(str(ident),{}).get('defense',0)
         damage=int(damage*(1+attack_mod/100)/max(.5,1+defense_mod/100))
         damage=int(damage*factor)
+        if factor == 0:
+            b['phase']=self.words('TIDAK MEMPAN','NO EFFECT')
+            return True
         if shot['ultimate']:damage=int(damage*1.9)
         if defending:
             damage=max(1,int(damage*(.40 if shot.get('ultimate') else .15)));b['block_flash']=.22

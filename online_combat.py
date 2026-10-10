@@ -18,6 +18,15 @@ def creature(ident, level, boss=False):
                 moves=skills, ultimate=ultimate, boss=boss)
 
 
+from world_regions import DUNGEON_BIOMES, CLIMATES
+
+DUNGEON_ENCOUNTERS=(
+    ((41,74,95,293),248), ((10,46,123,285),254), ((60,194,453,590),260),
+    ((27,111,328,551),464), ((86,220,361,613),473), ((37,58,218,322),485),
+    ((302,374,436,703),376), ((16,333,627,714),149), ((147,371,443,610),445),
+    ((63,201,280,605),150),
+)
+
 class Battle:
     def __init__(self, teams, tier=0, rng=None):
         self.rng = rng or random.Random()
@@ -32,8 +41,11 @@ class Battle:
         self.age = 0.0
         self.shots = []
         self.effects = []
-        self.weather = self.rng.choice(['sun', 'rain', 'snow', 'wind'])
-        self.arena = self.rng.choice(['grass', 'water', 'rock', 'sky'])
+        self.biome=DUNGEON_BIOMES[max(0,min(9,tier-1))] if tier else 'crystal'
+        weather_names,weights=CLIMATES[self.biome]
+        weather=self.rng.choices(weather_names,weights=weights)[0]
+        self.weather={'Cerah':'sun','Hujan':'rain','Salju':'snow','Berawan':'wind'}[weather]
+        self.arena='water' if self.biome=='swamp' else 'sky' if self.biome=='sky' else 'grass' if self.biome=='forest' else 'rock'
         self.platforms = [(230, 100, 490), (455, 110, 405), (715, 110, 465), (930, 110, 385)]
         self.active_bots = []
         self.fighters = {}
@@ -58,7 +70,8 @@ class Battle:
         # Bosses are chosen from high base-stat species, at the tier's top level.
         for i in range(counts[self.stage]):
             level = base + (10 if self.stage == 3 else self.stage * 3 + self.rng.randint(1, 3))
-            ident = self.rng.choice([149, 248, 373, 445, 635, 706, 887]) if self.stage == 3 else self.rng.choice([19, 41, 74, 95, 123, 215, 328, 443])
+            pool,boss=DUNGEON_ENCOUNTERS[max(0,min(9,self.tier-1))]
+            ident=boss if self.stage==3 else self.rng.choice(pool)
             self.fighters[f'bot:{i}'] = self.fighter([creature(ident, level, self.stage == 3)], 720+i*70, 1)
             attackers = 1 if self.stage == 3 else min(3, self.stage + 1)
             if len(self.active_bots) < attackers:
@@ -77,18 +90,25 @@ class Battle:
         p, q = f['team'][f['slot']], g['team'][g['slot']]
         if q['hp'] <= 0:
             return
+        attack_type=(move or {}).get('type','normal')
+        defender_data=pokemon_db.detail(q['id']) or {}
+        defender_types=tuple(t.get('type',{}).get('name','normal') for t in defender_data.get('types',[]))
+        effectiveness=pokemon_db.effectiveness(attack_type,defender_types)
         damage = max(2, int(power * .20 * (p['attack'] + 80) / (q['defense'] + 80)))
         if p.get('boss'): damage = int(damage * 1.3)
-        if g['guard']: damage = max(1, int(damage * (.40 if ultimate else .15)))
+        damage = int(damage * effectiveness)
+        if g['guard'] and effectiveness != 0: damage = max(1, int(damage * (.40 if ultimate else .15)))
         q['hp'] = max(0, q['hp'] - damage)
         stunned=False
-        if move and move.get('stun_chance') and not g['guard'] and self.rng.random()<move['stun_chance']:
+        if effectiveness>0 and move and move.get('stun_chance') and not g['guard'] and self.rng.random()<move['stun_chance']:
             g['stun']=self.rng.uniform(1.0,3.0);stunned=True
-        self.emit('hit',pokemon=q['id'],type=(move or {}).get('type','normal'),ultimate=ultimate,
-                  emoji=(move or {}).get('emoji','💥'),stunned=stunned)
+        self.emit('hit',pokemon=q['id'],type=attack_type,ultimate=ultimate,
+                  emoji=(move or {}).get('emoji','💥'),stunned=stunned,effectiveness=effectiveness)
         f['energy'] = min(100, f['energy'] + (0 if ultimate else 7))
-        self.effects.append(dict(x=g['x'], y=g['y']-35, text='BLOCK' if g['guard'] else str(damage), ttl=.5))
-        if ultimate:
+        label=('NO EFFECT' if effectiveness==0 else 'BLOCK' if g['guard'] else
+               'SUPER!' if effectiveness>=2 else 'RESIST' if effectiveness<=.5 else str(damage))
+        self.effects.append(dict(x=g['x'], y=g['y']-35, text=label, ttl=.5))
+        if ultimate and effectiveness>0:
             self.effects.append(dict(x=g['x'],y=g['y']-45,text=(move or {}).get('emoji','💥'),ttl=.7,
                                      blast=True,type=(move or {}).get('type','normal')))
         if q['hp'] == 0:

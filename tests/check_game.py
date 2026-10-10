@@ -65,6 +65,10 @@ try:
     proof.unlink(missing_ok=True)
     g.terminal.send(b"(sleep 1; printf 'still-running' > alive-after-death.txt) &\r")
     g.life.health = 0; g.update(.016)
+    assert g.mode == "dead" and g.dead_active
+    # Death has an intentional five second interstitial before bed respawn.
+    for _ in range(310):
+        g.update(1 / 60)
     assert g.life.scene == "bedroom" and g.life.health == 100
     assert g.terminal.running and g.terminal.process.pid == pid
     deadline = time.monotonic() + 5

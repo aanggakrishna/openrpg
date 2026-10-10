@@ -18,6 +18,7 @@ import wave
 import pygame as pg
 import retro
 from PIL import Image
+import pokemon_db
 
 from state import Life, BUY, SELL, WEAPONS
 from terminal import ShellTerminal
@@ -31,6 +32,7 @@ from i18n import translate
 RARE_POKEMON_IDS = {144,145,146,150,151,243,244,245,249,250,251,377,378,379,380,381,382,383,384,385,386,480,481,482,483,484,485,486,487,488,489,490,491,492,493,494,638,639,640,641,642,643,644,645,646,647,648,649,716,717,718,719,720,721,785,786,787,788,789,790,791,792,800,801,802,805,806,807,808,809,888,889,890,891,892,894,895,896,897,898,905,1001,1002,1003,1004,1007,1008,1009,1010,1011,1012,1013,1014,1015,1016,1017,1024,1025}
 from wildlife import Wildlife, SPECIES, hunting_time
 from environment import Environment, OUTSIDE
+from world_regions import (BIOMES, HABITAT_TYPES, biome_at, reserve_layout, scene_layout, weather_for)
 from pokedex import PokedexClient
 
 ROOT = Path(__file__).resolve().parent
@@ -119,6 +121,7 @@ class LegacyGame:
         self.dex_query = ""
         self.dex_page = 0
         self.dex_selected = 1
+        self.dex_type_filter = "all"
         self.dex_sprite = None
         self.pokemon_rng = random.Random()
         self.pokemon_encounter_clock = 0.0
@@ -196,6 +199,7 @@ class LegacyGame:
             {"id": "street-bayu", "name": "Bayu", "scene": "market", "x": 700.0, "y": 410.0, "team": [58], "level": 16, "target": (920, 410), "defeated": False, "paid": False, "cooldown": 0},
         ]
         self.center_selected = 0
+        self.center_type_filter = "all"
         self.center_message = "Pilih Pokémon untuk diperiksa."
         self.evolution_anim = None
         self.fight_type_vfx = None
@@ -391,13 +395,13 @@ class LegacyGame:
             target_index = nr * RESERVE_COLUMNS + nc
             target = RESERVE_ZONES[target_index]
             if direction == "utara":
-                x, y = zone["x"] + RESERVE_ZONE_W // 2, zone["y"] + 155
+                x, y = zone["x"] + RESERVE_ZONE_W // 2, zone["y"] + 220
             elif direction == "selatan":
-                x, y = zone["x"] + RESERVE_ZONE_W // 2, zone["y"] + RESERVE_ZONE_H - 28
+                x, y = zone["x"] + RESERVE_ZONE_W // 2, zone["y"] + RESERVE_ZONE_H - 100
             elif direction == "barat":
-                x, y = zone["x"] + 28, zone["y"] + RESERVE_ZONE_H // 2
+                x, y = zone["x"] + 80, zone["y"] + RESERVE_ZONE_H // 2
             else:
-                x, y = zone["x"] + RESERVE_ZONE_W - 28, zone["y"] + RESERVE_ZONE_H // 2
+                x, y = zone["x"] + RESERVE_ZONE_W - 80, zone["y"] + RESERVE_ZONE_H // 2
             gates.append({"direction": direction, "x": x, "y": y, "target": target,
                           "col": nc, "row": nr,
                           "required_level": RESERVE_LEVEL_REQUIREMENTS[target_index]})
@@ -420,10 +424,13 @@ class LegacyGame:
         elif direction == "barat":
             x, y = target["x"] + RESERVE_ZONE_W - 115, target["y"] + RESERVE_ZONE_H // 2
         elif direction == "selatan":
-            x, y = target["x"] + RESERVE_ZONE_W // 2, target["y"] + 135
+            x, y = target["x"] + RESERVE_ZONE_W // 2, target["y"] + 290
         else:
-            x, y = target["x"] + RESERVE_ZONE_W // 2, target["y"] + RESERVE_ZONE_H - 135
+            x, y = target["x"] + RESERVE_ZONE_W // 2, target["y"] + RESERVE_ZONE_H - 180
         self.life.x, self.life.y = x, y
+        self.life.advance_time(0)
+        self.terrain_location=None
+        self.ensure_walkable_position()
         if self.life.mounted:
             self.life.horse_x, self.life.horse_y = x, y
         self.projectiles.clear()
@@ -433,6 +440,14 @@ class LegacyGame:
     def obstacles(self, scene=None):
         scene = scene or self.life.scene
         trees = self.art.tree_obstacles(scene)
+        if scene == "reserve":
+            index = BIOMES.index(biome_at(scene,self.life.x,self.life.y))
+            return list(self.art.region_obstacles(index))
+        if scene in OUTSIDE:
+            trees += [pg.Rect(r) for r in scene_layout(scene)["solids"]]
+            service_points={"outdoors":((780,590),(880,620)),"forest":((300,475),(980,475)),
+                            "market":((700,610),(960,610)),"coast":((280,500),(1050,500)),"mountain":((290,560),(1000,560))}
+            trees += [pg.Rect(x-38,y-30,76,40) for x,y in service_points.get(scene,())]
         if scene == "outdoors":
             return trees + [pg.Rect(181, 170, 340, 132), pg.Rect(824, 176, 217, 118), pg.Rect(930, 477, 288, 91), pg.Rect(1026, 568, 192, 100)]
         if scene == "forest":
@@ -440,14 +455,33 @@ class LegacyGame:
         if scene == "reserve":
             return trees + [pg.Rect(288, 288, 192, 144), pg.Rect(1792, 1120, 192, 144), pg.Rect(78, 566, 158, 105)]
         if scene == "coast":
-            return trees + [pg.Rect(600, 240, 256, 192)]
+            return trees
         if scene == "mountain":
-            return trees + [pg.Rect(535, 135, 50, 590), pg.Rect(704, 135, 50, 590)]
+            return trees
         if scene == "market":
             return trees + [pg.Rect(320, 220, 194, 112), pg.Rect(809, 220, 194, 112), pg.Rect(576, 493, 194, 83)]
         if scene == "house":
             return [pg.Rect(204, 194, 301, 71), pg.Rect(539, 335, 150, 75), pg.Rect(832, 388, 207, 49)]
         return [pg.Rect(284, 216, 176, 150), pg.Rect(804, 227, 253, 98)]
+
+    def ensure_walkable_position(self):
+        if self.life.scene not in OUTSIDE:return
+        region=BIOMES.index(biome_at(self.life.scene,self.life.x,self.life.y)) if self.life.scene=="reserve" else None
+        key=(self.life.scene,region)
+        if getattr(self,"terrain_location",None)==key:return
+        self.terrain_location=key
+        obstacles=self.obstacles()
+        def clear(x,y):
+            return not any(pg.Rect(x-12,y-12,24,14).colliderect(r) for r in obstacles)
+        if clear(self.life.x,self.life.y):return
+        ox,oy=((region%4)*1280,(region//4)*1600) if region is not None else (0,0)
+        ymax=1572 if region is not None else 664
+        for radius in range(24,1700,24):
+            for dx,dy in ((0,1),(1,0),(-1,0),(0,-1),(1,1),(-1,1),(1,-1),(-1,-1)):
+                x=self.life.x+dx*radius;y=self.life.y+dy*radius
+                if ox+40<=x<=ox+1240 and oy+160<=y<=oy+ymax and clear(x,y):
+                    self.life.x,self.life.y=x,y
+                    return
 
     def nearest(self):
         found = min(self.stations(), key=lambda s: math.hypot(s[1] - self.life.x, s[2] - self.life.y))
@@ -464,6 +498,9 @@ class LegacyGame:
         if self.life.mounted and scene not in OUTSIDE:
             self.toggle_mount()
         self.life.scene, self.life.x, self.life.y = scene, x, y
+        self.life.advance_time(0)
+        self.terrain_location=None
+        self.ensure_walkable_position()
         if self.life.mounted:
             self.life.horse_scene, self.life.horse_x, self.life.horse_y = scene, x, y
         self.fishing = None
@@ -512,7 +549,7 @@ class LegacyGame:
             self.travel_reserve_gate(action.split(":", 1)[1])
             return
         if action in ("reserve", "coast", "mountain"):
-            x, y = {"reserve": (100, 800), "coast": (70, 410), "mountain": (640, 680)}[action]
+            x, y = {"reserve": (100, 800), "coast": (70, 410), "mountain": (640, 620)}[action]
             self.transition(action, x, y)
             if action == "reserve":
                 self.life.complete("Menjelajah suaka")
@@ -854,14 +891,21 @@ class LegacyGame:
         # familiar, biome-specific species remain common; the wider pool lets
         # the complete catalogue appear over future encounters and restocks.
         roaming_pools = [[] for _ in RESERVE_ZONES]
+        types_by_id=pokemon_db.type_catalog()
         for entry in entries:
-            ident = int(entry.get("id", 0))
-            if ident > 0:
-                roaming_pools[(12 + ident % 4) if ident in RARE_POKEMON_IDS else (ident * 7 + 3) % len(RESERVE_ZONES)].append(entry)
+            ident=int(entry.get("id",0));types=types_by_id.get(ident,())
+            candidates=[i for i,b in enumerate(BIOMES) if set(types)&set(HABITAT_TYPES[b])]
+            if ident in RARE_POKEMON_IDS:
+                advanced=[i for i in candidates if i>=8]
+                candidates=advanced or [15]
+            if candidates:
+                # Each species can appear in matching habitats; cache media only on encounter.
+                for i in candidates:roaming_pools[i].append(entry)
+        self.pokemon_habitat_pools=roaming_pools
         # Put familiar, already-cached sprites in the entrance clearing first.
         for pokemon_id, (x, y) in zip((1, 15, 16), ((265, 665), (700, 880), (1060, 665))):
             item = by_id.get(pokemon_id)
-            if item and self.loaded_reserve_zone == 0:
+            if item and self.loaded_reserve_zone == 0 and not any(r.colliderect(pg.Rect(x-14,y-14,28,20)) for r in self.obstacles("reserve")):
                 self.wild_pokemon.append({"id": pokemon_id, "x": float(x), "y": float(y), "home_x": float(x), "home_y": float(y),
                                           "moving": False, "state": "idle", "timer": self.pokemon_rng.uniform(1, 4), "vx": 0, "vy": 0, "level": 5, "requested": False})
                 self.pokedex.request(pokemon_id)
@@ -878,9 +922,9 @@ class LegacyGame:
             if index == len(RESERVE_ZONES) - 1:
                 trainer["id"] = "arena-champion"
             self.reserve_trainers.append(trainer)
-            pool = [by_id[i] for i in biome_ids[index] if i in by_id]
+            pool = [by_id[i] for i in biome_ids[index] if i in by_id and set(types_by_id.get(i,())) & set(HABITAT_TYPES[zone["biome"]])]
             if not pool:
-                pool = [entry for entry in entries if entry.get("id", 0) > 0]
+                pool = roaming_pools[index] or [by_id[1]]
             # Eight encounters per biome, with two additional rare slots in
             # distant regions. Sprite data is fetched only near the player.
             for slot in range(8 + (2 if index >= 8 else 0)):
@@ -891,7 +935,7 @@ class LegacyGame:
                         continue
                     if any(math.hypot(p["x"] - x, p["y"] - y) < 105 for p in self.wild_pokemon):
                         continue
-                    if any(rect.collidepoint(x, y) for rect in self.obstacles("reserve")):
+                    if any(rect.colliderect(pg.Rect(x-14,y-14,28,20)) for rect in self.obstacles("reserve")):
                         continue
                     break
                 else:
@@ -901,7 +945,7 @@ class LegacyGame:
                     choices = roaming_pools[index]
                 rare_chance = min(.72, max(0.0, (index - 5) * .075))
                 if index >= 5 and self.pokemon_rng.random() < rare_chance:
-                    rare = [entry for entry in entries if entry.get("id", 0) in RARE_POKEMON_IDS]
+                    rare = [entry for entry in roaming_pools[index] if entry.get("id", 0) in RARE_POKEMON_IDS]
                     if rare:
                         choices = rare
                 item = self.pokemon_rng.choice(choices)
@@ -954,8 +998,10 @@ class LegacyGame:
             opponent_lineup = opponent_lineup[:3]
         self.life.pokemon_seen = list(dict.fromkeys(self.life.pokemon_seen + [pokemon_id]))
         self.save_current()
-        arena_style = self.pokemon_rng.choice(("meadow", "water", "cave", "sky"))
-        battle_weather = self.pokemon_rng.choice(("Cerah", "Berawan", "Hujan", "Salju", "Badai"))
+        habitat=biome_at(self.life.scene,self.life.x,self.life.y)
+        arena_style=("water" if habitat in ("coast","swamp","deepsea") else "sky" if habitat=="sky"
+                     else "cave" if habitat in ("cave","crystal","volcano","dragon_valley") else "meadow")
+        battle_weather=weather_for(self.life.scene,self.life.x,self.life.y,self.life.day,self.life.hour,self.life.weather_override)
         self.battle = {"wild_id": pokemon_id, "opponent_lineup": opponent_lineup, "opponent_index": 0,
                        "music_track": self.choose_battle_music(),
                        "player_id": living[0], "player_lineup": team, "phase": "Memuat Pokémon…",
@@ -1461,6 +1507,12 @@ class LegacyGame:
         if heavy:
             damage = int(damage * 1.7)
         damage = max(1, damage - self.base_stat(enemy, "defense", 49) // 30)
+        enemy_types = tuple(item["type"]["name"] for item in enemy.get("types", []))
+        effectiveness = pokemon_db.effectiveness("normal", enemy_types)
+        damage = int(damage * effectiveness)
+        if effectiveness == 0:
+            b["phase"] = "Tidak mempan! Tipe Ghost kebal terhadap serangan Normal."
+            return
         if guarded:
             damage = max(1, int(damage * .45))
         b["wild_hp"] = max(0, b["wild_hp"] - damage)
@@ -1529,18 +1581,19 @@ class LegacyGame:
         defense = self.base_stat(enemy, "special-defense", 55)
         power = (move or {}).get("power") or 55
         damage = max(8, int((attack * power / 100 + self.pokemon_level(b["player_id"]) * .7) - defense * .08))
-        opposing = {entry["type"]["name"] for entry in enemy.get("types", [])}
-        super_effective = {"fire": {"grass", "ice", "bug", "steel"}, "water": {"fire", "ground", "rock"},
-                           "grass": {"water", "ground", "rock"}, "electric": {"water", "flying"},
-                           "ice": {"grass", "ground", "flying", "dragon"}, "fighting": {"normal", "ice", "rock", "dark", "steel"},
-                           "ground": {"fire", "electric", "poison", "rock", "steel"}, "psychic": {"fighting", "poison"},
-                           "fairy": {"fighting", "dragon", "dark"}}
-        if opposing & super_effective.get(move_type, set()):
-            damage = int(damage * 1.45)
-            b["phase"] = f"Sangat efektif! {move_name} −{damage} HP!"
+        opposing = tuple(entry["type"]["name"] for entry in enemy.get("types", []))
+        effectiveness = pokemon_db.effectiveness(move_type, opposing)
+        damage = int(damage * effectiveness)
+        if effectiveness == 0:
+            b["phase"] = f"Tidak mempan! {move_name} tidak bisa mengenai tipe lawan."
+            return
         if guarded:
             damage = max(1, int(damage * .45))
             b["phase"] = f"Lawan menangkis {move_name}! −{damage} HP."
+        elif effectiveness >= 2:
+            b["phase"] = f"Sangat efektif ×{effectiveness:g}! {move_name} −{damage} HP!"
+        elif effectiveness <= .5:
+            b["phase"] = f"Kurang efektif ×{effectiveness:g}. {move_name} −{damage} HP."
         b["wild_hp"] = max(0, b["wild_hp"] - damage)
         b["enemy_flash"] = .32
         b["super_meter"] = min(100, b.get("super_meter", 0) + 25)
@@ -1561,10 +1614,13 @@ class LegacyGame:
         team, enemy = self.pokemon_data(b["player_id"]), self.pokemon_data(b["wild_id"])
         if not team or not enemy:
             return
+        ultimate_move = next((move for move in pokemon_db.loadout(b["player_id"])[2:3]), None)
         types = team.get("types", [])
-        move_type = types[b.get("move_slot", 0) % len(types)]["type"]["name"] if types else "normal"
-        ultimate_emoji = ULTIMATE_EMOJI.get(move_type, "✨")
-        move_name = ultimate_emoji + " Ultimate " + TYPE_MOVES.get(move_type, TYPE_MOVES["normal"])[0]
+        move_type = ((ultimate_move or {}).get("type", {}).get("name") or
+                     (types[0]["type"]["name"] if types else "normal"))
+        ultimate_emoji = TYPE_EMOJI.get(move_type, ULTIMATE_EMOJI.get(move_type, "✨"))
+        move_name = ultimate_emoji + " Ultimate " + ((ultimate_move or {}).get("name", "").replace("-", " ").title() or
+                                                       TYPE_MOVES.get(move_type, TYPE_MOVES["normal"])[0])
         b["super_meter"] = 0
         b["player_cooldown"] = .9
         b["ultimate_cutin"] = {"timer": .78, "duration": .78, "move_type": move_type,
@@ -1584,8 +1640,18 @@ class LegacyGame:
         self._set_battle_vfx(cutin["move_type"], cutin["move_name"], ultimate=True,
                              emoji=cutin["emoji"])
         damage = max(30, int(self.base_stat(team, "special-attack", 55) * .95 + self.pokemon_level(b["player_id"]) * 2))
+        effectiveness = pokemon_db.effectiveness(cutin["move_type"],
+            tuple(item["type"]["name"] for item in enemy.get("types", [])))
+        damage = int(damage * effectiveness)
+        if effectiveness == 0:
+            b["phase"] = f"Ultimate tidak mempan terhadap tipe lawan · ×0."
+            return
         if b.get("enemy_guard_timer", 0) > 0:
             damage = int(damage * .72)
+        elif effectiveness >= 2:
+            b["phase"] = f"Ultimate sangat efektif ×{effectiveness:g}! −{damage} HP!"
+        elif effectiveness <= .5:
+            b["phase"] = f"Ultimate ditahan ×{effectiveness:g} · −{damage} HP."
         b["wild_hp"] = max(0, b["wild_hp"] - damage)
         b["enemy_flash"] = .55
         if b["wild_hp"] <= 0:
@@ -2095,7 +2161,26 @@ class LegacyGame:
         if not self.life.pokemon_party:
             return None
         self.center_selected %= len(self.life.pokemon_party)
-        return int(self.life.pokemon_party[self.center_selected])
+        pokemon_id = int(self.life.pokemon_party[self.center_selected])
+        if (self.center_type_filter != "all" and self.center_type_filter not in
+                pokemon_db.type_catalog().get(pokemon_id, ())):
+            return None
+        return pokemon_id
+
+    def center_filtered_party(self):
+        types_by_id = pokemon_db.type_catalog()
+        return [(index, int(ident)) for index, ident in enumerate(self.life.pokemon_party[:6])
+                if self.center_type_filter == "all" or
+                self.center_type_filter in types_by_id.get(int(ident), ())]
+
+    def move_center_selection(self, offset):
+        visible = self.center_filtered_party()
+        if not visible:
+            return
+        positions = [index for index, _ in visible]
+        try:current = positions.index(self.center_selected)
+        except ValueError:current = 0
+        self.center_selected = positions[max(0, min(len(positions) - 1, current + offset))]
 
     def toggle_active_pokemon(self):
         pokemon_id = self.center_pokemon_id()
@@ -2270,6 +2355,7 @@ class LegacyGame:
             self.label(title, 640, 159)
             self.label("SUAKA  <", 100, 456)
             self.world_characters()
+            self.environment.draw(self.canvas,self.life)
             station = self.nearest()
             self.hud(station)
             return
@@ -2351,18 +2437,42 @@ class LegacyGame:
         left, top = camera_x - 120, camera_y - 140
         right, bottom = camera_x + W + 120, camera_y + 592 + 100
         drawables = [(y, "tree", (x, y)) for x, y in self.art.trees["reserve"] if left <= x <= right and top <= y <= bottom]
+        zone_index=BIOMES.index(biome_at("reserve",self.life.x,self.life.y))
+        zone_x,zone_y=(zone_index%4)*1280,(zone_index//4)*1600
+        for prop in reserve_layout(zone_index)['props']:
+            kind,x,y,variant=prop
+            if left<=x+zone_x<=right and top<=y+zone_y<=bottom:
+                drawables.append((y+zone_y,"scenery",(kind,x+zone_x,y+zone_y,variant)))
         drawables += [(p["y"], "pokemon", p) for p in self.wild_pokemon]
         drawables += [(t["y"], "trainer", t) for t in self.reserve_trainers]
         if not self.life.mounted and self.life.horse_scene == "reserve":
             drawables.append((self.life.horse_y, "horse", (self.life.horse_x, self.life.horse_y)))
         drawables.append((self.life.y, "player", None))
         for _, kind, obj in sorted(drawables, key=lambda item: item[0]):
+            if kind=="scenery":
+                pk,x,y,v=obj
+                self.art.scenery.prop(self.world_canvas,(pk,int(x-camera_x),int(y-camera_y),v),BIOMES[zone_index])
+                continue
             wx, wy = (obj[0], obj[1]) if kind == "tree" or kind == "horse" else (obj["x"], obj["y"]) if kind in ("pokemon", "trainer") else (self.life.x, self.life.y)
             if not (left <= wx <= right and top <= wy <= bottom):
                 continue
             px, py = wx - camera_x, wy - camera_y
             if kind == "tree":
-                self.art.tree(self.world_canvas, px, py, variant=(int(obj[0]) // 112) % 2)
+                world_x, world_y = obj
+                zone_col = max(0, min(3, int(world_x // RESERVE_ZONE_W)))
+                zone_row = max(0, min(3, int(world_y // RESERVE_ZONE_H)))
+                zone_index = zone_row * 4 + zone_col
+                biome = RESERVE_ZONES[zone_index]["biome"]
+                variants = {
+                    "snow": (4, 5, 6, 16, 17),
+                    "ancient_forest": (2, 11, 14, 20, 23),
+                    "swamp": (2, 3, 12, 15, 21),
+                    "forest": (0, 1, 3, 8, 10, 11, 13, 15),
+                    "meadow": (0, 3, 8, 9, 10, 11, 12, 13),
+                }
+                tree_set = variants.get(biome, (0, 1, 3, 8, 10, 11, 12, 13))
+                seed = (int(world_x // 112) * 7 + int(world_y // 112) * 11 + zone_index) % len(tree_set)
+                self.art.tree(self.world_canvas, px, py, variant=tree_set[seed])
             elif kind == "pokemon":
                 sprite = self.pokemon_surface(obj["id"], 52)
                 if sprite:
@@ -2854,7 +2964,35 @@ class LegacyGame:
 
     def dex_entries(self):
         query = self.dex_query.lower().strip()
-        return [entry for entry in self.pokedex.catalog if not query or query in entry["name"].lower() or query == str(entry["id"])]
+        types_by_id = pokemon_db.type_catalog()
+        return [entry for entry in self.pokedex.catalog
+                if (not query or query in entry["name"].lower() or query == str(entry["id"]))
+                and (self.dex_type_filter == "all" or
+                     self.dex_type_filter in types_by_id.get(int(entry["id"]), ()))]
+
+    def cycle_type_filter(self, attribute, step):
+        filters = ("all", *TYPE_EMOJI.keys())
+        current = getattr(self, attribute, "all")
+        try:index = filters.index(current)
+        except ValueError:index = 0
+        setattr(self, attribute, filters[(index + step) % len(filters)])
+        if attribute == "dex_type_filter":
+            self.dex_page = 0
+            entries = self.dex_entries()
+            if entries:
+                if not any(item["id"] == self.dex_selected for item in entries):
+                    self.select_dex(entries[0]["id"])
+            else:
+                self.dex_detail = None
+        elif attribute == "center_type_filter":
+            visible = self.center_filtered_party()
+            if visible and not any(index == self.center_selected for index, _ in visible):
+                self.center_selected = visible[0][0]
+
+    def type_filter_label(self, value):
+        if value == "all":
+            return self.words("SEMUA TIPE", "ALL TYPES")
+        return f"{TYPE_EMOJI.get(value, '✨')} {value.upper()}"
 
     def select_dex(self, pokemon_id):
         self.dex_selected = int(pokemon_id)
@@ -2880,9 +3018,13 @@ class LegacyGame:
         self.draw_pokedex_icon(252, 198, 26)
         self.text("POKÉDEX · SEMUA SPESIES", 274, 183, CREAM, self.medium)
         self.text(f"{len(self.life.pokemon_caught)} tertangkap · {len(self.life.pokemon_seen)} terlihat · {len(self.pokedex.catalog)} spesies", 651, 190, GREEN, self.small)
-        self.box((245, 220, 470, 38), (29, 39, 36), 7)
-        self.text("Cari nama / nomor: " + self.dex_query + "▏", 257, 228, GREEN, self.small)
-        self.button(f"Beli 5 Poké Ball · {BUY['Pokeball'] * 5} koin", (729, 220, 304, 38),
+        self.box((245, 220, 294, 38), (29, 39, 36), 7)
+        self.text("Cari / Search: " + self.dex_query + "▏", 257, 228, GREEN, self.small)
+        self.button("◀", (547, 220, 38, 38), lambda: self.cycle_type_filter("dex_type_filter", -1))
+        self.button(self.type_filter_label(self.dex_type_filter), (587, 220, 150, 38),
+                    lambda: self.cycle_type_filter("dex_type_filter", 1), self.dex_type_filter != "all")
+        self.button("▶", (739, 220, 38, 38), lambda: self.cycle_type_filter("dex_type_filter", 1))
+        self.button(f"Poké Ball ×5 · {BUY['Pokeball'] * 5}", (779, 220, 254, 38),
                     lambda: self.trade("Pokeball", True, 5))
         entries = self.dex_entries()
         start = self.dex_page * 8
@@ -2904,7 +3046,7 @@ class LegacyGame:
         if not self.pokedex.catalog:
             self.text("Mengunduh katalog resmi PokéAPI…", 264, 320, GREEN)
         self.button("←", (245, 594, 54, 39), lambda: self.change_dex_page(-1))
-        self.text(f"Halaman {self.dex_page + 1} / {max(1, (len(entries) + 7) // 8)}", 313, 603, CREAM, self.small)
+        self.text(f"{self.type_filter_label(self.dex_type_filter)} · {self.dex_page + 1}/{max(1, (len(entries) + 7) // 8)}", 313, 603, CREAM, self.small)
         self.button("→", (509, 594, 54, 39), lambda: self.change_dex_page(1))
         self.button("Kembali · P / Esc", (661, 594, 372, 39), self.back)
         detail = self.dex_detail
@@ -3031,15 +3173,28 @@ class LegacyGame:
     def draw_center(self):
         self.text("POKÉMON CENTER · PEMERIKSAAN TIM", 242, 183, CREAM, self.medium)
         self.text(self.center_message, 245, 222, GREEN, self.small)
-        team_ids = self.life.pokemon_party[:6]
-        for i, pokemon_id in enumerate(team_ids):
-            row, col = divmod(i, 2)
-            rect = (245 + col * 182, 260 + row * 70, 170, 58)
+        self.button("◀", (245, 250, 42, 35), lambda: self.cycle_type_filter("center_type_filter", -1))
+        self.button(self.type_filter_label(self.center_type_filter), (289, 250, 224, 35),
+                    lambda: self.cycle_type_filter("center_type_filter", 1), self.center_type_filter != "all")
+        self.button("▶", (515, 250, 42, 35), lambda: self.cycle_type_filter("center_type_filter", 1))
+        visible_party = self.center_filtered_party()
+        for visible_index, (party_index, pokemon_id) in enumerate(visible_party):
+            i = party_index
+            row, col = divmod(visible_index, 2)
+            rect = (245 + col * 182, 291 + row * 66, 170, 58)
             detail = self.pokemon_data(pokemon_id) or {}
             name = detail.get("name", f"Pokémon #{pokemon_id}").title()
             marker = "✓" if pokemon_id in self.life.pokemon_active else "·"
             self.button(f"{i + 1} {marker} {name}", rect,
                         lambda i=i: setattr(self, "center_selected", i), i == self.center_selected)
+            type_names = [item["type"]["name"] for item in detail.get("types", [])]
+            if not type_names:
+                type_names = list(pokemon_db.type_catalog().get(pokemon_id, ()))
+            badges = "  ".join(f"{TYPE_EMOJI.get(typ, '✨')} {typ.title()}" for typ in type_names)
+            self.text(badges or "Memuat tipe…", rect[0] + 9, rect[1] + 37, MUTED, self.tiny)
+        if not visible_party:
+            self.text(self.words("Tidak ada Pokémon bertipe ini di tim.", "No party Pokémon match this type."),
+                      421, 349, MUTED, self.small, True)
         pokemon_id = self.center_pokemon_id()
         detail = self.pokemon_data(pokemon_id) if pokemon_id else None
         if detail:
@@ -3066,7 +3221,7 @@ class LegacyGame:
                     bool(pokemon_id in self.life.pokemon_active if pokemon_id else False))
         self.text(f"Trainer Lv.{self.life.trainer_level} · XP {self.life.trainer_xp}/{self.life.trainer_level * 100} · Evolusi: 100 XP + level + 10 koin",
                   245, 532, MUTED, self.small)
-        self.text(f"Tim aktif {len(self.life.pokemon_active)}/3 · Tab mengganti saat duel · anggota mati otomatis diganti",
+        self.text(f"Tim aktif {len(self.life.pokemon_active)}/3 · ←/→ filter · ↑/↓ pilih · Enter aktifkan",
                   245, 555, MUTED, self.small)
         self.button("Keluar center · Esc", (245, 592, 788, 42), self.back)
 
@@ -3163,6 +3318,13 @@ class LegacyGame:
         enemy_name = enemy.get("name", "Pokémon liar").title() if enemy else "Pokémon liar"
         self.text(player_name, 76, 36, CREAM, self.medium)
         self.text(enemy_name, 764, 36, CREAM, self.medium)
+        for detail, center_x in ((team, 443), (enemy, 1158)):
+            if detail:
+                height_m=float(detail.get("height", 0))/10
+                weight_kg=float(detail.get("weight", 0))/10
+                speed=self.base_stat(detail,"speed",70)
+                self.text(f"{height_m:.1f}m · {weight_kg:g}kg · SPD {speed}",
+                          center_x,52,MUTED,self.tiny,True)
         self._fight_bar(76, 77, 440, b.get("player_hp", 1), b.get("player_max", 1), left=True)
         self._fight_bar(764, 77, 440, b.get("wild_hp", 1), b.get("wild_max", 1), left=False)
         pg.draw.rect(self.canvas, (57, 71, 61), (76, 118, 440, 8), border_radius=0)
@@ -3197,6 +3359,12 @@ class LegacyGame:
             glyph = self.fruit_font.render(fruit["emoji"], True, CREAM)
             glyph = pg.transform.scale(glyph, (15, 15))
             self.canvas.blit(glyph, glyph.get_rect(center=(fx, fy)))
+        for puff in b.get("dust_particles",[]):
+            progress=1-puff["ttl"]/max(.01,puff["duration"])
+            radius=max(2,int(puff["size"]*(.7+progress*.7)))
+            shade=int(139+75*progress)
+            pg.draw.ellipse(self.canvas,(shade,min(232,shade-16),max(75,shade-49)),
+                            (int(puff["x"]-radius),int(puff["y"]-radius*.45),radius*2,max(3,radius)))
         capture = b.get("capture")
         for key, ident, flip in (("player", b["player_id"], True), ("enemy", b["wild_id"], False)):
             if key == "enemy" and capture and capture["phase"] in ("shake", "success"):
@@ -3294,6 +3462,11 @@ class LegacyGame:
         self.text("← → gerak · ↑ lompat/panjat · S tahan", 924, 151, CREAM, self.tiny)
         self.text("A dekat · S tahan · Q stun · W dekat · E jauh · R ult · 1–3 ganti", 924, 170, GREEN, self.tiny)
         self.text(f"O bola · ult tembus 40% guard · {int(b.get('time_left', 60))} dtk · Esc", 924, 185, MUTED, self.tiny)
+        if b.get("matchup_tip_timer", 0) > 0 and b.get("matchup_tip"):
+            self.box((910, 216, 340, 55), (26, 40, 52), 8)
+            self.text(self.words("TIP JENIS · POKÉAPI", "TYPE TIP · POKÉAPI"), 923, 221, retro.GOLD, self.tiny)
+            for index, (emoji, tip) in enumerate(b["matchup_tip"]):
+                self.text(f"{emoji} {tip}"[:34], 923, 238 + index * 16, CREAM, self.tiny)
         if b.get("result") and b["player_hp"] <= 0:
             self.box((470, 586, 340, 44), (32, 51, 48), 12)
             self.text("Enter / Esc · kembali ke peta", W // 2, 608, CREAM, self.small, True)
@@ -3783,7 +3956,9 @@ class LegacyGame:
                 elif event.key in (pg.K_DOWN, pg.K_s):
                     self.map_center[1] = min(RESERVE_HEIGHT, self.map_center[1] + 420 / self.map_zoom)
             elif self.mode == "dex":
-                if event.key == pg.K_BACKSPACE:
+                if event.key == pg.K_TAB:
+                    self.cycle_type_filter("dex_type_filter", 1)
+                elif event.key == pg.K_BACKSPACE:
                     self.dex_query = self.dex_query[:-1]
                     self.dex_page = 0
                     entries = self.dex_entries()
@@ -3808,13 +3983,22 @@ class LegacyGame:
                 elif event.key in (pg.K_ESCAPE, pg.K_p):
                     self.back()
             elif self.mode == "center":
-                if pg.K_1 <= event.key <= pg.K_6 and event.key - pg.K_1 < len(self.life.pokemon_party):
-                    self.center_selected = event.key - pg.K_1
+                visible = self.center_filtered_party()
+                if event.key in (pg.K_LEFT, pg.K_RIGHT):
+                    self.cycle_type_filter("center_type_filter", -1 if event.key == pg.K_LEFT else 1)
+                elif event.key == pg.K_UP:
+                    self.move_center_selection(-1)
+                elif event.key == pg.K_DOWN:
+                    self.move_center_selection(1)
+                elif pg.K_1 <= event.key <= pg.K_6 and event.key - pg.K_1 < len(visible):
+                    self.center_selected = visible[event.key - pg.K_1][0]
                 elif event.key == pg.K_v:
                     self.evolve_selected()
                 elif event.key == pg.K_h:
                     self.heal_pokemon_party()
-                elif event.key in (pg.K_ESCAPE, pg.K_n, pg.K_RETURN):
+                elif event.key in (pg.K_RETURN, pg.K_KP_ENTER):
+                    self.toggle_active_pokemon()
+                elif event.key in (pg.K_ESCAPE, pg.K_n):
                     self.back()
             elif self.mode == "hospitality":
                 if event.key == pg.K_1:
@@ -3948,6 +4132,7 @@ class LegacyGame:
         self.moving = False
         active = self.mode in ("game", "map", "terminal", "inventory", "shop", "weather", "phone", "dex", "center", "battle", "encounter", "pokemon_info", "daily_quests", "evolution", "settings", "hospitality", "dead")
         if active:
+            if self.mode == "game":self.ensure_walkable_position()
             if self.mode == "map" and not self.wild_pokemon and self.pokedex.catalog:
                 self.spawn_map_pokemon()
             if self.mode == "battle":
@@ -3969,6 +4154,11 @@ class LegacyGame:
                         speed = 58 if self.life.mounted else 72
                     if self.life.scene in OUTSIDE and self.life.weather == "Salju":
                         speed *= .8
+                    layout=reserve_layout(BIOMES.index(biome_at("reserve",self.life.x,self.life.y))) if self.life.scene=="reserve" else scene_layout(self.life.scene) if self.life.scene in OUTSIDE else None
+                    if layout:
+                        lx=self.life.x%1280 if self.life.scene=="reserve" else self.life.x
+                        ly=self.life.y%1600 if self.life.scene=="reserve" else self.life.y
+                        if any(pg.Rect(r).collidepoint(lx,ly) for r in layout.get("ice",())):speed*=.82
                     step = direction.normalize() * dt * speed
                     for axis in ("x", "y"):
                         before = getattr(self.life, axis)

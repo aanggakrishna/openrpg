@@ -14,6 +14,17 @@ from art import PLAYER_STYLES, RESERVE_CENTERS
 ROOT = Path(__file__).resolve().parent
 STARTERS = (1,4,7,25,37,43,54,58,60,66,74,92,133,152,155,158,179,187,252,255,258,280,387,390,393,403)
 C, G, M, GOLD = retro.CREAM, retro.GREEN, retro.MUTED, retro.GOLD
+TYPE_ICONS = {
+    'normal':'⚪','fire':'🔥','water':'💧','electric':'⚡','grass':'🍃','ice':'❄️',
+    'fighting':'🥊','poison':'☠️','ground':'🌍','flying':'🪽','psychic':'🔮',
+    'bug':'🐛','rock':'🪨','ghost':'👻','dragon':'🐉','dark':'🌑','steel':'⚙️','fairy':'✨'
+}
+TYPE_ID_NAMES = {
+    'normal':'Normal','fire':'Api','water':'Air','electric':'Listrik','grass':'Rumput',
+    'ice':'Es','fighting':'Petarung','poison':'Racun','ground':'Tanah','flying':'Terbang',
+    'psychic':'Psikis','bug':'Serangga','rock':'Batu','ghost':'Hantu','dragon':'Naga',
+    'dark':'Gelap','steel':'Baja','fairy':'Peri'
+}
 
 class FlowMixin:
     def __init__(self, *args, **kwargs):
@@ -31,6 +42,7 @@ class FlowMixin:
         self.keyboard_focus = True
         self.center_page = 0
         self.center_query = ""
+        self.center_type_filter = 'all'
         self.center_search = False
         self.assigning_slot = False
         self.reward = None
@@ -229,7 +241,7 @@ class FlowMixin:
         self.text('OPENRPG',85,116,GOLD,self.logo_font)
         self.text('A LITTLE LIFE. A BIG ADVENTURE.',90,209,G,self.medium)
         self.text(self.words('Berkebun. Bertarung. Berkarya.','Grow. Battle. Create.'),90,266,C,self.font)
-        for i,style in enumerate((0,2,3)):
+        for i,style in enumerate((0,1,2)):
             self.art.character(self.canvas,190+i*145,518,style,4,self.frame,True,'down')
         self.text('01 / ADVENTURE BEGINS HERE',90,625,M,self.small)
         options=[(self.words('Permainan baru','New Game'),lambda:self.open_profiles('new')),
@@ -279,7 +291,8 @@ class FlowMixin:
                 if w['style']==style:pg.draw.rect(self.canvas,G,(x+2,297,191,186),2)
                 self.text(PLAYER_STYLES[style],x+97,453,C,self.small,True)
                 self.art.character(self.canvas,x+98,413,style,3,self.frame,True,'down')
-            self.text('Ninja Adventure / Pixel-Boy + AAA / CC0',110,535,M,self.small)
+            self.text(self.words('Sprite pelatih · Pixel-Boy + AAA · CC0',
+                                 'Trainer sprites · Pixel-Boy + AAA · CC0'),110,535,M,self.small)
         else:
             ident=w['starter'];d=self.pokemon_data(ident) or pokemon_db.detail(ident) or {}
             sprite=self.pokemon_surface(ident,180)
@@ -347,6 +360,7 @@ class FlowMixin:
         if self.life.scene!='reserve' or min(math.hypot(self.life.x-x,self.life.y-y) for x,y in RESERVE_CENTERS)>150:
             self.notify(self.words('Dekati Pokémon Center untuk perawatan.','Approach a Pokémon Center for service.'));return
         self.center_selected=0;self.center_page=0;self.assigning_slot=False;self.center_query='';self.center_search=False
+        self.center_type_filter='all'
         self.center_message=self.words('Pilih koleksi, lalu pilih slot aktif.','Select a Pokémon, then choose an active slot.')
         self.set_mode('center')
 
@@ -354,7 +368,10 @@ class FlowMixin:
         self.canvas.fill((12,19,38))
         self.text('POKÉMON CENTER',65,47,GOLD,self.big)
         self.text(self.center_message[:100],65,107,G,self.small)
-        self.button(self.words('Cari: ','Search: ')+self.center_query+('|' if self.center_search else ''),(65,152,473,40),self.search_collection)
+        self.button(self.words('Cari: ','Search: ')+self.center_query+('|' if self.center_search else ''),(65,152,250,40),self.search_collection)
+        self.button('◀',(321,152,32,40),lambda:self.cycle_center_type(-1))
+        self.button(self.center_type_label(),(357,152,145,40),lambda:self.cycle_center_type(1),self.center_type_filter!='all')
+        self.button('▶',(506,152,32,40),lambda:self.cycle_center_type(1))
         collection=self.filtered_collection()
         entries=collection[self.center_page*8:self.center_page*8+8]
         for i,ident in enumerate(entries):
@@ -367,6 +384,9 @@ class FlowMixin:
             if spr:self.canvas.blit(spr,spr.get_rect(center=(x+36,y+42)))
             self.text(d.get('name',f'#{ident}').title(),x+71,y+21,C,self.small)
             self.text(f'Lv.{self.pokemon_level(ident)}',x+71,y+48,G,self.small)
+            types=pokemon_db.type_catalog().get(int(ident),())
+            type_text=' · '.join(self.type_name(t).upper() for t in types) or self.words('TIPE?','TYPE?')
+            self.text(type_text,x+71,y+68,M,self.tiny)
         self.text(self.words('TIM AKTIF / PILIH SLOT','ACTIVE TEAM / CHOOSE SLOT'),605,155,C,self.medium)
         for slot in range(3):
             ident=self.life.pokemon_active[slot] if slot<len(self.life.pokemon_active) else None
@@ -395,10 +415,27 @@ class FlowMixin:
         self.button(self.words('Kembali','Back')+' / Esc',(915,687,285,50),self.back)
 
     def filtered_collection(self):
-        if not self.center_query:return self.life.pokemon_party
         names={e['id']:e['name'] for e in self.pokedex.catalog}
         query=self.center_query.strip().lower()
-        return [ident for ident in self.life.pokemon_party if query in names.get(ident,'') or query==str(ident)]
+        types=pokemon_db.type_catalog()
+        return [ident for ident in self.life.pokemon_party
+                if (not query or query in names.get(ident,'') or query==str(ident))
+                and (self.center_type_filter=='all' or self.center_type_filter in types.get(int(ident),()))]
+
+    def type_name(self, name):
+        return TYPE_ID_NAMES.get(name,name) if self.life.language=='id' else name
+
+    def center_type_label(self):
+        if self.center_type_filter=='all':
+            return self.words('SEMUA TIPE','ALL TYPES')
+        return f"{self.type_name(self.center_type_filter).upper()} TYPE"
+
+    def cycle_center_type(self, step):
+        filters=('all',*TYPE_ICONS.keys())
+        try:index=filters.index(self.center_type_filter)
+        except ValueError:index=0
+        self.center_type_filter=filters[(index+step)%len(filters)]
+        self.center_page=0
 
     def search_collection(self):
         self.center_search=True

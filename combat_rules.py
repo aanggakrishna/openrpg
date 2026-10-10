@@ -11,7 +11,9 @@ def skill(move,ultimate=False):
     melee=move.get('damage_class',{}).get('name')=='physical' and any(w in name for w in ('punch','kick','tackle','scratch','bite','slash','headbutt','claw','chop'))
     area=any(w in name for w in ('quake','surf','storm','blizzard','discharge','explosion'))
     beam=any(w in name for w in ('beam','flame','breath','pump'))
-    emoji=next((v for k,v in VARIANTS.items() if k in name),EMOJI.get(typ,'💥'))
+    # Skill icon follows the move's actual type. This also keeps coverage moves
+    # on dual-type Pokémon honest: a secondary-type move carries its own icon.
+    emoji=EMOJI.get(typ,'💥')
     return {'name':name.replace('-',' ').title(),'type':typ,'power':min(140,power),'accuracy':move.get('accuracy') or 100,
             'emoji':emoji,'style':'status' if status else 'area' if area else 'beam' if beam else 'melee' if melee else 'projectile',
             'range':150 if melee else 410 if area else 610 if beam else 750,

@@ -64,23 +64,59 @@ def move(name):
 
 @lru_cache(maxsize=256)
 def loadout(ident):
-    """Select damaging moves from the actual learnset, favoring native types."""
+    """Build a balanced move set from the species' actual damaging learnset.
+
+    Dual-type Pokémon get one move for each native type when available. The
+    remaining slot provides coverage; single-type Pokémon get two native-type
+    moves and one coverage move where the learnset allows it.
+    """
     p = detail(ident)
     if not p:
         return []
-    own = {t['type']['name'] for t in p['types']}
+    own = [t['type']['name'] for t in p['types']]
     moves = [move(e['move']['name']) for e in p['moves']]
     all_moves = [m for m in moves if m]
     moves = [m for m in all_moves if m['power'] > 0]
     if not moves:
         moves = sorted(all_moves,key=lambda m:(m['damage_class']['name']!='status',m['name'] in ('transform','sketch','counter','mirror-coat','cosmic-power')),reverse=True)
-    moves.sort(key=lambda m: (m['type']['name'] in own, -abs(m['power']-60)), reverse=True)
     if not moves:
         return []
-    first = moves[0]
-    second = next((m for m in moves[1:] if m['type'] != first['type']), moves[min(1,len(moves)-1)])
-    ultimate = max(moves, key=lambda m: (m['type']['name'] in own, min(150,m['power'])))
-    return [first, second, ultimate]
+    def quality(m):
+        power=max(0,min(120,m['power']))
+        accuracy=max(0,min(100,m['accuracy']))
+        # Avoid weak utility moves and extreme glass-cannon accuracy choices.
+        return power*.72+accuracy*.28
+    selected=[]
+    used=set()
+    # Preserve PokéAPI type slot order: primary type first, then secondary.
+    for typ in own:
+        candidate=max((m for m in moves if m['type']['name']==typ and m['name'] not in used),
+                      key=quality,default=None)
+        if candidate:
+            selected.append(candidate);used.add(candidate['name'])
+    # Fill the last role with a strong coverage move; if none exists, add a
+    # second native move. This keeps both STAB types represented fairly.
+    coverage=max((m for m in moves if m['name'] not in used and m['type']['name'] not in own),
+                 key=quality,default=None)
+    while len(selected)<2 and len(selected)<len(moves):
+        candidate=max((m for m in moves if m['name'] not in used and m['type']['name'] in own),
+                      key=quality,default=None)
+        if not candidate:break
+        selected.append(candidate);used.add(candidate['name'])
+    if len(selected)<3:
+        candidate=coverage or max((m for m in moves if m['name'] not in used),key=quality,default=None)
+        if candidate:
+            selected.append(candidate);used.add(candidate['name'])
+    if len(selected)<3:
+        selected.extend(m for m in moves if m['name'] not in used)
+    # The fighter controls expose exactly three normal skill slots for every
+    # species. Some species have only one or two learnable moves in the local
+    # PokéAPI snapshot (notably Ditto, Smeargle, and Cosmog). Reuse a legal
+    # move to fill the remaining control slots instead of returning a short
+    # list and leaving the UI/AI without an action.
+    while selected and len(selected)<3:
+        selected.append(selected[-1])
+    return selected[:3]
 
 @lru_cache(maxsize=256)
 def species(ident):
@@ -125,6 +161,17 @@ def effectiveness(attack_type,defense_types):
             r=db.execute('SELECT te.damage_factor FROM type_efficacy te JOIN types a ON a.id=te.damage_type_id JOIN types d ON d.id=te.target_type_id WHERE a.identifier=? AND d.identifier=?',(attack_type,typ)).fetchone()
             if r:multiplier*=int(r[0])/100
         return multiplier
+
+@lru_cache(maxsize=1)
+def type_catalog():
+    """Return canonical species IDs mapped to their ordered PokéAPI types."""
+    if not PATH.exists():return {}
+    with closing(sqlite3.connect(f'file:{PATH}?mode=ro',uri=True)) as db:
+        rows=db.execute('SELECT pokemon_id,t.identifier FROM pokemon_types pt JOIN types t ON t.id=pt.type_id ORDER BY pokemon_id,slot')
+        result={}
+        for ident,typ in rows:
+            result.setdefault(int(ident),[]).append(typ)
+        return {ident:tuple(types) for ident,types in result.items()}
 
 def catalog():
     if not PATH.exists():return []

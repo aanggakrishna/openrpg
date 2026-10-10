@@ -11,6 +11,7 @@ import sqlite3
 import threading
 import time
 from online_combat import Battle, creature
+from world_regions import online_step
 
 
 class World:
@@ -192,8 +193,7 @@ class World:
                 keys=p['keys'];dx=int(keys.get('right',False))-int(keys.get('left',False));dy=int(keys.get('down',False))-int(keys.get('up',False))
                 if dx or dy:p['facing']='right' if dx>0 else 'left' if dx<0 else 'down' if dy>0 else 'up'
                 length=max(1,(dx*dx+dy*dy)**.5)
-                p['x']=max(55,min(3150 if p['room']=='hall' else 1220,p['x']+dx/length*220*dt))
-                p['y']=max(235,min(620,p['y']+dy/length*220*dt))
+                p['x'],p['y']=online_step(p['room'],p['x'],p['y'],dx,dy,dt)
         self.offers={k:o for k,o in self.offers.items() if o['expires']>now}
         for mid,m in list(self.matches.items()):
             battle=m['battle'];battle.tick(dt)

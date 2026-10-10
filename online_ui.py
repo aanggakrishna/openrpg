@@ -16,11 +16,14 @@ ONLINE_ELEMENT_COLORS={'fire':(255,116,64),'water':(79,190,255),'ground':(208,15
                        'ice':(166,239,255),'psychic':(249,126,201),'ghost':(174,128,240),'dragon':(133,136,255)}
 
 
+from world_regions import online_step
+
 class OnlineMixin:
     def __init__(self,*args,**kwargs):
         self.net=None;self.online_state={};self.online_error='';self.online_input=None;self.online_input_text=''
         self.online_url='http://127.0.0.1:8765';self.online_code='';self.online_target=0;self.trade_give=0;self.trade_want=0;self.trade_price=0
         self.online_images={};self.online_scaled_images={};self.online_team_page=0;self.media_prune_timer=0.;self.online_terminal=False;self.online_last_hp={};self.online_audio_id=None;self.online_audio_seq=0;self.online_audio_result=False;self.online_visual_positions={}
+        self.online_room_background=None;self.online_room_background_key=None
         super().__init__(*args,**kwargs)
         try:self.online_url=json.loads((ROOT/'.openrpg/online/preferences.json').read_text()).get('url',self.online_url)
         except (OSError,ValueError):pass
@@ -55,8 +58,7 @@ class OnlineMixin:
 
     def outdoors(self):
         super().outdoors()
-        pg.draw.rect(self.canvas,(87,100,127),(608,145,64,174))
-        for y in range(155,310,26):pg.draw.rect(self.canvas,G,(635,y,8,12))
+        self.art.scenery.gate(self.canvas,640,180,"north","meadow")
         self.box((547,154,185,40),retro.PANEL)
         self.text('ONLINE GYM / E',640,174,G,self.small,True)
 
@@ -282,30 +284,39 @@ class OnlineMixin:
         self.text('Chat / PvP / Trade / Co-op dungeons Lv.1–100',225,498,G,self.font)
         self.button(self.words('Kembali','Back'),(440,560,400,48),lambda:self.set_mode('game'))
 
+    def online_room_backdrop(self,room):
+        """Bake static tile layers once per room; only players/UI animate."""
+        if self.online_room_background_key==room and self.online_room_background is not None:
+            return self.online_room_background
+        surface=self.art.scenery.online(room)
+        self.online_room_background=surface
+        self.online_room_background_key=room
+        return surface
+
     def draw_online_room(self):
         state=self.online_state;me=state.get('me',{});room=state.get('room','gym')
         own=next((p for p in state.get('players',[]) if p['id']==me.get('id')),{'x':240})
         camera=max(0,min(1920,own['x']-640)) if room=='hall' else 0
+        backdrop=self.online_room_backdrop(room)
+        self.canvas.blit(backdrop,(-int(camera),0))
         self.box((25,25,1230,100),retro.PANEL)
         title='ONLINE GYM' if room=='gym' else 'DUNGEON ROAD' if room=='hall' else 'DUNGEON '+room.split(':')[-1]
         self.text(title,48,43,GOLD,self.big);self.text(f"{me.get('name','...')}   $ {me.get('money',0)}   Trainer Lv.{me.get('trainer_level',1)} XP {me.get('trainer_xp',0)}   Tier {me.get('unlocked',1)}/10",48,90,G,self.small)
-        for x in range(-int(camera)%64,1280,64):
-            for y in range(230,660,64):pg.draw.rect(self.canvas,(26,41,62),(x,y,62,62))
-        pg.draw.line(self.canvas,G,(0,450),(1280,450),3)
+        if room=='gym':pg.draw.line(self.canvas,(74,102,125),(0,450),(1280,450),3)
         if room=='gym':
-            pg.draw.rect(self.canvas,(52,74,91),(470,290,500,210),3)
-            pg.draw.circle(self.canvas,(74,102,125),(720,395),86,3)
-            pg.draw.line(self.canvas,(74,102,125),(635,395),(805,395),3)
-            pg.draw.circle(self.canvas,G,(720,395),22,3)
+            pg.draw.rect(self.canvas,(52,74,91),(470,290,500,210),5)
+            pg.draw.rect(self.canvas,(108,152,145),(490,310,460,170),2)
+            pg.draw.circle(self.canvas,(74,102,125),(720,395),86,4)
+            pg.draw.line(self.canvas,(74,102,125),(635,395),(805,395),4)
+            pg.draw.circle(self.canvas,G,(720,395),22,4)
             for x in (415,1020):
                 for y in (280,340,400):pg.draw.rect(self.canvas,(59,76,102),(x,y,22,38))
             self.text('TRAIN / TRADE / CHALLENGE',720,475,M,self.small,True)
         elif room.startswith('dungeon:'):
-            tier=int(room.split(':')[1]);accent=(85+tier*10,110,160-tier*5)
-            for x in range(50,1250,160):
-                pg.draw.rect(self.canvas,accent,(x,295,28,190))
-                pg.draw.rect(self.canvas,GOLD,(x-5,290,38,12))
-            self.text('1–3  /  4–6  /  7–9  /  BOSS +10',740,465,GOLD,self.font,True)
+            tier=int(room.split(':')[1])
+            self.box((390,535,500,72),(20,27,43),7)
+            self.text(f'DUNGEON {tier:02}  ·  DEPTH {tier*10}',640,555,GOLD,self.font,True)
+            self.text('1–3  /  4–6  /  7–9  /  BOSS Lv.10',640,584,C,self.small,True)
         if room=='hall':
             for i in range(10):
                 x=int(300+i*280-camera)

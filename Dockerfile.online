@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 WORKDIR /app
-COPY online_server.py online_combat.py combat_rules.py pokemon_db.py ./
+COPY online_server.py online_combat.py combat_rules.py pokemon_db.py world_regions.py ./
 COPY assets/data/pokedex.sqlite3.gz assets/data/pokedex.sqlite3.gz
 RUN useradd --create-home game && mkdir -p /app/.openrpg && chown -R game:game /app
 USER game

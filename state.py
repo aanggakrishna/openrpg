@@ -5,6 +5,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 import random
+from world_regions import weather_for
 
 ITEMS = ("Sayur", "Ikan", "Telur", "Makanan", "Daging", "Kulit", "Kayu", "Obat", "Tombak", "Busur", "Panah", "Pokeball")
 BUY = {"Makanan": 24, "Obat": 35, "Tombak": 80, "Busur": 160, "Panah": 3, "Pokeball": 12}
@@ -158,14 +159,8 @@ class Life:
             self.day += 1
         if self.day != previous_day:
             self.ensure_daily_quests()
-        hour_id = self.day * 24 + self.hour
-        if hour_id != self.weather_hour:
-            self.weather_hour = hour_id
-            block = (hour_id - 8) // 3
-            self.weather = random.Random(block + 304).choices(
-                ("Cerah", "Hujan", "Salju", "Berawan"), weights=(5, 2, 1, 2))[0]
-        if self.weather_override:
-            self.weather = self.weather_override
+        self.weather_hour = self.day * 24 + self.hour
+        self.weather = weather_for(self.scene,self.x,self.y,self.day,self.hour,self.weather_override)
 
     def skip_hour(self):
         self.advance_time(60)
