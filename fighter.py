@@ -168,8 +168,10 @@ class FighterMixin:
 
     def fighter_speed(self,ident,who='player'):
         detail=self.pokemon_data(ident) or {}
-        speed=next((int(row.get('base_stat',70)) for row in detail.get('stats',[])
-                    if row.get('stat',{}).get('name')=='speed'),70)
+        speed=(self.battle_stat(who, 'speed', 70) if self.battle and
+               ident == self.battle.get('wild_id' if who == 'enemy' else 'player_id') else
+               next((int(row.get('base_stat',70)) for row in detail.get('stats',[])
+                     if row.get('stat',{}).get('name')=='speed'),70))
         base=206 if who=='player' else 166
         result=max(125,min(270,base+(speed-70)*.52))
         if who=='player' and self.battle and self.battle.get('fruit_speed_timer',0)>0:
@@ -259,7 +261,7 @@ class FighterMixin:
         elif name in ('recover','purify','rest','heal pulse'):
             key='player_hp' if owner=='player' else 'wild_hp';maximum=b['player_max' if owner=='player' else 'wild_max']
             b[key]=min(maximum,b[key]+max(8,int(maximum*.2)))
-            if owner=='player':self.life.pokemon_health[str(source_id)]=b[key]
+            if owner=='player':self.save_battle_player_hp()
         elif name!='splash':
             if owner=='player':b['guard']=min(100,b.get('guard',0)+35)
             else:b['enemy_guard_timer']=1.5
@@ -402,7 +404,11 @@ class FighterMixin:
         ident=b['player_id' if target=='player' else 'wild_id']
         attacker=self.pokemon_data(shot['source_id']);defender=self.pokemon_data(ident)
         factor=pokemon_db.effectiveness(shot['type'],tuple(t['type']['name'] for t in (defender or {}).get('types',[])))
-        power=shot['power'];damage=max(4,int(power*.16+self.base_stat(attacker,'special-attack',50)*.045-self.base_stat(defender,'special-defense',50)*.025))
+        attacker_side='enemy' if shot['owner']=='enemy' else 'player'
+        defender_side='player' if target=='player' else 'enemy'
+        attack_stat='attack' if shot.get('damage_class')=='physical' else 'special-attack'
+        defense_stat='defense' if shot.get('damage_class')=='physical' else 'special-defense'
+        power=shot['power'];damage=max(4,int(power*.16+self.battle_stat(attacker_side,attack_stat,50)*.045-self.battle_stat(defender_side,defense_stat,50)*.025))
         attacker_level=(int(b.get('wild_level',5)) if shot['source_id']==b.get('wild_id') else self.pokemon_level(int(shot['source_id'])))
         defender_level=(int(b.get('wild_level',5)) if ident==b.get('wild_id') else self.pokemon_level(int(ident)))
         level_factor=max(.8,min(1.35,1+(attacker_level-defender_level)*.009))
@@ -433,7 +439,7 @@ class FighterMixin:
         self.play_hit_cry(ident)
         b['phase']=('STUN! ' if stunned else 'BLOCK ' if defending else '')+f'-{damage} HP'
         if target=='player':
-            self.life.pokemon_health[str(ident)]=b['player_hp']
+            self.save_battle_player_hp()
             if b['player_hp']<=0:
                 living=[i for i in self.active_pokemon_team() if i!=ident and self.life.pokemon_health.get(str(i),0)>0]
                 b['ko_anim']={'owner':'player','pokemon_id':ident,'timer':.82,'duration':.82,

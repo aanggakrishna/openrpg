@@ -7,7 +7,8 @@ import threading
 from collections import OrderedDict
 import pygame as pg
 from scenery import Scenery
-from world_regions import reserve_layout, reserve_solids, scene_layout
+from world_regions import (RESERVE_GRID_POSITIONS, RESERVE_COLUMNS, RESERVE_ROWS,
+                            reserve_index_at, reserve_layout, reserve_solids, scene_layout)
 
 ROOT = Path(__file__).resolve().parent / "assets"
 NINJA = ROOT / "ninja-adventure/Ninja Adventure - Asset Pack"
@@ -16,11 +17,11 @@ NINJA = ROOT / "ninja-adventure/Ninja Adventure - Asset Pack"
 # replacing the two ninja slots with ordinary villagers.
 PLAYER_STYLES = ("Boy", "Hunter", "Woman", "Villager4", "OldMan", "Samurai", "Princess", "Cavegirl", "EggGirl")
 FACING = {"down": 0, "up": 1, "left": 2, "right": 3}
-RESERVE_WIDTH, RESERVE_HEIGHT = 5120, 6400
+RESERVE_WIDTH, RESERVE_HEIGHT = 1280 * RESERVE_COLUMNS, 1600 * RESERVE_ROWS
 RESERVE_ZONE_W, RESERVE_ZONE_H = 1280, 1600
-RESERVE_COLUMNS, RESERVE_ROWS = 4, 4
 RESERVE_LEVEL_REQUIREMENTS = [0, 4, 8, 12, 6, 10, 14, 18, 16, 20, 24, 28, 32, 36, 40, 45]
-RESERVE_CENTERS = [(160, 690)] + [(c * 1280 + 640, r * 1600 + 955) for r in range(4) for c in range(4)]
+RESERVE_LEVEL_REQUIREMENTS += [46 + (index - 16) // 7 for index in range(16, 50)]
+RESERVE_CENTERS = [(160, 690)]
 RESERVE_ZONES = [
     {"name": "Suaka Hijau", "biome": "meadow", "x": 0, "y": 0, "color": (114, 171, 103)},
     {"name": "Hutan Rimba", "biome": "forest", "x": 1280, "y": 0, "color": (64, 130, 76)},
@@ -39,6 +40,54 @@ RESERVE_ZONES = [
     {"name": "Lembah Naga", "biome": "dragon_valley", "x": 2560, "y": 4800, "color": (128, 82, 92)},
     {"name": "Kuil Legenda", "biome": "legendary_ruins", "x": 3840, "y": 4800, "color": (117, 92, 150)},
 ]
+
+# Country-inspired destinations: each uses the matching existing habitat
+# palette, weather and Pokémon type pool, while the place name supplies its
+# cultural flavor. The original sixteen zones and their save coordinates stay
+# untouched.
+COUNTRY_ZONES = [
+    ("Bali · Teras Sawah", "forest", (112, 157, 91)),
+    ("Kyoto · Hutan Sakura", "ancient_forest", (104, 137, 99)),
+    ("Sichuan · Hutan Bambu", "forest", (84, 138, 81)),
+    ("Kerala · Kebun Monsun", "swamp", (83, 137, 104)),
+    ("Mesir · Dataran Sphinx", "desert", (206, 172, 106)),
+    ("Yunani · Pulau Marmer", "coast", (116, 171, 183)),
+    ("Italia · Lembah Zaitun", "meadow", (127, 157, 94)),
+    ("Prancis · Taman Bintang", "meadow", (143, 162, 121)),
+    ("Skotlandia · Moor Berkabut", "mountain", (106, 130, 123)),
+    ("Norwegia · Fjord Es", "snow", (165, 198, 212)),
+    ("Islandia · Padang Aurora", "snow", (139, 181, 200)),
+    ("Kenya · Sabana Merdeka", "badlands", (180, 151, 91)),
+    ("Tanzania · Lereng Kilimanjaro", "mountain", (149, 164, 151)),
+    ("Madagaskar · Hutan Baobab", "ancient_forest", (110, 127, 77)),
+    ("Brasil · Cekungan Amazon", "ancient_forest", (56, 119, 75)),
+    ("Peru · Hutan Awan", "mountain", (104, 152, 127)),
+    ("Meksiko · Gua Cenote", "cave", (74, 113, 122)),
+    ("Kanada · Hutan Maple", "snow", (173, 183, 151)),
+    ("Amerika · Ngarai Redwood", "forest", (74, 119, 80)),
+    ("Australia · Pedalaman Merah", "badlands", (174, 116, 84)),
+    ("Selandia Baru · Puncak Selatan", "mountain", (135, 164, 175)),
+    ("Turki · Lembah Balon", "badlands", (196, 152, 113)),
+    ("Maroko · Oasis Atlas", "desert", (192, 155, 91)),
+    ("Nepal · Jalur Himalaya", "mountain", (133, 154, 158)),
+    ("Thailand · Rawa Teratai", "swamp", (91, 145, 110)),
+    ("Filipina · Atol Karang", "coast", (65, 157, 179)),
+    ("Korea · Lembah Kristal", "crystal", (123, 117, 169)),
+    ("Swiss · Padang Alpen", "snow", (180, 202, 195)),
+    ("Spanyol · Pesisir Surya", "coast", (206, 166, 119)),
+    ("Afrika Selatan · Tanjung Liar", "badlands", (164, 132, 98)),
+    ("Antarktika · Rak Aurora", "snow", (202, 224, 229)),
+    ("Portugal · Pulau Azores", "coast", (91, 153, 169)),
+    ("Chile · Punggung Atacama", "volcano", (137, 102, 92)),
+    ("Argentina · Padang Patagonia", "dragon_valley", (133, 114, 132)),
+]
+for index, (name, biome, color) in enumerate(COUNTRY_ZONES, start=16):
+    col, row = RESERVE_GRID_POSITIONS[index]
+    RESERVE_ZONES.append({"name": name, "biome": biome, "x": col * RESERVE_ZONE_W,
+                          "y": row * RESERVE_ZONE_H, "color": color})
+RESERVE_CENTERS += [(zone["x"] + RESERVE_ZONE_W // 2,
+                     zone["y"] + RESERVE_ZONE_H // 2 + 155)
+                    for zone in RESERVE_ZONES]
 
 
 class RPGArt:
@@ -114,9 +163,9 @@ class RPGArt:
         self.reserve_paths = [pg.Rect(0, y - 48, RESERVE_WIDTH, 96)
                               for y in range(800, RESERVE_HEIGHT, RESERVE_ZONE_H // 2)]
         self.reserve_paths += [pg.Rect(x - 40, 0, 80, RESERVE_HEIGHT)
-                               for x in (1280, 2560, 3840)]
+                               for x in range(RESERVE_ZONE_W, RESERVE_WIDTH, RESERVE_ZONE_W)]
         self.reserve_paths += [pg.Rect(x - 28, 0, 56, RESERVE_HEIGHT)
-                               for x in (640, 1920, 3200, 4480)]
+                               for x in range(RESERVE_ZONE_W // 2, RESERVE_WIDTH, RESERVE_ZONE_W)]
         self.reserve_paths += [pg.Rect(132, 670, 48, 130), pg.Rect(640, 448, 640, 56)]
         self.trees["reserve"] = [(x, y) for x, y in self.trees["reserve"]
                                  if not any(r.colliderect(pg.Rect(x-48, y-90, 96, 96))
@@ -445,7 +494,8 @@ class RPGArt:
         visible = []
         for row in range(top, bottom + 1):
             for col in range(left, right + 1):
-                index = row * RESERVE_COLUMNS + col
+                index = reserve_index_at(col * RESERVE_ZONE_W + RESERVE_ZONE_W // 2,
+                                         row * RESERVE_ZONE_H + RESERVE_ZONE_H // 2)
                 visible.append(index)
                 if index not in self.reserve_chunks:
                     self.request_reserve_chunk(index)

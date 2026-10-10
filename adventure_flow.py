@@ -25,6 +25,22 @@ TYPE_ID_NAMES = {
     'psychic':'Psikis','bug':'Serangga','rock':'Batu','ghost':'Hantu','dragon':'Naga',
     'dark':'Gelap','steel':'Baja','fairy':'Peri'
 }
+TUTORIAL_STEPS = (
+    ("plant", "Tanam benih di kebun", "Plant seeds in the garden"),
+    ("water", "Siram tanaman", "Water the crops"),
+    ("harvest", "Panen sayuran setelah matang", "Harvest vegetables when ripe"),
+    ("egg", "Beri makan ayam dan ambil telur", "Feed the chickens and collect eggs"),
+    ("fish", "Pancing ikan di kolam", "Catch a fish at the pond"),
+    ("sell_farm", "Jual hasil kebun di market", "Sell your farm goods at the market"),
+    ("buy_weapon", "Beli senjata untuk berburu", "Buy a weapon for hunting"),
+    ("hunt", "Berburu hewan di hutan", "Hunt an animal in the forest"),
+    ("sell_hunt", "Jual hasil buruan", "Sell your hunting goods"),
+    ("enter_home", "Masuk ke rumah", "Enter your home"),
+    ("eat", "Makan untuk memulihkan rasa kenyang", "Eat to restore fullness"),
+    ("sleep", "Tidur di kamar", "Sleep in your bedroom"),
+    ("drink", "Minum air di dapur", "Drink water in the kitchen"),
+    ("enter_reserve", "Masuk melalui gerbang Suaka Pokémon", "Enter through the Pokémon Sanctuary gate"),
+)
 
 class FlowMixin:
     def __init__(self, *args, **kwargs):
@@ -53,6 +69,7 @@ class FlowMixin:
         self.wizard = {}
         self.profile_action = 'load'
         self.profile_return = 'title'
+        self.profile_replace_pending = None
         self.asset_loading_ids = []
 
     def words(self, indonesian, english):
@@ -96,11 +113,10 @@ class FlowMixin:
     def select_profile(self, path, data):
         if self.profile_action == 'new':
             if data or path.exists():
-                self.notify(self.words('Slot sudah terisi. Pilih slot kosong.','Occupied slot. Please select an empty slot.'))
+                self.profile_replace_pending = (path, data)
+                self.set_mode('profile_replace')
                 return
-            self.wizard={'path':path,'name':'','gender':'male','style':0,'step':0}
-            self.set_mode('setup')
-            pg.key.start_text_input()
+            self.start_new_profile(path)
             return
         if not data:
             self.notify(self.words('Slot kosong.','Empty slot.'))
@@ -113,6 +129,35 @@ class FlowMixin:
             shutil.copy2(path,backup)
         self.life=Life.load(path)
         self.activate_profile()
+
+    def start_new_profile(self, path):
+        self.wizard={'path':path,'name':'','gender':'male','style':0,'step':0}
+        self.profile_replace_pending = None
+        self.set_mode('setup')
+        pg.key.start_text_input()
+
+    def confirm_profile_replace(self, replace):
+        pending = self.profile_replace_pending
+        self.profile_replace_pending = None
+        if replace and pending:
+            self.start_new_profile(pending[0])
+        else:
+            self.set_mode('profiles')
+
+    def draw_profile_replace(self):
+        pending = self.profile_replace_pending
+        data = pending[1] if pending else None
+        name = (data or {}).get('player_name') or self.words('profil yang ada','existing profile')
+        self.text(self.words('GANTI PROFIL?','REPLACE PROFILE?'), 640, 230, GOLD, self.big, True)
+        self.text(self.words(f'"{name}" sudah memiliki data tersimpan.',
+                             f'"{name}" already has saved data.'), 640, 305, C, self.medium, True)
+        self.text(self.words('Jika dilanjutkan, perjalanan lama akan diganti dengan akun baru yang kosong.',
+                             'Continuing will replace the old adventure with a fresh new account.'),
+                  640, 360, M, self.small, True)
+        self.button(self.words('Ya, ganti profil','Yes, replace profile'), (245, 475, 360, 72),
+                    lambda: self.confirm_profile_replace(True), True)
+        self.button(self.words('Tidak, kembali','No, go back'), (675, 475, 360, 72),
+                    lambda: self.confirm_profile_replace(False))
 
     def activate_profile(self):
         self.playing=True
@@ -164,10 +209,59 @@ class FlowMixin:
         _, _, _, statuses = self.asset_loading_progress()
         failed = sum(status == 'failed' for status in statuses)
         self.set_mode('game')
+        if self.life.tutorial_active and self.life.tutorial_step == 0:
+            self.set_mode('tutorial_intro')
         if failed:
             self.notify(self.words(
                 f'{failed} sprite belum terunduh. Periksa internet; Pokémon lain akan dimuat saat ditemukan.',
                 f'{failed} sprites could not be downloaded. Check your connection; other Pokémon load when encountered.'))
+
+    def tutorial_objective(self):
+        if not self.life.tutorial_active or self.life.tutorial_step >= len(TUTORIAL_STEPS):
+            return None
+        return TUTORIAL_STEPS[self.life.tutorial_step]
+
+    def tutorial_advance(self, action):
+        objective = self.tutorial_objective()
+        if not objective or objective[0] != action:
+            return False
+        self.life.tutorial_step += 1
+        if self.life.tutorial_step >= len(TUTORIAL_STEPS):
+            self.life.tutorial_active = False
+            self.notify(self.words('Tutorial selesai! Suaka Pokémon dan petualangan terbuka.',
+                                   'Tutorial complete! The Pokémon Sanctuary and adventure are now open.'))
+        else:
+            next_step = TUTORIAL_STEPS[self.life.tutorial_step]
+            self.notify(self.words('Selesai! Berikutnya: ' + next_step[1] + '.',
+                                   'Done! Next: ' + next_step[2] + '.'))
+        self.save_current()
+        return True
+
+    def begin_tutorial(self):
+        self.set_mode('game')
+        objective = self.tutorial_objective()
+        if objective:
+            self.notify(self.words('Mulai dari kebun: ' + objective[1] + '.',
+                                   'Start in the garden: ' + objective[2] + '.'))
+        self.save_current()
+
+    def draw_tutorial_intro(self):
+        self.text(self.words('SELAMAT DATANG, PETUALANG!', 'WELCOME, ADVENTURER!'), 640, 74, GOLD, self.big, True)
+        self.text(self.words('Selesaikan kegiatan hidupmu sebelum membuka Suaka Pokémon.',
+                             'Complete your life activities before entering the Pokémon Sanctuary.'),
+                  640, 132, C, self.small, True)
+        self.box((102, 180, 1076, 420), retro.PANEL, 14, retro.EDGE)
+        for i, (_, id_label, en_label) in enumerate(TUTORIAL_STEPS):
+            col, row = i // 7, i % 7
+            x, y = 145 + col * 525, 205 + row * 49
+            self.text(f'{i+1:02}', x, y, GOLD, self.small)
+            self.text(id_label if self.life.language == 'id' else en_label,
+                      x + 48, y, C, self.small)
+        self.text(self.words('Petunjuk muncul di layar saat bermain. Progres otomatis tersimpan.',
+                             'Objectives appear during play. Your progress is saved automatically.'),
+                  640, 626, M, self.small, True)
+        self.button(self.words('Mulai tutorial · Enter', 'Start tutorial · Enter'),
+                    (430, 680, 420, 58), self.begin_tutorial, True)
 
     def draw_asset_loading(self):
         self.canvas.fill((12, 19, 38))
@@ -227,7 +321,9 @@ class FlowMixin:
         self.nav_mode=None
         if w['step']==3:
             w['starter']=random.SystemRandom().choice(STARTERS)
-            w['level']=random.SystemRandom().randint(3,5)
+            # Keep every new profile inside the first sanctuary at the start;
+            # the next reserve gate requires a Pokémon at level 4.
+            w['level']=random.SystemRandom().randint(1,3)
             self.pokedex.request(w['starter'])
             self.play_pokemon_cry(w['starter'])
         elif w['step']>3:
@@ -235,6 +331,7 @@ class FlowMixin:
             ident=w['starter']; key=str(ident)
             self.life=Life(player_name=w['name'].strip(),gender=w['gender'],character=w['style'],language=self.life.language,
                            music_volume=self.life.music_volume,effects_volume=self.life.effects_volume,cry_volume=self.life.cry_volume,reduced_motion=self.life.reduced_motion,
+                           tutorial_active=True,tutorial_step=0,
                            pokemon_party=[ident],pokemon_caught=[ident],pokemon_seen=[ident],pokemon_active=[ident],
                            pokemon_levels={key:w['level']},pokemon_xp={key:0},pokemon_health={key:100})
             self.save_path=w['path']
@@ -614,8 +711,17 @@ class FlowMixin:
 
     def accept_invitation(self):
         inv=self.invitation;self.encounter_grace=25
-        if inv.get('trainer'):self.begin_pokemon_battle(inv['trainer']['team'][0],trainer=inv['trainer'])
-        else:self.begin_pokemon_battle(inv['wild']['id'],wild=inv['wild'])
+        if inv.get('trainer'):
+            self.begin_pokemon_battle(inv['trainer']['team'][0],trainer=inv['trainer'])
+        else:
+            # Accepting a wild Pokémon's challenge costs the trainer 10 HP
+            # percentage points before the duel starts.
+            self.life.health=max(0,self.life.health-10)
+            if self.life.health<=0:
+                self.invitation=None
+                self.start_dead_screen()
+                return
+            self.begin_pokemon_battle(inv['wild']['id'],wild=inv['wild'])
         if self.mode!='battle':self.set_mode('game')
         self.invitation=None
 
@@ -649,8 +755,10 @@ class FlowMixin:
                     self.invitation={kind:actor};self.set_mode('invitation');return
 
     def overlay(self):
-        custom={'profiles':self.draw_profiles,'setup':self.draw_setup,'reward':self.draw_reward,
-                'invitation':self.draw_invitation,'asset_loading':self.draw_asset_loading}
+        custom={'profiles':self.draw_profiles,'profile_replace':self.draw_profile_replace,
+                'setup':self.draw_setup,'reward':self.draw_reward,
+                'invitation':self.draw_invitation,'asset_loading':self.draw_asset_loading,
+                'tutorial_intro':self.draw_tutorial_intro}
         if self.mode in custom:
             self.buttons=[];self.canvas.fill((12,19,38));custom[self.mode]()
         else:super().overlay()
@@ -689,6 +797,8 @@ class FlowMixin:
                 return
         if self.mode=='battle' and event.type==pg.KEYDOWN and self.battle and any(self.battle.get(k) for k in ('ultimate_cutin','capture')) and event.key!=pg.K_ESCAPE:
             return
+        if self.mode=='tutorial_intro' and event.type==pg.KEYDOWN and event.key in (pg.K_RETURN,pg.K_KP_ENTER):
+            self.begin_tutorial();return
         if self.mode=='battle' and event.type==pg.KEYDOWN and event.key==pg.K_UP and self.battle:
             self.battle['jump_buffer']=.14
         if self.mode=='invitation' and event.type==pg.KEYDOWN and event.key==pg.K_ESCAPE:
@@ -716,6 +826,8 @@ class FlowMixin:
                     self.buttons[min(self.nav_index,len(self.buttons)-1)][1]()
                     self.play_action_sound('ui-confirm',.22)
                 return
+            if self.mode=='profile_replace' and event.key==pg.K_ESCAPE:
+                self.confirm_profile_replace(False);return
             if self.mode in ('profiles','setup','reward') and event.key==pg.K_ESCAPE:
                 self.set_mode(self.reward['back'] if self.mode=='reward' else 'title');pg.key.stop_text_input();return
         super().handle(event)

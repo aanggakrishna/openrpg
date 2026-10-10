@@ -105,7 +105,7 @@ PUZZLES = {
 NPC_SCHEDULES = {
     "Sari": (6, 15, "Makanan & obat"),
     "Budi": (9, 20, "Senjata & panah"),
-    "Danu": (11, 18, "Pembeli hasil panen"),
+    "Joy": (11, 18, "Pembeli hasil panen"),
 }
 
 WEATHER_TYPES = {

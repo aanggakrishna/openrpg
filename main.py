@@ -32,7 +32,8 @@ from i18n import translate
 RARE_POKEMON_IDS = {144,145,146,150,151,243,244,245,249,250,251,377,378,379,380,381,382,383,384,385,386,480,481,482,483,484,485,486,487,488,489,490,491,492,493,494,638,639,640,641,642,643,644,645,646,647,648,649,716,717,718,719,720,721,785,786,787,788,789,790,791,792,800,801,802,805,806,807,808,809,888,889,890,891,892,894,895,896,897,898,905,1001,1002,1003,1004,1007,1008,1009,1010,1011,1012,1013,1014,1015,1016,1017,1024,1025}
 from wildlife import Wildlife, SPECIES, hunting_time
 from environment import Environment, OUTSIDE
-from world_regions import (BIOMES, HABITAT_TYPES, biome_at, reserve_layout, scene_layout, weather_for)
+from world_regions import (BIOMES, HABITAT_TYPES, biome_at, reserve_index_at,
+                           RESERVE_GRID_POSITIONS, reserve_layout, scene_layout, weather_for)
 from world_features import (COLLECTION_COSMETICS, EVENTS, EVENT_NAMES_ID, NPC_SCHEDULES,
                             PUZZLES, SECRETS, STORIES, WEATHER_TYPES)
 from pokedex import PokedexClient
@@ -132,6 +133,8 @@ class LegacyGame:
         self.pokemon_encounter_clock = 0.0
         self.battle = None
         self.encounter_target = None
+        self.encounter_choice = 0
+        self.interaction_choices = []
         self.pokemon_sounds = {}
         self.battle_sounds = {}
         self.action_sounds = {}
@@ -317,25 +320,34 @@ class LegacyGame:
         # feel inhabited while keeping each merchant available predictably.
         result = []
         routes = {"Sari": (415, 350, "Woman"), "Budi": (902, 350, "Hunter"),
-                  "Danu": (673, 594, "OldMan")}
+                  "Joy": (673, 594, "OldMan")}
         for name, (start, end, service) in NPC_SCHEDULES.items():
             if not start <= self.life.hour < end:
                 continue
-            x, y, style = routes[name]
+            # Keep old schedule names harmless during development upgrades.
+            # Saves/builds may still refer to Danu after the merchant became Joy.
+            name = {"Danu": "Joy"}.get(name, name)
+            route = routes.get(name)
+            if route is None:
+                continue
+            x, y, style = route
             x += math.sin(self.life.elapsed / (6 + len(name))) * 13
             result.append((name, x, y, style, service))
         return result
 
     def current_biome_index(self):
+        if self.life.scene == "reserve":
+            return reserve_index_at(self.life.x, self.life.y)
         return BIOMES.index(biome_at(self.life.scene, self.life.x, self.life.y))
 
     def secret_world_position(self, biome=None):
         if self.life.scene != "reserve":
             return None
         index = self.current_biome_index()
-        biome = biome or BIOMES[index]
+        biome = biome or biome_at("reserve", self.life.x, self.life.y)
         x, y, icon = SECRETS[biome]
-        return index, index % 4 * RESERVE_ZONE_W + x, index // 4 * RESERVE_ZONE_H + y, icon
+        zone = RESERVE_ZONES[index]
+        return index, zone["x"] + x, zone["y"] + y, icon
 
     def update_world_events(self):
         if self.mode != "game" or self.life.scene not in OUTSIDE:
@@ -465,9 +477,8 @@ class LegacyGame:
             result.extend(("center", x, y, "Pokémon Center · periksa, pulihkan, evolusi")
                           for x, y in zone_centers)
             result.extend(("gate:" + gate["direction"], gate["x"], gate["y"],
-                           ("Gerbang terkunci · Lv." + str(gate["required_level"])
-                            if self.player_progress_level() < gate["required_level"]
-                            else "Gerbang · " + gate["target"]["name"]))
+                           ("Gerbang · " + gate["target"]["name"] if gate["boss_defeated"]
+                            else "Kalahkan boss Pokémon dulu"))
                           for gate in self.reserve_gates())
             if not self.life.mounted and self.life.horse_scene == "reserve":
                 result.append(("horse", self.life.horse_x, self.life.horse_y, "Naik kuda · R"))
@@ -503,16 +514,17 @@ class LegacyGame:
 
     def reserve_gates(self):
         """Return neighboring biome gates around the player's current region."""
-        col = max(0, min(RESERVE_COLUMNS - 1, int(self.life.x // RESERVE_ZONE_W)))
-        row = max(0, min(RESERVE_ROWS - 1, int(self.life.y // RESERVE_ZONE_H)))
-        zone = RESERVE_ZONES[row * RESERVE_COLUMNS + col]
+        zone_index = reserve_index_at(self.life.x, self.life.y)
+        zone = RESERVE_ZONES[zone_index]
+        col, row = RESERVE_GRID_POSITIONS[zone_index]
+        grid_to_index = {position: index for index, position in enumerate(RESERVE_GRID_POSITIONS)}
         gates = []
         for direction, dc, dr in (("utara", 0, -1), ("selatan", 0, 1),
                                   ("barat", -1, 0), ("timur", 1, 0)):
             nc, nr = col + dc, row + dr
-            if not (0 <= nc < RESERVE_COLUMNS and 0 <= nr < RESERVE_ROWS):
+            target_index = grid_to_index.get((nc, nr))
+            if target_index is None:
                 continue
-            target_index = nr * RESERVE_COLUMNS + nc
             target = RESERVE_ZONES[target_index]
             if direction == "utara":
                 x, y = zone["x"] + RESERVE_ZONE_W // 2, zone["y"] + 220
@@ -524,8 +536,17 @@ class LegacyGame:
                 x, y = zone["x"] + RESERVE_ZONE_W - 80, zone["y"] + RESERVE_ZONE_H // 2
             gates.append({"direction": direction, "x": x, "y": y, "target": target,
                           "col": nc, "row": nr,
-                          "required_level": RESERVE_LEVEL_REQUIREMENTS[target_index]})
+                          "required_level": RESERVE_LEVEL_REQUIREMENTS[target_index],
+                          "boss_defeated": zone_index in self.life.reserve_space_bosses})
         return gates
+
+    def reserve_boss_threshold(self, zone_index):
+        key = str(int(zone_index))
+        thresholds = self.life.reserve_space_boss_thresholds
+        if key not in thresholds:
+            thresholds[key] = self.pokemon_rng.randint(1, 5)
+            self.save_current()
+        return max(1, min(5, int(thresholds[key])))
 
     def player_progress_level(self):
         levels = [self.pokemon_level(ident) for ident in self.life.pokemon_party]
@@ -535,8 +556,10 @@ class LegacyGame:
         gate = next((item for item in self.reserve_gates() if item["direction"] == direction), None)
         if not gate:
             return
-        if self.player_progress_level() < gate["required_level"]:
-            self.notify(f"Gerbang terkunci. Butuh Pokémon Lv.{gate['required_level']} · tim tertinggi Lv.{self.player_progress_level()}.")
+        if not gate["boss_defeated"]:
+            zone = RESERVE_ZONES[reserve_index_at(self.life.x, self.life.y)]
+            required_boss = min(100, max(10, RESERVE_LEVEL_REQUIREMENTS[RESERVE_ZONES.index(zone)] + 5))
+            self.notify(f"Gerbang terkunci. Kalahkan Pokémon penjaga Lv.{required_boss} di {zone['name']} dulu.")
             return
         target = gate["target"]
         if direction == "timur":
@@ -561,7 +584,7 @@ class LegacyGame:
         scene = scene or self.life.scene
         trees = self.art.tree_obstacles(scene)
         if scene == "reserve":
-            index = BIOMES.index(biome_at(scene,self.life.x,self.life.y))
+            index = reserve_index_at(self.life.x,self.life.y)
             return list(self.art.region_obstacles(index))
         if scene in OUTSIDE:
             trees += [pg.Rect(r) for r in scene_layout(scene)["solids"]]
@@ -586,7 +609,7 @@ class LegacyGame:
 
     def ensure_walkable_position(self):
         if self.life.scene not in OUTSIDE:return
-        region=BIOMES.index(biome_at(self.life.scene,self.life.x,self.life.y)) if self.life.scene=="reserve" else None
+        region=reserve_index_at(self.life.x,self.life.y) if self.life.scene=="reserve" else None
         key=(self.life.scene,region)
         if getattr(self,"terrain_location",None)==key:return
         self.terrain_location=key
@@ -594,7 +617,8 @@ class LegacyGame:
         def clear(x,y):
             return not any(pg.Rect(x-12,y-12,24,14).colliderect(r) for r in obstacles)
         if clear(self.life.x,self.life.y):return
-        ox,oy=((region%4)*1280,(region//4)*1600) if region is not None else (0,0)
+        ox,oy=(RESERVE_GRID_POSITIONS[region][0]*RESERVE_ZONE_W,
+               RESERVE_GRID_POSITIONS[region][1]*RESERVE_ZONE_H) if region is not None else (0,0)
         ymax=1572 if region is not None else 664
         for radius in range(24,1700,24):
             for dx,dy in ((0,1),(1,0),(-1,0),(0,-1),(1,1),(-1,1),(1,-1),(-1,-1)):
@@ -606,6 +630,83 @@ class LegacyGame:
     def nearest(self):
         found = min(self.stations(), key=lambda s: math.hypot(s[1] - self.life.x, s[2] - self.life.y))
         return found if math.hypot(found[1] - self.life.x, found[2] - self.life.y) < 81 else None
+
+    def nearby_interactions(self):
+        """Collect every nearby target that can respond to the interact key."""
+        choices = []
+        for station in self.stations():
+            distance = math.hypot(station[1] - self.life.x, station[2] - self.life.y)
+            if distance < 81:
+                action = station[0]
+                if action.startswith("gate:") or action in ("farm", "forest", "market", "outside", "home", "room", "living", "reserve", "coast", "mountain"):
+                    category = self.words("Pintu / gerbang", "Door / gate")
+                elif action == "world_event":
+                    category = self.words("Item / event", "Item / event")
+                elif action.startswith("crop") or action in ("wood", "ranch", "pond"):
+                    category = self.words("Item / kegiatan", "Item / activity")
+                elif action.startswith("npc_"):
+                    category = self.words("NPC", "NPC")
+                else:
+                    category = self.words("Tempat / objek", "Place / object")
+                choices.append({"kind": "station", "station": station,
+                                "label": station[3], "category": category, "distance": distance})
+
+        if self.life.scene == "outdoors":
+            gym = ("online_gym", 640, 180, "Online Gym")
+            distance = math.hypot(gym[1] - self.life.x, gym[2] - self.life.y)
+            if distance < 100:
+                choices.append({"kind": "station", "station": gym, "label": gym[3],
+                                "category": self.words("Pintu / ruang online", "Door / online room"),
+                                "distance": distance})
+
+        for pokemon in self.wild_pokemon:
+            if pokemon.get("state") == "hide":
+                continue
+            distance = math.hypot(pokemon["x"] - self.life.x, pokemon["y"] - self.life.y)
+            if distance <= 155:
+                detail = self.pokemon_data(pokemon["id"]) or {}
+                name = detail.get("name", f"Pokémon #{pokemon['id']}").title()
+                label = (f"BOSS · {name} · Lv.{pokemon.get('level', 5)}" if pokemon.get("is_boss")
+                         else f"{name} · Lv.{pokemon.get('level', 5)}")
+                choices.append({"kind": "pokemon", "pokemon": pokemon,
+                                "label": label,
+                                "category": "Pokémon", "distance": distance})
+
+        trainers = self.reserve_trainers + [t for t in self.route_trainers
+                                             if t.get("scene") == self.life.scene]
+        for trainer in trainers:
+            if trainer.get("cooldown", 0) > 0 or not trainer.get("team"):
+                continue
+            distance = math.hypot(trainer["x"] - self.life.x, trainer["y"] - self.life.y)
+            if distance <= 112:
+                choices.append({"kind": "trainer", "trainer": trainer,
+                                "label": self.words(f"Tantang {trainer['name']}", f"Challenge {trainer['name']}"),
+                                "category": self.words("Pelatih", "Trainer"), "distance": distance})
+        choices.sort(key=lambda choice: (choice["distance"], choice["kind"], choice["label"]))
+        return choices[:8]
+
+    def choose_interaction(self, choice):
+        self.interaction_choices = []
+        self.mode = "game"
+        if choice["kind"] == "pokemon":
+            self.open_pokemon_encounter(choice["pokemon"])
+        elif choice["kind"] == "trainer":
+            trainer = choice["trainer"]
+            self.begin_pokemon_battle(trainer["team"][0], trainer=trainer)
+        else:
+            self.interact_selected(choice)
+
+    def draw_interaction_picker(self):
+        self.text(self.words("PILIH INTERAKSI", "CHOOSE INTERACTION"), 245, 194, retro.GOLD, self.medium)
+        self.text(self.words("Ada beberapa objek di dekatmu. Pilih yang ingin digunakan.",
+                             "Several objects are nearby. Choose what to interact with."),
+                  245, 229, MUTED, self.small)
+        for index, choice in enumerate(self.interaction_choices):
+            y = 270 + index * 43
+            label = f"{choice['category']}   ·   {choice['label']}"
+            self.button(label, (245, y, 788, 37),
+                        lambda target=choice: self.choose_interaction(target), index == 0)
+        self.button(self.words("Batal · Esc", "Cancel · Esc"), (245, 635, 788, 38), self.back)
 
     def transition(self, scene, x, y):
         old_scene = self.life.scene
@@ -629,6 +730,9 @@ class LegacyGame:
         self.save_current()
 
     def interact(self):
+        self.interact_selected()
+
+    def interact_selected(self, chosen=None):
         if self.fishing:
             age = time.monotonic() - self.fishing
             if 2.5 <= age <= 4.2:
@@ -639,27 +743,35 @@ class LegacyGame:
                 self.play_action_sound("fishing-bite", .45)
                 self.queue_action_sound("fishing-reel", .18, .45)
                 self.notify("Dapat ikan! +1 ikan. Bisa dimasak di dapur.")
+                self.tutorial_advance("fish")
             else:
                 self.play_action_sound("ui-error", .35)
                 self.notify("Terlalu cepat! Tunggu tulisan TARIK muncul.")
             self.fishing = None
             return
-        station = self.nearest()
-        if self.life.scene == "reserve":
-            pokemon = self.closest_pokemon(155)
-            priority_station = station and station[0] in ("secret", "world_event") and math.hypot(station[1]-self.life.x, station[2]-self.life.y) < 81
-            if pokemon and not priority_station:
-                self.open_pokemon_encounter(pokemon)
+        if chosen is None:
+            choices = self.nearby_interactions()
+            if len(choices) > 1:
+                self.interaction_choices = choices
+                self.mode = "interaction_picker"
+                self.play_action_sound("menu-open", .24)
                 return
+            if choices:
+                chosen = choices[0]
+            else:
+                station = None
+        if chosen and chosen["kind"] == "pokemon":
+            self.open_pokemon_encounter(chosen["pokemon"])
+            return
+        if chosen and chosen["kind"] == "trainer":
+            trainer = chosen["trainer"]
+            self.begin_pokemon_battle(trainer["team"][0], trainer=trainer)
+            return
+        station = chosen["station"] if chosen else self.nearest()
         if not station:
-            if self.life.scene == "reserve":
-                pokemon = self.closest_pokemon(150)
-                trainer = self.closest_trainer(112)
-                if pokemon or trainer:
-                    self.attack_nearby_pokemon()
-                    return
             self.play_action_sound("ui-error", .32)
-            self.notify("Dekati Pokémon / pelatih lalu tekan Space, atau dekati benda dan tekan E.")
+            self.notify(self.words("Dekati objek yang ingin dipakai lalu tekan E.",
+                                   "Move near an object and press E to interact."))
             return
         action = station[0]
         if action == "secret":
@@ -667,6 +779,9 @@ class LegacyGame:
             self.secret_puzzle = biome
             self.secret_feedback = ""
             self.mode = "secret_puzzle"
+            return
+        if action == "online_gym":
+            self.set_mode("online_connect")
             return
         if action == "world_event":
             event = self.life.world_event
@@ -693,6 +808,13 @@ class LegacyGame:
             self.travel_reserve_gate(action.split(":", 1)[1])
             return
         if action in ("reserve", "coast", "mountain"):
+            if action == "reserve" and self.life.tutorial_active:
+                objective = self.tutorial_objective()
+                if objective and objective[0] != "enter_reserve":
+                    self.notify(self.words(f"Selesaikan tutorial dulu: {objective[1]}.",
+                                           f"Finish the tutorial first: {objective[2]}."))
+                    return
+                self.tutorial_advance("enter_reserve")
             x, y = {"reserve": (100, 800), "coast": (70, 410), "mountain": (640, 620)}[action]
             self.transition(action, x, y)
             if action == "reserve":
@@ -748,16 +870,17 @@ class LegacyGame:
             lines = {
                 "Sari": ("Hujan membuat petualang cepat lapar. Bawa bekal sebelum masuk gua.", "Rain makes travelers hungry. Pack food before entering a cave."),
                 "Budi": ("Bawa senjata yang cocok dengan habitat. Jangan ganggu Pokémon yang sedang bersembunyi.", "Bring a weapon suited to the habitat. Leave hiding Pokémon alone."),
-                "Danu": ("Barang hasil panen dan temuan langka selalu punya pembeli.", "Harvests and rare finds always have a buyer."),
+                "Joy": ("Barang hasil panen dan temuan langka selalu punya pembeli.", "Harvests and rare finds always have a buyer."),
             }
             self.shop_greeting = self.words(*lines.get(self.shop_npc, ("Selamat datang!", "Welcome!")))
-            self.shop_tab = "sell" if self.shop_npc == "Danu" else "buy"
+            self.shop_tab = "sell" if self.shop_npc == "Joy" else "buy"
             self.sell_pokemon_pending = None
             self.play_action_sound("shop-bell", .32)
             self.mode = "shop"
             return
         if action == "home":
             self.transition("house", 640, 608)
+            self.tutorial_advance("enter_home")
         elif action == "outside":
             self.transition("outdoors", 350, 389)
         elif action == "room":
@@ -773,12 +896,15 @@ class LegacyGame:
                 self.play_action_sound("seed-plant", .45)
             elif stage == "planted":
                 self.play_action_sound("watering", .35)
-            elif stage == "ready":
+            elif stage == "ripe":
                 self.play_action_sound("harvest-pop", .5)
                 self.play_action_sound("pickup-item", .25)
             else:
                 self.play_action_sound("ui-error", .25)
             self.notify(result)
+            if stage == "empty" and crop["stage"] == "planted": self.tutorial_advance("plant")
+            elif stage == "planted" and crop["stage"] == "growing": self.tutorial_advance("water")
+            elif stage == "ripe" and crop["stage"] == "empty": self.tutorial_advance("harvest")
         elif action == "ranch":
             fed_at = self.life.fed_at
             result = self.life.feed()
@@ -788,6 +914,7 @@ class LegacyGame:
             else:
                 self.play_action_sound("ui-error", .25)
             self.notify(result)
+            if self.life.fed_at != fed_at: self.tutorial_advance("egg")
         elif action == "pond":
             self.fishing = time.monotonic()
             self.play_action_sound("fishing-cast", .42)
@@ -807,12 +934,14 @@ class LegacyGame:
             self.notify(self.life.eat())
             if self.life.bag["Makanan"] < food_before:
                 self.play_action_sound("eat", .42)
+                self.tutorial_advance("eat")
             else:
                 self.play_action_sound("ui-error", .25)
         elif action == "water":
             self.life.boost("Minum", 45)
             self.play_action_sound("drink", .38)
             self.notify("Segelas air segar. Minum +45.")
+            self.tutorial_advance("drink")
         elif action in ("bench", "sofa"):
             self.life.boost("Senang", 20)
             self.life.boost("Energi", 10)
@@ -832,6 +961,7 @@ class LegacyGame:
             self.life.grow_crops()
             self.play_action_sound("sleep", .34)
             self.notify("Selamat pagi! Energi pulih. Kebun juga terus tumbuh.")
+            self.tutorial_advance("sleep")
         elif action == "pc":
             self.terminal.start()
             self.mode = "terminal"
@@ -909,6 +1039,7 @@ class LegacyGame:
                 if animal["hp"] < old_hp:
                     self.play_action_sound("wildlife-hurt", .44)
                     self.play_wildlife_call(animal["species"])
+                    if animal["hp"] <= 0: self.tutorial_advance("hunt")
         self.attack_cooldown = spec["cooldown"]
         self.attack_flash = .22
 
@@ -962,8 +1093,20 @@ class LegacyGame:
     def trade(self, item, buying, quantity=1):
         quantity_before = self.life.bag.get(item, 0)
         self.notify(self.life.trade(item, buying, quantity))
-        if self.life.bag.get(item, 0) != quantity_before:
+        changed = self.life.bag.get(item, 0) != quantity_before
+        if changed:
             self.play_action_sound("buy" if buying else "sell-coins", .34)
+            objective = self.tutorial_objective() if self.life.tutorial_active else None
+            if buying and item in WEAPONS and objective and objective[0] == "buy_weapon":
+                self.life.equip(item)
+                if item == "Busur": self.life.bag["Panah"] = max(3, self.life.bag.get("Panah", 0))
+                self.notify(self.words(f"{item} dibeli dan langsung dipasang. Sekarang berburu di hutan.",
+                                       f"{item} bought and equipped. Now hunt in the forest."))
+                self.tutorial_advance("buy_weapon")
+            elif not buying and item in ("Sayur", "Telur"):
+                self.tutorial_advance("sell_farm")
+            elif not buying and item in ("Daging", "Kulit"):
+                self.tutorial_advance("sell_hunt")
         else:
             self.play_action_sound("not-enough-money", .25)
         self.save_current()
@@ -990,8 +1133,8 @@ class LegacyGame:
 
     def sell_party_pokemon(self, pokemon_id):
         pokemon_id = int(pokemon_id)
-        if self.shop_npc != "Danu" or not self.life.market_open:
-            self.notify("Pokémon hanya bisa dijual kepada Danu saat market buka.")
+        if self.shop_npc != "Joy" or not self.life.market_open:
+            self.notify("Pokémon hanya bisa dijual kepada Joy saat market buka.")
             self.sell_pokemon_pending = None
             return
         if pokemon_id not in self.life.pokemon_party:
@@ -1020,7 +1163,7 @@ class LegacyGame:
         self.save_current()
         self.sell_pokemon_pending = None
         self.center_selected = min(self.center_selected, len(self.life.pokemon_party) - 1)
-        self.notify(f"{name} dijual kepada Danu seharga {value} koin.")
+        self.notify(f"{name} dijual kepada Joy seharga {value} koin.")
         self.play_action_sound("sell-coins", .4)
 
     def check_daily_quest_rewards(self):
@@ -1078,31 +1221,29 @@ class LegacyGame:
                 for i in candidates:roaming_pools[i].append(entry)
         self.pokemon_habitat_pools=roaming_pools
         # Put familiar, already-cached sprites in the entrance clearing first.
-        for pokemon_id, (x, y) in zip((1, 15, 16), ((265, 665), (700, 880), (1060, 665))):
+        for pokemon_id, (x, y), starter_level in zip((1, 15, 16), ((265, 665), (700, 880), (1060, 665)), (2, 3, 3)):
             item = by_id.get(pokemon_id)
             if item and self.loaded_reserve_zone == 0 and not any(r.colliderect(pg.Rect(x-14,y-14,28,20)) for r in self.obstacles("reserve")):
                 self.wild_pokemon.append({"id": pokemon_id, "x": float(x), "y": float(y), "home_x": float(x), "home_y": float(y),
-                                          "moving": False, "state": "idle", "timer": self.pokemon_rng.uniform(1, 4), "vx": 0, "vy": 0, "level": 5, "requested": False})
+                                          "moving": False, "state": "idle", "timer": self.pokemon_rng.uniform(1, 4), "vx": 0, "vy": 0, "level": starter_level, "requested": False})
                 self.pokedex.request(pokemon_id)
         self.reserve_trainers = []
-        trainer_names = ["Mira", "Raka", "Sari", "Danu", "Laras", "Banyu", "Genta", "Salju", "Awan", "Kirana", "Batu", "Reruntuhan", "Penjaga Purba", "Penjaga Palung", "Penjaga Naga", "Juara Legenda"]
         for index, zone in enumerate(RESERVE_ZONES):
             if index != self.loaded_reserve_zone:
                 continue
-            cx, cy = zone["x"] + RESERVE_ZONE_W // 2, zone["y"] + RESERVE_ZONE_H // 2
-            level = 5 + index * 4
-            trainer = {"id": f"ranger-{index}", "name": trainer_names[index], "x": float(cx), "y": float(cy), "zone": index,
-                       "team": [biome_ids[index][0], biome_ids[index][min(1, len(biome_ids[index])-1)], biome_ids[index][-1]], "level": level,
-                       "target": (cx + 90, cy), "defeated": False, "paid": False, "cooldown": 0}
-            if index == len(RESERVE_ZONES) - 1:
-                trainer["id"] = "arena-champion"
-            self.reserve_trainers.append(trainer)
-            pool = [by_id[i] for i in biome_ids[index] if i in by_id and set(types_by_id.get(i,())) & set(HABITAT_TYPES[zone["biome"]])]
+            zone_ids = (biome_ids[index] if index < len(biome_ids)
+                        else [entry["id"] for entry in roaming_pools[index]])
+            if not zone_ids:
+                zone_ids = [1]
+            pool = [by_id[i] for i in zone_ids if i in by_id and set(types_by_id.get(i,())) & set(HABITAT_TYPES[zone["biome"]])]
             if not pool:
                 pool = roaming_pools[index] or [by_id[1]]
-            # Eight encounters per biome, with two additional rare slots in
-            # distant regions. Sprite data is fetched only near the player.
-            for slot in range(8 + (2 if index >= 8 else 0)):
+            # Keep the space's maximum-level Pokémon scarce: one encounter
+            # occupies that tier, while every other encounter stays below it.
+            encounter_count = 8 + (2 if index >= 8 else 0)
+            space_max_level = max(5, RESERVE_LEVEL_REQUIREMENTS[index])
+            max_level_slot = self.pokemon_rng.randrange(encounter_count)
+            for slot in range(encounter_count):
                 for attempt in range(50):
                     x = self.pokemon_rng.randint(zone["x"] + 110, zone["x"] + RESERVE_ZONE_W - 110)
                     y = self.pokemon_rng.randint(zone["y"] + 180, zone["y"] + RESERVE_ZONE_H - 150)
@@ -1131,10 +1272,27 @@ class LegacyGame:
                     weighted.append(multiplier)
                 item = self.pokemon_rng.choices(choices, weights=weighted, k=1)[0]
                 is_rare = int(item["id"]) in RARE_POKEMON_IDS
-                lv = level + self.pokemon_rng.randint(0, 5) + (5 if is_rare else 0)
+                is_top_level = slot == max_level_slot
+                lv = (space_max_level if is_top_level else
+                      self.pokemon_rng.randint(1, max(1, space_max_level - 1)))
                 self.wild_pokemon.append({"id": item["id"], "x": float(x), "y": float(y), "home_x": float(x), "home_y": float(y),
                                           "moving": False, "state": "idle", "timer": self.pokemon_rng.uniform(1, 4), "vx": 0, "vy": 0,
-                                          "level": lv, "requested": False, "zone": index, "rare": is_rare})
+                                          "level": lv, "requested": False, "zone": index, "rare": is_rare or is_top_level,
+                                          "top_level": is_top_level})
+            # After two local victories, reveal a high-level guardian Pokémon.
+            # Defeating it is the key that opens neighboring spaces.
+            wins = int(self.life.reserve_space_wins.get(str(index), 0))
+            boss_threshold = self.reserve_boss_threshold(index)
+            if wins >= boss_threshold and index not in self.life.reserve_space_bosses:
+                boss_id = next((ident for ident in reversed(zone_ids) if ident in by_id), zone_ids[-1])
+                boss_x, boss_y = zone["x"] + RESERVE_ZONE_W // 2, zone["y"] + 505
+                self.wild_pokemon.append({"id": int(boss_id), "x": float(boss_x), "y": float(boss_y),
+                    "home_x": float(boss_x), "home_y": float(boss_y), "moving": False,
+                    "state": "idle", "timer": 1.0, "vx": 0, "vy": 0,
+                    "level": min(100, max(10, RESERVE_LEVEL_REQUIREMENTS[index] + 5)),
+                    "requested": False, "zone": index, "rare": True, "top_level": True,
+                    "is_boss": True})
+                self.pokedex.request(int(boss_id))
 
     def active_pokemon_team(self):
         team = [int(ident) for ident in self.life.pokemon_active if int(ident) in self.life.pokemon_party][:3]
@@ -1165,7 +1323,7 @@ class LegacyGame:
             self.notify("Semua Pokémon aktif kehabisan HP. Pulihkan tim di Pokémon Center.")
             return
         opponent_lineup = [pokemon_id]
-        if trainer and int(trainer.get("level", 0)) > 20:
+        if trainer and (int(trainer.get("level", 0)) > 20 or trainer.get("is_boss")):
             opponent_lineup = list(dict.fromkeys(int(ident) for ident in trainer.get("team", [])[:3]))
             backup_ids = [6, 25, 58, 74, 143, 149, 130, 94]
             for ident in backup_ids:
@@ -1194,6 +1352,9 @@ class LegacyGame:
                        "enemy_flash": 0.0, "block_flash": 0.0, "attack_flash": 0.0,
                        "attack_heavy": False, "type_cooldown": 0.0, "super_meter": 0.0,
                        "result": "", "trainer": trainer, "wild": wild,
+                       "reserve_zone": (reserve_index_at(self.life.x, self.life.y)
+                                       if wild is not None and self.life.scene == "reserve" else None),
+                       "trainer_condition": self.trainer_condition_multiplier(),
                        "wild_level": wild.get("level", 5) if wild else (trainer.get("level", 5) if trainer else 5), "vfx": None,
                        "time_left": 60.0, "timeout": False, "fruit_timer": self.pokemon_rng.uniform(3.0, 6.0),
                        "fruits": [],
@@ -1230,6 +1391,34 @@ class LegacyGame:
                 return int(item.get("base_stat", default))
         return default
 
+    def trainer_condition_multiplier(self):
+        """Average trainer health and needs into a battle stat multiplier."""
+        condition_values = [float(self.life.health)]
+        condition_values.extend(float(value) for value in self.life.stats.values())
+        return max(.25, min(1.0, sum(condition_values) / max(1, len(condition_values)) / 100.0))
+
+    def save_battle_player_hp(self):
+        """Persist battle HP on the Pokémon's normal, unscaled HP scale."""
+        b = self.battle
+        if not b or not b.get("player_max") or not b.get("raw_player_max"):
+            return
+        key = str(b["player_id"])
+        ratio = max(0.0, min(1.0, b.get("player_hp", 0) / b["player_max"]))
+        self.life.pokemon_health[key] = round(b["raw_player_max"] * ratio)
+
+    def battle_stat(self, side, name, default):
+        """Read a Pokémon stat with the PvE opponent's adaptive bonus applied."""
+        if not self.battle:
+            return default
+        ident = self.battle.get("player_id" if side == "player" else "wild_id")
+        detail = self.pokemon_data(ident) or {}
+        value = self.base_stat(detail, name, default)
+        if side == "player":
+            value = max(1, round(value * self.battle.get("trainer_condition", 1.0)))
+        else:
+            value += int(self.battle.get("enemy_stat_bonus", {}).get(name, 0))
+        return value
+
     def finish_battle(self, message):
         if self.countdown_tts_channel:
             self.countdown_tts_channel.stop()
@@ -1252,8 +1441,22 @@ class LegacyGame:
             trainer["defeated"] = True
             trainer["cooldown"] = 35
             self.save_current()
+        zone_index = battle.get("reserve_zone")
+        if zone_index is not None and battle.get("space_battle_wins") is not None:
+            zone = RESERVE_ZONES[int(zone_index)]
+            wins = int(self.life.reserve_space_wins.get(str(zone_index), 0))
+            if battle.get("space_boss_just_unlocked"):
+                message += f" Boss {zone['name']} muncul!"
+            elif int(zone_index) not in self.life.reserve_space_bosses:
+                threshold = self.reserve_boss_threshold(zone_index)
+                message += f" Kemenangan space: {wins}/{threshold} sebelum boss muncul."
+        if battle.get("space_boss_defeated_now"):
+            zone = RESERVE_ZONES[int(battle["reserve_zone"])]
+            message += f" Boss Pokémon Lv.{battle.get('wild_level', 5)} dikalahkan! Gerbang dari {zone['name']} kini terbuka."
         self.battle = None
         self.mode = "game"
+        if (battle.get("space_boss_just_unlocked") or battle.get("space_boss_defeated_now")) and self.life.scene == "reserve":
+            self.spawn_map_pokemon()
         self.notify(message)
 
     def pokemon_level(self, pokemon_id):
@@ -1313,6 +1516,7 @@ class LegacyGame:
 
     def open_pokemon_encounter(self, pokemon):
         self.encounter_target = pokemon
+        self.encounter_choice = 0
         self.pokedex.request(pokemon["id"])
         self.pokedex.request_species(pokemon["id"])
         self.play_pokemon_cry(pokemon["id"])
@@ -1586,6 +1790,13 @@ class LegacyGame:
     def update_reserve_pokemon(self, dt):
         obstacles = self.obstacles("reserve")
         for pokemon in self.wild_pokemon:
+            if pokemon.get("is_boss"):
+                # The guardian waits in place; it does not flee or hide.
+                pokemon["moving"] = False
+                if not pokemon.get("requested") and math.hypot(pokemon["x"]-self.life.x, pokemon["y"]-self.life.y) < 1400:
+                    self.pokedex.request(pokemon["id"])
+                    pokemon["requested"] = True
+                continue
             if pokemon.get("approaching") or abs(pokemon["x"]-self.life.x)>1400 or abs(pokemon["y"]-self.life.y)>1700:
                 continue
             pokemon["timer"] = max(0, pokemon.get("timer", 0) - dt)
@@ -1849,6 +2060,23 @@ class LegacyGame:
         b = self.battle
         self.queue_pokemon_cry(b["player_id"])
         trainer = b.get("trainer")
+        zone_index = b.get("reserve_zone")
+        if trainer is None and zone_index is not None and b.get("wild") is not None and not b.get("wild", {}).get("is_boss") and not b.get("space_progress_recorded"):
+            key = str(int(zone_index))
+            wins = min(5, int(self.life.reserve_space_wins.get(key, 0)) + 1)
+            self.life.reserve_space_wins[key] = wins
+            b["space_progress_recorded"] = True
+            b["space_battle_wins"] = wins
+            threshold = self.reserve_boss_threshold(zone_index)
+            b["space_boss_threshold"] = threshold
+            if wins >= threshold and zone_index not in self.life.reserve_space_bosses:
+                b["space_boss_just_unlocked"] = True
+        if (trainer is None and zone_index is not None and (b.get("wild") or {}).get("is_boss")
+                and zone_index not in self.life.reserve_space_bosses):
+            self.life.reserve_space_bosses.append(int(zone_index))
+            b["space_boss_defeated_now"] = True
+            if b.get("wild") in self.wild_pokemon:
+                self.wild_pokemon.remove(b["wild"])
         lineup = b.get("opponent_lineup", [b["wild_id"]])
         has_next = bool(trainer and b.get("opponent_index", 0) + 1 < len(lineup))
         if not has_next and not b.get("victory_announced"):
@@ -1915,10 +2143,12 @@ class LegacyGame:
             return
         if self.battle.get("result") and self.battle["wild_hp"] > 0 and not self.battle.get("timeout"):
             return
-        # A fainted Pokémon is much easier to catch, but a standard Poké Ball
-        # should never guarantee the capture. Low HP improves the odds.
+        # Low HP improves the odds, while species rarity from the local
+        # PokéAPI database makes rare encounters meaningfully harder to catch.
         hp_ratio = self.battle["wild_hp"] / max(1, self.battle["wild_max"])
-        chance = min(90, 25 + int(65 * (1 - hp_ratio)))
+        base_chance = min(90, 25 + int(65 * (1 - hp_ratio)))
+        rarity, rarity_factor = self.capture_rarity(self.battle["wild_id"])
+        chance = max(4, min(90, round(base_chance * rarity_factor)))
         if self.life.bag["Pokeball"] <= 0:
             self.battle["phase"] = "Poké Ball habis. Beli di market."
             return
@@ -1929,7 +2159,34 @@ class LegacyGame:
             "start_x": self.battle["player_x"] + 25,
             "target_x": self.battle["enemy_x"],
         }
-        self.battle["phase"] = f"Poké Ball dilempar! Peluang tertangkap {chance}%"
+        self.battle["phase"] = f"Poké Ball dilempar! {rarity} · peluang {chance}%"
+
+    def capture_rarity(self, pokemon_id):
+        """Return a display tier and catch chance multiplier for a species."""
+        try:
+            pokemon_id = int(pokemon_id)
+        except (TypeError, ValueError):
+            return self.words("Umum", "Common"), 1.0
+        wild = self.battle.get("wild") if self.battle else None
+        marked_rare = isinstance(wild, dict) and bool(wild.get("rare"))
+        species = pokemon_db.species(pokemon_id) or self.pokedex.species.get(pokemon_id, {})
+        if species.get("is_mythical"):
+            return self.words("Mitos", "Mythical"), .14
+        if species.get("is_legendary"):
+            return self.words("Legendaris", "Legendary"), .20
+        try:
+            capture_rate = int(species.get("capture_rate", 255))
+        except (TypeError, ValueError):
+            capture_rate = 255
+        if marked_rare or pokemon_id in RARE_POKEMON_IDS:
+            return self.words("Langka", "Rare"), .55
+        if capture_rate <= 30:
+            return self.words("Epik", "Epic"), .38
+        if capture_rate <= 60:
+            return self.words("Langka", "Rare"), .58
+        if capture_rate <= 120:
+            return self.words("Tidak umum", "Uncommon"), .82
+        return self.words("Umum", "Common"), 1.0
 
     def update_capture(self, dt):
         b = self.battle
@@ -2101,7 +2358,7 @@ class LegacyGame:
             if abs(fruit["x"] - b["player_x"]) < 48 and abs(fruit["y"] - b.get("player_y", 0)) < 50:
                 if fruit["kind"] == "health":
                     b["player_hp"] = min(b["player_max"], b["player_hp"] + 16)
-                    self.life.pokemon_health[str(b["player_id"])] = b["player_hp"]
+                    self.save_battle_player_hp()
                     b["phase"] = f"{fruit['emoji']} Buah pemulih! +16 HP."
                 elif fruit["kind"] == "energy":
                     b["super_meter"] = min(100, b.get("super_meter", 0) + 24)
@@ -2267,14 +2524,28 @@ class LegacyGame:
         if not enemy or not team:
             return
         b = self.battle
-        b["wild_max"] = max(10, self.base_stat(enemy, "hp", 45) + int(b.get("wild_level", 5) * 2.2))
+        # Scale opposing stats by one quarter of the player's current Pokémon.
+        # Recalculate on switches and trainer rounds so the match stays fair.
+        stat_defaults = {"hp": 45, "attack": 49, "defense": 49,
+                         "special-attack": 55, "special-defense": 55, "speed": 70}
+        condition = b.get("trainer_condition", 1.0)
+        b["enemy_stat_bonus"] = {
+            name: max(1, round(self.base_stat(team, name, default) * condition * .25))
+            for name, default in stat_defaults.items()
+        }
+        b["wild_max"] = max(10, self.base_stat(enemy, "hp", 45) + b["enemy_stat_bonus"]["hp"]
+                            + int(b.get("wild_level", 5) * 2.2))
         b.setdefault("wild_hp", b["wild_max"])
         b["wild_hp"] = min(b["wild_hp"], b["wild_max"])
         player_id = str(b["player_id"])
-        b["player_max"] = max(10, self.base_stat(team, "hp", 45) + self.pokemon_level(int(player_id)) * 2)
-        b.setdefault("player_hp", self.life.pokemon_health.get(player_id, b["player_max"]))
-        b["player_hp"] = min(b["player_hp"], b["player_max"])
-        self.life.pokemon_health[player_id] = b["player_hp"]
+        b["raw_player_max"] = max(10, self.base_stat(team, "hp", 45) + self.pokemon_level(int(player_id)) * 2)
+        old_max = b.get("player_max")
+        if old_max and "player_hp" in b:
+            saved_ratio = b["player_hp"] / old_max
+        else:
+            saved_ratio = self.life.pokemon_health.get(player_id, b["raw_player_max"]) / b["raw_player_max"]
+        b["player_max"] = max(10, round(b["raw_player_max"] * condition))
+        b["player_hp"] = max(0, min(b["player_max"], round(b["player_max"] * saved_ratio)))
         b["phase"] = "Hadapi lawan! Bergerak, pukul, dan blok serangannya."
         b["api_moves"] = [entry["move"]["name"] for entry in team.get("moves", [])[:2]]
         for move_name in b["api_moves"]:
@@ -2457,7 +2728,9 @@ class LegacyGame:
                     for condition in details:
                         trigger = condition.get("trigger", {}).get("name", "")
                         required = condition.get("min_level") or 16
-                        if trigger == "level-up":
+                        simple_level_up = (trigger == "level-up" and condition.get("min_level")
+                                           and set(condition).issubset({"trigger", "min_level"}))
+                        if simple_level_up:
                             child_url = child.get("species", {}).get("url", "")
                             try:
                                 return (int(child_url.rstrip("/").split("/")[-1]),
@@ -2471,6 +2744,182 @@ class LegacyGame:
                     return result
             return None
         return walk(chain.get("chain", {}))
+
+    def evolution_chain_lines(self, pokemon_id, max_chars=58):
+        """Format every branch of a species' official evolution chain."""
+        ident = int(pokemon_id)
+        species = self.pokedex.species.get(ident) or pokemon_db.species(ident)
+        if not species:
+            self.pokedex.request_species(ident)
+            return None
+        chain_url = species.get("evolution_chain", {}).get("url", "")
+        try:
+            chain_id = int(chain_url.rstrip("/").split("/")[-1])
+        except (ValueError, AttributeError):
+            return []
+        chain_data = self.pokedex.evolution.get(chain_id)
+        if not chain_data:
+            self.pokedex.request_evolution(chain_id)
+            return None
+
+        def name_and_id(node):
+            data = node.get("species", {})
+            name = data.get("name", "Pokémon").replace("-", " ").title()
+            try:
+                node_id = int(data.get("url", "").rstrip("/").split("/")[-1])
+            except (ValueError, AttributeError):
+                node_id = -1
+            return name, node_id
+
+        def requirement(child):
+            details = child.get("evolution_details", [])
+            if not details:
+                return self.words("syarat khusus", "special condition")
+            detail = details[0]
+            if detail.get("min_level"):
+                return f"Lv.{detail['min_level']}"
+            if detail.get("item"):
+                item = detail["item"].get("name", "item").replace("item-", "item #")
+                return item.replace("-", " ").title()
+            if detail.get("held_item"):
+                item = detail["held_item"].get("name", "item").replace("item-", "item #")
+                return self.words(f"pegang {item}", f"hold {item}")
+            if detail.get("trigger", {}).get("name") == "trade":
+                return self.words("ditukar", "trade")
+            if detail.get("min_happiness") or detail.get("min_affection"):
+                return self.words("persahabatan tinggi", "high friendship")
+            if detail.get("known_move"):
+                return self.words(f"kuasai {detail['known_move']['name'].replace('-', ' ').title()}",
+                                  f"know {detail['known_move']['name'].replace('-', ' ').title()}")
+            if detail.get("time_of_day"):
+                return detail["time_of_day"].title()
+            trigger = detail.get("trigger", {}).get("name", "")
+            return trigger.replace("-", " ").title() or self.words("syarat khusus", "special condition")
+
+        links = []
+
+        def walk(node):
+            parent_name, parent_id = name_and_id(node)
+            children = node.get("evolves_to", [])
+            if children:
+                child_labels = []
+                for child in children:
+                    child_name, child_id = name_and_id(child)
+                    marker = "*" if child_id == ident else ""
+                    child_labels.append(f"{marker}{child_name} ({requirement(child)})")
+                marker = "*" if parent_id == ident else ""
+                links.append(f"{marker}{parent_name} → " + " / ".join(child_labels))
+                for child in children:
+                    walk(child)
+
+        walk(chain_data.get("chain", {}))
+        lines = []
+        for link in links:
+            words = link.split()
+            line = ""
+            for word in words:
+                if line and len(line) + len(word) + 1 > max_chars:
+                    lines.append(line)
+                    line = ""
+                line = (line + " " + word).strip()
+            if line:
+                lines.append(line)
+        return lines
+
+    def evolution_chain_paths(self, pokemon_id):
+        """Return evolution paths as species IDs/names and the edge condition."""
+        ident = int(pokemon_id)
+        species = self.pokedex.species.get(ident) or pokemon_db.species(ident)
+        if not species:
+            self.pokedex.request_species(ident)
+            return None
+        chain_url = species.get("evolution_chain", {}).get("url", "")
+        try:
+            chain_id = int(chain_url.rstrip("/").split("/")[-1])
+        except (ValueError, AttributeError):
+            return []
+        chain_data = self.pokedex.evolution.get(chain_id)
+        if not chain_data:
+            self.pokedex.request_evolution(chain_id)
+            return None
+
+        def species_entry(node):
+            item = node.get("species", {})
+            try:
+                species_id = int(item.get("url", "").rstrip("/").split("/")[-1])
+            except (ValueError, AttributeError):
+                species_id = -1
+            name = item.get("name", "Pokémon").replace("-", " ").title()
+            return species_id, name
+
+        def condition(child):
+            detail = next(iter(child.get("evolution_details", [])), {})
+            if detail.get("min_level"):
+                return f"Lv.{detail['min_level']}"
+            if detail.get("item"):
+                return detail["item"].get("name", "item").replace("-", " ").title()
+            if detail.get("trigger", {}).get("name") == "trade":
+                return self.words("Tukar", "Trade")
+            if detail.get("min_happiness") or detail.get("min_affection"):
+                return self.words("Persahabatan", "Friendship")
+            return self.words("Syarat khusus", "Special")
+
+        paths = []
+
+        def walk(node, path, incoming=""):
+            entry = (*species_entry(node), incoming)
+            current = path + [entry]
+            children = node.get("evolves_to", [])
+            if not children:
+                paths.append(current)
+                return
+            for child in children:
+                walk(child, current, condition(child))
+
+        walk(chain_data.get("chain", {}), [])
+        for path in paths:
+            for species_id, _, _ in path:
+                if species_id > 0:
+                    self.pokedex.request(species_id)
+        return paths
+
+    def draw_evolution_chain(self, pokemon_id, x, y, width, height, max_rows=2,
+                             icon_size=40, font=None):
+        """Draw on-demand Pokémon sprites and labels for each evolution path."""
+        paths = self.evolution_chain_paths(pokemon_id)
+        font = font or self.tiny
+        if paths is None:
+            self.text(self.words("Memuat rantai evolusi…", "Loading evolution chain…"),
+                      x, y + 4, MUTED, font)
+            return
+        if not paths or (len(paths) == 1 and len(paths[0]) == 1):
+            self.text(self.words("Tidak berevolusi", "Does not evolve"), x, y + 4, MUTED, font)
+            return
+
+        row_height = max(1, height // max_rows)
+        shown = paths[:max_rows]
+        for row, path in enumerate(shown):
+            top = y + row * row_height
+            count = len(path)
+            slot = width / max(1, count)
+            size = min(icon_size, max(22, int(row_height * .56)))
+            for index, (species_id, name, edge_condition) in enumerate(path):
+                center_x = int(x + slot * (index + .5))
+                sprite = self.pokemon_surface(species_id, size) if species_id > 0 else None
+                if sprite:
+                    self.canvas.blit(sprite, sprite.get_rect(center=(center_x, top + size // 2 + 1)))
+                else:
+                    self.box((center_x-size//2, top+2, size, size), (29, 43, 67), 3)
+                    self.text("…", center_x, top+size//2-5, MUTED, font, True)
+                label = name if len(name) <= 13 else name[:12] + "…"
+                self.text(label, center_x, top + size + 3, CREAM, font, True)
+                if index > 0:
+                    self.text("›", int(x + slot * index), top + size // 2 - 5, retro.GOLD, font, True)
+                    if edge_condition:
+                        self.text(edge_condition[:12], center_x, top + size + 17, GREEN, font, True)
+        if len(paths) > max_rows:
+            self.text(f"+{len(paths)-max_rows} {self.words('cabang','branches')}",
+                      x + width - 4, y + height - 14, retro.GOLD, font, True)
 
     def evolution_target(self, pokemon_id):
         option = self.evolution_option(pokemon_id)
@@ -2677,8 +3126,8 @@ class LegacyGame:
         left, top = camera_x - 120, camera_y - 140
         right, bottom = camera_x + W + 120, camera_y + 592 + 100
         drawables = [(y, "tree", (x, y)) for x, y in self.art.trees["reserve"] if left <= x <= right and top <= y <= bottom]
-        zone_index=BIOMES.index(biome_at("reserve",self.life.x,self.life.y))
-        zone_x,zone_y=(zone_index%4)*1280,(zone_index//4)*1600
+        zone_index=reserve_index_at(self.life.x,self.life.y)
+        zone_x,zone_y=RESERVE_ZONES[zone_index]["x"],RESERVE_ZONES[zone_index]["y"]
         for prop in reserve_layout(zone_index)['props']:
             kind,x,y,variant=prop
             if left<=x+zone_x<=right and top<=y+zone_y<=bottom:
@@ -2691,7 +3140,7 @@ class LegacyGame:
         for _, kind, obj in sorted(drawables, key=lambda item: item[0]):
             if kind=="scenery":
                 pk,x,y,v=obj
-                self.art.scenery.prop(self.world_canvas,(pk,int(x-camera_x),int(y-camera_y),v),BIOMES[zone_index])
+                self.art.scenery.prop(self.world_canvas,(pk,int(x-camera_x),int(y-camera_y),v),RESERVE_ZONES[zone_index]["biome"])
                 continue
             wx, wy = (obj[0], obj[1]) if kind == "tree" or kind == "horse" else (obj["x"], obj["y"]) if kind in ("pokemon", "trainer") else (self.life.x, self.life.y)
             if not (left <= wx <= right and top <= wy <= bottom):
@@ -2699,9 +3148,7 @@ class LegacyGame:
             px, py = wx - camera_x, wy - camera_y
             if kind == "tree":
                 world_x, world_y = obj
-                zone_col = max(0, min(3, int(world_x // RESERVE_ZONE_W)))
-                zone_row = max(0, min(3, int(world_y // RESERVE_ZONE_H)))
-                zone_index = zone_row * 4 + zone_col
+                zone_index = reserve_index_at(world_x, world_y)
                 biome = RESERVE_ZONES[zone_index]["biome"]
                 variants = {
                     "snow": (4, 5, 6, 16, 17),
@@ -2714,25 +3161,30 @@ class LegacyGame:
                 seed = (int(world_x // 112) * 7 + int(world_y // 112) * 11 + zone_index) % len(tree_set)
                 self.art.tree(self.world_canvas, px, py, variant=tree_set[seed])
             elif kind == "pokemon":
-                sprite = self.pokemon_surface(obj["id"], 52)
+                sprite = self.pokemon_surface(obj["id"], 86 if obj.get("is_boss") else 52)
                 if sprite:
                     bob = int(math.sin(self.frame / 5 + obj["id"]) * 4) if obj.get("moving") else int(math.sin(self.frame / 13 + obj["id"]) * 2)
                     image = pg.transform.flip(sprite, True, False) if obj.get("vx", 0) >= 0 else sprite
                     if obj.get("state") != "hide":
+                        if obj.get("is_boss"):
+                            aura = 42 + int(3 * math.sin(self.frame / 5))
+                            pg.draw.circle(self.world_canvas, retro.GOLD, (int(px), int(py - 38)), aura, 3)
                         self.world_canvas.blit(image, image.get_rect(midbottom=(int(px), int(py - 3 + bob))))
                         if obj.get("state") == "flee" and int(self.frame / 12) % 2 == 0:
                             pg.draw.circle(self.world_canvas, (244, 231, 153), (int(px), int(py - 66 + bob)), 5)
                     elif int(self.frame / 15) % 2 == 0:
                         pg.draw.circle(self.world_canvas, (179, 213, 120), (int(px), int(py - 12)), 4)
-                    if math.hypot(obj["x"] - self.life.x, obj["y"] - self.life.y) < 155 and obj.get("state") != "hide":
+                    if math.hypot(obj["x"] - self.life.x, obj["y"] - self.life.y) < (230 if obj.get("is_boss") else 155) and obj.get("state") != "hide":
                         detail = self.pokemon_data(obj["id"]) or {}
                         name = detail.get("name", "Pokémon liar").title()
-                        rarity = " · ★ RARE" if obj.get("rare") else ""
-                        tag = self.small.render(self.tr(f"{name} · Lv.{obj.get('level', 5)}{rarity}"), True, CREAM)
+                        rarity = " · ★ BOSS" if obj.get("is_boss") else (" · ★ RARE" if obj.get("rare") else "")
+                        tag = self.small.render(self.tr(f"{name} · Lv.{obj.get('level', 5)}{rarity}"), True, retro.GOLD if obj.get("is_boss") else CREAM)
                         self.world_canvas.blit(tag, tag.get_rect(center=(int(px), int(py + 11))))
             elif kind == "trainer":
                 self.art.character(self.world_canvas, px, py, 1, 1.8, self.frame, True, "down", npc="Hunter")
-                caption = obj["name"] + (" · REMATCH" if obj.get("defeated") else " · SPACE TANTANG")
+                caption = ("BOSS · " + obj["name"] + (" · REMATCH" if obj.get("defeated") else "")
+                           if obj.get("is_boss") else
+                           obj["name"] + (" · REMATCH" if obj.get("defeated") else " · SPACE TANTANG"))
                 label = self.small.render(caption, True, INK)
                 back = pg.Rect(0, 0, label.get_width() + 12, label.get_height() + 7)
                 back.midbottom = (int(px), int(py - 40))
@@ -2761,14 +3213,28 @@ class LegacyGame:
                     pg.draw.circle(self.canvas, retro.GOLD, (int(px), int(py)), pulse, 2)
                     self.emoji(icon, (int(px), int(py) - 10), 32)
         self.label(zone["name"].upper(), 640, 154)
+        zone_index = RESERVE_ZONES.index(zone)
+        boss_wins = int(self.life.reserve_space_wins.get(str(zone_index), 0))
+        if zone_index in self.life.reserve_space_bosses:
+            self.label(self.words("BOSS DIKALAHKAN · GERBANG TERBUKA",
+                                  "BOSS DEFEATED · GATES OPEN"), 640, 188)
+        elif boss_wins < self.reserve_boss_threshold(zone_index):
+            target = self.reserve_boss_threshold(zone_index)
+            self.label(self.words(f"KALAHKAN POKÉMON LIAR · BOSS {boss_wins}/{target}",
+                                  f"DEFEAT WILD POKÉMON · BOSS {boss_wins}/{target}"), 640, 188)
+        else:
+            self.label(self.words("POKÉMON BOSS MUNCUL · KALAHKAN UNTUK MEMBUKA GERBANG",
+                                  "BOSS POKÉMON APPEARED · DEFEAT IT TO OPEN GATES"), 640, 188)
         for gate in self.reserve_gates():
             gx, gy = sx(gate["x"]), sy(gate["y"])
             if -80 < gx < W + 80 and 190 < gy < 592 + 135:
                 required = gate["required_level"]
-                if self.player_progress_level() < required:
-                    gate_label = f"TERKUNCI · Lv.{required} · {gate['target']['name']}"
-                else:
+                if zone_index not in self.life.reserve_space_bosses:
+                    gate_label = "TERKUNCI · KALAHKAN BOSS"
+                elif gate["boss_defeated"]:
                     gate_label = "GERBANG · " + gate["target"]["name"]
+                else:
+                    gate_label = "TERKUNCI · KALAHKAN BOSS"
                 self.label(gate_label, gx, gy - 30)
         for index, (cx, cy) in enumerate(RESERVE_CENTERS):
             if -130 < sx(cx) < W + 130 and 180 < sy(cy) < H + 100:
@@ -2790,9 +3256,7 @@ class LegacyGame:
         self.hud(station)
 
     def reserve_zone_at(self, x, y):
-        col = max(0, min(RESERVE_COLUMNS - 1, int(x // RESERVE_ZONE_W)))
-        row = max(0, min(RESERVE_ROWS - 1, int(y // RESERVE_ZONE_H)))
-        return RESERVE_ZONES[row * RESERVE_COLUMNS + col]
+        return RESERVE_ZONES[reserve_index_at(x, y)]
 
     def update_location_audio(self):
         """Switch to locally bundled music when the player changes location."""
@@ -2952,6 +3416,13 @@ class LegacyGame:
         self.map_zoom = max(0.55, min(3.2, self.map_zoom * factor))
 
     def enter_reserve_from_map(self):
+        if self.life.tutorial_active:
+            objective = self.tutorial_objective()
+            if objective and objective[0] != "enter_reserve":
+                self.notify(self.words(f"Selesaikan tutorial dulu: {objective[1]}.",
+                                       f"Finish the tutorial first: {objective[2]}."))
+                return
+            self.tutorial_advance("enter_reserve")
         self.mode = "game"
         if self.life.scene != "reserve":
             self.transition("reserve", 100, 800)
@@ -2989,6 +3460,14 @@ class LegacyGame:
             self.button("Misi · J", (902, 81, 105, 35), lambda: self.open_overlay("daily_quests"))
             self.button("Jurnal · L", (1012, 81, 105, 35), lambda: self.open_overlay("journal"))
             self.button("Cuaca · C", (1122, 81, 115, 35), lambda: self.open_overlay("weather"))
+        objective = self.tutorial_objective() if self.life.tutorial_active else None
+        if objective:
+            self.box((934, 145, 322, 72), INK, 8, retro.EDGE)
+            self.text(self.words(f"TUTORIAL · {self.life.tutorial_step+1}/{len(TUTORIAL_STEPS)}",
+                                 f"TUTORIAL · {self.life.tutorial_step+1}/{len(TUTORIAL_STEPS)}"),
+                      950, 154, retro.GOLD, self.tiny)
+            objective_text = objective[1] if self.life.language == "id" else objective[2]
+            self.text(objective_text, 950, 178, CREAM, self.tiny)
         self.box((24, 727, 1232, 54), INK, 12)
         self.text("WASD JALAN / T +1 JAM / M PETA", 44, 743, MUTED, self.tiny)
         prompt = "E · " + station[3] if station else "< Hutan     Rumah & peternakan     Market >"
@@ -3090,7 +3569,12 @@ class LegacyGame:
             return
         veil = pg.Surface((W, H), pg.SRCALPHA)
         veil.fill((18, 29, 23, 205)); self.canvas.blit(veil, (0, 0))
-        self.box((205, 151, 870, 507), INK, 18)
+        if self.mode == "pokemon_info":
+            # The Pokédex detail panel includes long habitat text and visual
+            # evolution paths; give those details a wider frame and margin.
+            self.box((70, 130, 1140, 550), INK, 18)
+        else:
+            self.box((205, 151, 870, 507), INK, 18)
         if self.mode == "settings":
             self.draw_settings()
         elif self.mode == "phone":
@@ -3119,6 +3603,8 @@ class LegacyGame:
             self.draw_encounter()
         elif self.mode == "pokemon_info":
             self.draw_pokemon_info()
+        elif self.mode == "interaction_picker":
+            self.draw_interaction_picker()
         elif self.mode == "inventory":
             self.draw_bag_icon(250, 198, 26)
             self.text("TAS & INVENTARIS", 272, 183, CREAM, self.medium)
@@ -3420,36 +3906,14 @@ class LegacyGame:
         else:
             self.text("Pilih spesies untuk memuat data dan sprite.", 840, 387, MUTED, self.small, True)
         if detail and detail.get("id") == self.dex_selected:
-            abilities = ", ".join(a.get("ability", {}).get("name", "").replace("-", " ").title()
-                                   for a in detail.get("abilities", []))
             height = detail.get("height")
             weight = detail.get("weight")
             dimensions = (f"Tinggi {height / 10:.1f} m · Berat {weight / 10:.1f} kg"
                           if isinstance(height, (int, float)) and isinstance(weight, (int, float))
                           else "Memuat data ukuran…")
-            ability_label = f"Kemampuan: {abilities}" if abilities else "Kemampuan: memuat…"
             self.text(dimensions, 840, 475, MUTED, self.tiny, True)
-            self.text(ability_label[:50], 650, 492, CREAM, self.tiny)
-            stat_labels = {"hp": "HP", "attack": "ATK", "defense": "DEF",
-                           "special-attack": "SP.A", "special-defense": "SP.D", "speed": "SPD"}
-            for index, stat in enumerate(detail.get("stats", [])[:6]):
-                stat_name = stat.get("stat", {}).get("name", "")
-                short = stat_labels.get(stat_name, stat_name[:4].upper())
-                value = int(stat.get("base_stat", 0))
-                col, row = index % 3, index // 3
-                x, y = 660 + col * 126, 512 + row * 20
-                self.text(f"{short} {value}", x, y, GREEN, self.tiny)
-            if species:
-                flavor = next((entry.get("flavor_text", "").replace("\n", " ").replace("\f", " ")
-                               for entry in species.get("flavor_text_entries", [])
-                               if entry.get("language", {}).get("name") == "en"), "")
-                words = flavor.split()
-                for row in range(2):
-                    line = ""
-                    while words and len(line) + len(words[0]) < 64:
-                        line = (line + " " + words.pop(0)).strip()
-                    if line:
-                        self.text(line, 650, 552 + row * 16, MUTED, self.tiny)
+            self.text(self.words("RANTAI EVOLUSI", "EVOLUTION CHAIN"), 650, 496, GREEN, self.tiny)
+            self.draw_evolution_chain(ident, 650, 509, 380, 65, max_rows=1, icon_size=26, font=self.tiny)
         self.text("↑↓ pilih · ←→ halaman · Enter detail · Tab tombol", 245, 568, MUTED, self.tiny)
 
     def draw_encounter(self):
@@ -3473,10 +3937,14 @@ class LegacyGame:
         self.text(f"Lv. {level}   ·   HP {hp}/{hp}", 510, 356, GREEN, self.medium)
         self.text(types, 510, 397, CREAM)
         self.text("Cry PokéAPI · suara akan diputar lagi saat duel dimulai", 510, 432, MUTED, self.small)
-        self.button("⚔  Lawan · Enter", (510, 485, 250, 52), self.choose_encounter_battle, True)
-        self.button("ⓘ  Informasi · I", (774, 485, 260, 52), self.show_encounter_info)
+        self.button("ⓘ  Lihat info Pokédex", (510, 485, 250, 52), self.show_encounter_info,
+                    self.encounter_choice == 0)
+        self.button("⚔  Bertarung", (774, 485, 260, 52), self.choose_encounter_battle,
+                    self.encounter_choice == 1)
         self.button("Dengarkan cry", (510, 551, 250, 42), lambda: self.play_pokemon_cry(ident))
         self.button("Tutup · Esc", (774, 551, 260, 42), self.back)
+        self.text("← → pilih · Enter konfirmasi · I info · F bertarung · Esc tutup",
+                  W // 2, 618, MUTED, self.tiny, True)
 
     def draw_pokemon_info(self):
         pokemon = self.encounter_target
@@ -3511,16 +3979,9 @@ class LegacyGame:
             color = (species.get("color") or {}).get("name", "unknown").title()
             self.text(f"Habitat: {habitat}  ·  Warna Pokédex: {color}  ·  Peluang tangkap: {species.get('capture_rate', '?')}",
                       625, 385, GREEN, self.small)
-            flavor = next((entry["flavor_text"].replace("\n", " ").replace("\f", " ")
-                           for entry in species.get("flavor_text_entries", [])
-                           if entry.get("language", {}).get("name") == "en"), "")
-            words = flavor.split()
-            for row in range(3):
-                line = ""
-                while words and len(line) + len(words[0]) < 68:
-                    line = (line + " " + words.pop(0)).strip()
-                if line:
-                    self.text(line, 625, 420 + row * 22, CREAM, self.tiny)
+            self.text(self.words("RANTAI EVOLUSI", "EVOLUTION CHAIN"), 625, 417, retro.GOLD, self.small)
+            self.draw_evolution_chain(ident, 625, 440, 540, 137,
+                                      max_rows=2, icon_size=42, font=self.tiny)
         else:
             self.text("Memuat habitat dan entri Pokédex…", 625, 395, MUTED, self.small)
         self.button("Putar cry", (625, 584, 190, 44), lambda: self.play_pokemon_cry(ident), True)
@@ -3763,9 +4224,12 @@ class LegacyGame:
         if b.get("super_meter", 0):
             pg.draw.rect(self.canvas, (247, 194, 74), (76, 118, int(440 * b["super_meter"] / 100), 8), border_radius=0)
         self.text(f"ULTIMATE {int(b.get('super_meter', 0))}%", 76, 132, (255, 222, 121), self.small)
+        self.text(f"TRAINER CONDITION ×{round(b.get('trainer_condition', 1.0) * 100)}%",
+                  76, 150, GREEN, self.tiny)
         opponent_count = len(b.get("opponent_lineup", [b["wild_id"]]))
         battle_kind="TEAM BATTLE" if opponent_count > 1 else "WILD BATTLE"
-        self.text(f"{battle_kind}  ·  Lv.{b.get('wild_level',5)}  ·  {b.get('difficulty_label','BALANCED')}", W // 2, 47, CREAM, self.tiny, True)
+        self.text(f"{battle_kind}  ·  Lv.{b.get('wild_level',5)}  ·  {b.get('difficulty_label','BALANCED')}  ·  +25% STATS",
+                  W // 2, 47, CREAM, self.tiny, True)
         self.text(f"{BATTLE_WEATHER_EMOJI.get(weather, '☁')} {weather.upper()}  ·  {arena.upper()} ARENA", W // 2, 68, GREEN, self.tiny, True)
         active_buffs = []
         if b.get("fruit_speed_timer", 0) > 0:
@@ -4143,7 +4607,7 @@ class LegacyGame:
         self.text(f"Koin {self.life.money}  /  Buka 06:00–22:00", 668, 190, GREEN)
         self.button("Beli", (245, 226, 170, 40), lambda: self.set_shop_tab("buy"), self.shop_tab == "buy")
         self.button("Jual hasil", (423, 226, 170, 40), lambda: self.set_shop_tab("sell"), self.shop_tab == "sell")
-        if self.shop_npc == "Danu":
+        if self.shop_npc == "Joy":
             self.button("Jual Pokémon", (601, 226, 190, 40), lambda: self.set_shop_tab("pokemon"), self.shop_tab == "pokemon")
         if self.shop_greeting:
             self.text(self.shop_greeting, 245, 263, MUTED, self.tiny)
@@ -4151,8 +4615,8 @@ class LegacyGame:
             self.draw_pokemon_market()
             return
         items = [k for k in BUY if (k in ("Tombak", "Busur", "Panah")) == (self.shop_npc == "Budi")] if self.shop_tab == "buy" else list(SELL)
-        if self.shop_npc == "Danu" and self.shop_tab == "buy":
-            self.text("Danu menerima hasil kebun, peternakan, dan buruan.", 245, 288, CREAM)
+        if self.shop_npc == "Joy" and self.shop_tab == "buy":
+            self.text("Joy menerima hasil kebun, peternakan, dan buruan.", 245, 288, CREAM)
             items = []
         for i, item in enumerate(items):
             y = 284 + i * 41
@@ -4171,8 +4635,8 @@ class LegacyGame:
         self.button("Selesai · Esc", (245, 607, 788, 34), self.back, True)
 
     def draw_pokemon_market(self):
-        if self.shop_npc != "Danu":
-            self.text("Bicara dengan Danu untuk menjual Pokémon.", 245, 288, MUTED, self.small)
+        if self.shop_npc != "Joy":
+            self.text("Bicara dengan Joy untuk menjual Pokémon.", 245, 288, MUTED, self.small)
             return
         self.text("Pokémon aktif harus dikeluarkan di Pokémon Center sebelum dijual.",
                   245, 276, MUTED, self.tiny)
@@ -4369,11 +4833,14 @@ class LegacyGame:
                 elif event.key in (pg.K_ESCAPE, pg.K_b):
                     self.back()
             elif self.mode == "encounter":
-                if event.key in (pg.K_RETURN, pg.K_KP_ENTER, pg.K_1):
-                    self.choose_encounter_battle()
-                elif event.key in (pg.K_i, pg.K_2):
+                if event.key in (pg.K_LEFT, pg.K_RIGHT, pg.K_UP, pg.K_DOWN):
+                    self.encounter_choice = 1 - self.encounter_choice
+                elif event.key in (pg.K_RETURN, pg.K_KP_ENTER):
+                    (self.show_encounter_info if self.encounter_choice == 0
+                     else self.choose_encounter_battle)()
+                elif event.key in (pg.K_i, pg.K_1):
                     self.show_encounter_info()
-                elif event.key == pg.K_SPACE and self.encounter_target:
+                elif event.key in (pg.K_f, pg.K_2):
                     self.choose_encounter_battle()
                 elif event.key == pg.K_ESCAPE:
                     self.back()
@@ -4587,7 +5054,7 @@ class LegacyGame:
             self.notify("PONSEL: OpenCode selesai merespons · notifikasi baru diterima.")
         self.environment.update(dt)
         self.moving = False
-        active = self.mode in ("game", "map", "terminal", "inventory", "shop", "weather", "phone", "dex", "center", "battle", "encounter", "pokemon_info", "daily_quests", "journal", "secret_puzzle", "evolution", "settings", "hospitality", "dead")
+        active = self.mode in ("game", "map", "terminal", "inventory", "shop", "weather", "phone", "dex", "center", "battle", "encounter", "pokemon_info", "interaction_picker", "daily_quests", "journal", "secret_puzzle", "evolution", "settings", "hospitality", "dead")
         if active:
             if self.mode == "game":self.ensure_walkable_position()
             if self.mode == "map" and not self.wild_pokemon and self.pokedex.catalog:
@@ -4611,7 +5078,7 @@ class LegacyGame:
                         speed = 58 if self.life.mounted else 72
                     if self.life.scene in OUTSIDE and self.life.weather == "Salju":
                         speed *= .8
-                    layout=reserve_layout(BIOMES.index(biome_at("reserve",self.life.x,self.life.y))) if self.life.scene=="reserve" else scene_layout(self.life.scene) if self.life.scene in OUTSIDE else None
+                    layout=reserve_layout(reserve_index_at(self.life.x,self.life.y)) if self.life.scene=="reserve" else scene_layout(self.life.scene) if self.life.scene in OUTSIDE else None
                     if layout:
                         lx=self.life.x%1280 if self.life.scene=="reserve" else self.life.x
                         ly=self.life.y%1600 if self.life.scene=="reserve" else self.life.y
@@ -4653,7 +5120,7 @@ class LegacyGame:
                 self.life.story_notice = ""
                 self.save_current()
             health_before_animals = self.life.health
-            self.wildlife.update(dt, self.obstacles("forest"), player_active=self.mode not in ("terminal", "phone", "dex", "battle", "encounter", "pokemon_info", "dead"))
+            self.wildlife.update(dt, self.obstacles("forest"), player_active=self.mode not in ("terminal", "phone", "dex", "battle", "encounter", "pokemon_info", "interaction_picker", "dead"))
             if self.life.health < health_before_animals and self.life.scene == "forest":
                 attackers = [animal for animal in self.wildlife.living
                              if animal["species"] in ("Singa", "Hyena", "Babi hutan")
@@ -4711,6 +5178,7 @@ class LegacyGame:
                     self.notify(self.wildlife.hit(animal, WEAPONS["Busur"]["damage"]))
                     self.play_action_sound("wildlife-hurt", .4)
                     self.play_wildlife_call(animal["species"])
+                    if animal["hp"] <= 0: self.tutorial_advance("hunt")
                     hit = True
                     break
             if not hit and arrow["travel"] < WEAPONS["Busur"]["reach"] and not any(r.collidepoint(arrow["x"], arrow["y"]) for r in self.obstacles("forest")):
@@ -4755,7 +5223,7 @@ class LegacyGame:
             pg.quit()
 
 
-from adventure_flow import FlowMixin
+from adventure_flow import FlowMixin, TUTORIAL_STEPS
 from fighter import FighterMixin
 
 from online_ui import OnlineMixin

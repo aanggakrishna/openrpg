@@ -15,7 +15,8 @@ def skill(move,ultimate=False):
     # on dual-type Pokémon honest: a secondary-type move carries its own icon.
     emoji=EMOJI.get(typ,'💥')
     return {'name':name.replace('-',' ').title(),'type':typ,'power':min(140,power),'accuracy':move.get('accuracy') or 100,
-            'emoji':emoji,'style':'status' if status else 'area' if area else 'beam' if beam else 'melee' if melee else 'projectile',
+            'emoji':emoji,'damage_class':move.get('damage_class',{}).get('name','special'),
+            'style':'status' if status else 'area' if area else 'beam' if beam else 'melee' if melee else 'projectile',
             'range':150 if melee else 410 if area else 610 if beam else 750,
             'cooldown':12 if ultimate else round(1.4+power/65+(0.7 if area else 0),1),'ultimate':ultimate}
 

@@ -63,6 +63,11 @@ class Life:
     pokemon_levels: dict = field(default_factory=lambda: {"1": 5})
     pokemon_xp: dict = field(default_factory=lambda: {"1": 0})
     pokemon_health: dict = field(default_factory=lambda: {"1": 100})
+    reserve_space_wins: dict = field(default_factory=dict)
+    reserve_space_boss_thresholds: dict = field(default_factory=dict)
+    reserve_space_bosses: list = field(default_factory=list)
+    tutorial_active: bool = False
+    tutorial_step: int = 0
     daily_quests: list = field(default_factory=list)
     quest_day: int = 0
     biome_stories: dict = field(default_factory=dict)
@@ -462,6 +467,37 @@ class Life:
                 state.pokemon_xp = {}
             if not isinstance(state.pokemon_health, dict):
                 state.pokemon_health = {}
+            if not isinstance(state.reserve_space_wins, dict):
+                state.reserve_space_wins = {}
+            else:
+                clean_wins = {}
+                for index, wins in state.reserve_space_wins.items():
+                    try:
+                        index, wins = int(index), int(wins)
+                    except (TypeError, ValueError):
+                        continue
+                    if 0 <= index < 50:
+                        clean_wins[str(index)] = max(0, min(5, wins))
+                state.reserve_space_wins = clean_wins
+            thresholds = raw.get("reserve_space_boss_thresholds", {})
+            if not isinstance(thresholds, dict):
+                thresholds = {}
+            state.reserve_space_boss_thresholds = {}
+            for index, count in thresholds.items():
+                try:
+                    index, count = int(index), int(count)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= index < 50 and 1 <= count <= 5:
+                    state.reserve_space_boss_thresholds[str(index)] = count
+            state.tutorial_active = bool(raw.get("tutorial_active", False))
+            state.tutorial_step = max(0, min(14, int(raw.get("tutorial_step", 0))))
+            bosses = raw.get("reserve_space_bosses", [])
+            if not isinstance(bosses, list):
+                bosses = []
+            state.reserve_space_bosses = sorted({int(index) for index in bosses
+                                                 if str(index).lstrip("-").isdigit()
+                                                 and 0 <= int(index) < 50})
             for pokemon_id in set(state.pokemon_caught + state.pokemon_party):
                 key = str(int(pokemon_id))
                 state.pokemon_levels[key] = max(1, min(100, int(state.pokemon_levels.get(key, 5))))

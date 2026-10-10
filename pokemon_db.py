@@ -141,13 +141,34 @@ def evolution(chain_id):
         db.row_factory=sqlite3.Row
         rows=list(db.execute('SELECT * FROM pokemon_species WHERE evolution_chain_id=?',(str(chain_id),)))
         if not rows:return None
+        trigger_names={'1':'level-up','2':'trade','3':'use-item','4':'shed','5':'spin','6':'tower-of-darkness',
+                       '7':'tower-of-waters','8':'three-critical-hits','9':'take-damage','10':'other'}
         def branch(row):
             conditions=[]
             for c in db.execute('SELECT * FROM pokemon_evolution WHERE evolved_species_id=?',(row['id'],)):
-                # Only expose automatic level evolutions when no special condition is required.
-                special=any(c[key] not in ('','0') for key in ('trigger_item_id','held_item_id','minimum_happiness','minimum_beauty','minimum_affection','location_id','time_of_day','known_move_id','known_move_type_id','party_species_id','party_type_id','trade_species_id','condition_expression','minimum_steps','minimum_damage_taken','minimum_move_count','gender_id','relative_physical_stats','needs_overworld_rain','turn_upside_down','needs_multiplayer','near_special_rock','region_id','nature_bitmask','required_pokemon_form_id'))
-                if c['evolution_trigger_id']=='1' and c['minimum_level'] and not special:
-                    conditions.append({'trigger':{'name':'level-up'},'min_level':int(c['minimum_level'])})
+                trigger=trigger_names.get(c['evolution_trigger_id'],'other')
+                condition={'trigger':{'name':trigger}}
+                if c['minimum_level']:condition['min_level']=int(c['minimum_level'])
+                if c['trigger_item_id']:condition['item']={'name':f"item-{c['trigger_item_id']}"}
+                if c['held_item_id']:condition['held_item']={'name':f"item-{c['held_item_id']}"}
+                if c['minimum_happiness']:condition['min_happiness']=int(c['minimum_happiness'])
+                if c['minimum_beauty']:condition['min_beauty']=int(c['minimum_beauty'])
+                if c['minimum_affection']:condition['min_affection']=int(c['minimum_affection'])
+                if c['time_of_day']:condition['time_of_day']=c['time_of_day']
+                if c['known_move_id']:
+                    move=db.execute('SELECT identifier FROM moves WHERE id=?',(c['known_move_id'],)).fetchone()
+                    condition['known_move']={'name':move[0] if move else f"move-{c['known_move_id']}"}
+                if c['known_move_type_id']:condition['known_move_type_id']=int(c['known_move_type_id'])
+                if c['location_id']:condition['location_id']=int(c['location_id'])
+                if c['gender_id']:condition['gender_id']=int(c['gender_id'])
+                if c['relative_physical_stats']:condition['relative_physical_stats']=int(c['relative_physical_stats'])
+                if c['needs_overworld_rain']=='1':condition['needs_overworld_rain']=True
+                if c['turn_upside_down']=='1':condition['turn_upside_down']=True
+                if c['minimum_steps']:condition['minimum_steps']=int(c['minimum_steps'])
+                if c['minimum_damage_taken']:condition['minimum_damage']=int(c['minimum_damage_taken'])
+                if c['minimum_move_count']:condition['minimum_move_count']=int(c['minimum_move_count'])
+                if c['percentage_chance']:condition['chance']=float(c['percentage_chance'])
+                if condition not in conditions:conditions.append(condition)
             return {'species':{'name':row['identifier'],'url':f"https://pokeapi.co/api/v2/pokemon-species/{row['id']}/"},
                     'evolution_details':conditions,'evolves_to':[branch(child) for child in rows if child['evolves_from_species_id']==row['id']]}
         return {'id':chain_id,'chain':branch(next((r for r in rows if not r['evolves_from_species_id']),rows[0]))}

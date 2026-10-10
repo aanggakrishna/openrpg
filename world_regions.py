@@ -4,6 +4,26 @@ import random
 
 BIOMES = ('meadow','forest','desert','coast','swamp','cave','badlands','mountain',
           'volcano','snow','sky','crystal','ancient_forest','deepsea','dragon_valley','legendary_ruins')
+# The original 4x4 sanctuary keeps its exact world coordinates for existing
+# saves. The remaining country-themed spaces fill the eastern columns and the
+# southern row. Coordinates are (column, row) in the 1280x1600 zone grid.
+RESERVE_COLUMNS, RESERVE_ROWS = 10, 5
+RESERVE_GRID_POSITIONS = ([(c, r) for r in range(4) for c in range(4)] +
+                          [(c, r) for r in range(4) for c in range(4, 10)] +
+                          [(c, 4) for c in range(10)])
+RESERVE_ZONE_BIOMES = list(BIOMES) + [
+ 'forest','ancient_forest','cave','coast','snow','mountain','desert','swamp',
+ 'forest','badlands','coast','snow','volcano','desert','mountain','forest',
+ 'swamp','deepsea','crystal','mountain','forest','desert','snow','coast',
+ 'cave','ancient_forest','dragon_valley','badlands','coast','forest','snow','mountain',
+ 'desert','dragon_valley'
+]
+RESERVE_GRID_TO_INDEX = {pos: index for index, pos in enumerate(RESERVE_GRID_POSITIONS)}
+
+def reserve_index_at(x, y):
+    col = max(0, min(RESERVE_COLUMNS - 1, int(x // 1280)))
+    row = max(0, min(RESERVE_ROWS - 1, int(y // 1600)))
+    return RESERVE_GRID_TO_INDEX.get((col, row), 0)
 # ground / path / stone / highlight / water; limited palettes preserve pixel-art readability.
 PALETTES = {
  'meadow':((112,163,83),(205,177,118),(103,117,86),(201,217,144),(50,133,165)),
@@ -51,7 +71,7 @@ DUNGEON_BIOMES=('cave','forest','swamp','badlands','snow','volcano','crystal','s
 SCENE_BIOMES={'outdoors':'meadow','market':'meadow','forest':'forest','coast':'coast','mountain':'mountain','house':'meadow','bedroom':'meadow'}
 
 def biome_at(scene,x=0,y=0):
-    if scene=='reserve':return BIOMES[max(0,min(3,int(y//1600)))*4+max(0,min(3,int(x//1280)))]
+    if scene=='reserve':return RESERVE_ZONE_BIOMES[reserve_index_at(x,y)]
     return SCENE_BIOMES.get(scene,'meadow')
 
 def weather_for(scene,x,y,day,hour,override=''):
@@ -89,13 +109,15 @@ def border(w,top,bottom,openings):
             cursor=max(cursor,b)
     return result
 
-@lru_cache(maxsize=24)
+@lru_cache(maxsize=64)
 def reserve_layout(index):
-    biome=BIOMES[index];row,col=divmod(index,4)
+    biome=RESERVE_ZONE_BIOMES[index];col,row=RESERVE_GRID_POSITIONS[index]
+    neighbors = RESERVE_GRID_TO_INDEX
     gates=[]
-    for side,valid,x,y in [('west',col>0 or index==0,80,800),('east',col<3,1200,800),
-                           ('north',row>0,640,220),('south',row<3,640,1500)]:
-        if valid:gates.append((side,x,y))
+    for side,dc,dr,x,y in [('west',-1,0,80,800),('east',1,0,1200,800),
+                           ('north',0,-1,640,220),('south',0,1,640,1500)]:
+        if (col+dc,row+dr) in neighbors or (index==0 and side=='west'):
+            gates.append((side,x,y))
     walls=border(1280,120,1600,[(s,y if s in ('west','east') else x) for s,x,y in gates])
     paths=[(596,155,88,1417),(28,756,1224,88),(222,1038,840,64),
            (222,800,56,270),(1002,800,56,270)]
@@ -151,9 +173,9 @@ def reserve_layout(index):
     return dict(biome=biome,paths=paths,walls=walls,water=water,bridges=bridges,ice=ice,lava=lava,
                 gates=gates,buildings=buildings,props=props,solids=solids)
 
-@lru_cache(maxsize=24)
+@lru_cache(maxsize=64)
 def reserve_solids(index):
-    ox=(index%4)*1280;oy=(index//4)*1600
+    col,row=RESERVE_GRID_POSITIONS[index];ox=col*1280;oy=row*1600
     return tuple((x+ox,y+oy,w,h) for x,y,w,h in reserve_layout(index)['solids'])
 
 @lru_cache(maxsize=16)

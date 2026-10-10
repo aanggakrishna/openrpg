@@ -63,8 +63,6 @@ class OnlineMixin:
         self.text('ONLINE GYM / E',640,174,G,self.small,True)
 
     def interact(self):
-        if self.life.scene=='outdoors' and math.hypot(self.life.x-640,self.life.y-180)<100:
-            self.set_mode('online_connect');return
         super().interact()
 
     def online_edit(self,field,value):
