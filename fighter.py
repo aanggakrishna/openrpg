@@ -30,10 +30,15 @@ class FighterMixin:
                     self.switch_battle_pokemon(ko['next_pokemon'],True)
             return
         super().update_battle(dt)
+        if self.battle:
+            for key in ('fruit_speed_timer', 'fruit_double_timer'):
+                self.battle[key] = max(0.0, self.battle.get(key, 0.0) - dt)
         if self.battle and self.battle.get('result'):
             self.update_shots(dt)
 
     def pokemon_data(self,ident):
+        if ident is None:
+            return None
         return super().pokemon_data(ident) or pokemon_db.detail(ident)
 
     def prepare_battle(self):
@@ -166,7 +171,10 @@ class FighterMixin:
         speed=next((int(row.get('base_stat',70)) for row in detail.get('stats',[])
                     if row.get('stat',{}).get('name')=='speed'),70)
         base=206 if who=='player' else 166
-        return max(125,min(270,base+(speed-70)*.52))
+        result=max(125,min(270,base+(speed-70)*.52))
+        if who=='player' and self.battle and self.battle.get('fruit_speed_timer',0)>0:
+            result*=1.35
+        return result
 
     def spawn_jump_dust(self,who,ident,floor_y):
         b=self.battle
@@ -400,6 +408,8 @@ class FighterMixin:
         level_factor=max(.8,min(1.35,1+(attacker_level-defender_level)*.009))
         damage=int(damage*level_factor)
         if target=='player':damage=int(damage*b.get('enemy_power_factor',1))
+        elif shot['owner']=='player' and b.get('fruit_double_timer',0)>0:
+            damage*=2
         mods=b.get('environment_mods',{})
         attack_mod=mods.get(str(shot['source_id']),{}).get('attack',0)
         defense_mod=mods.get(str(ident),{}).get('defense',0)

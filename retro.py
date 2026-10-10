@@ -1,5 +1,4 @@
 """Shared pixel UI. Rendering only: no simulation or input state lives here."""
-from pathlib import Path
 import pygame as pg
 
 INK = (19, 25, 46)
@@ -13,15 +12,16 @@ RED = (245, 116, 109)
 
 
 class PixelFont:
-    # VT323 has Latin accents but no arrows/filled-circle navigation glyphs.
+    # Keep the pixel-art panels and game world, while using a familiar UI face
+    # so long instructions, names and status values stay easy to read.
     symbols = str.maketrans({'←':'<', '→':'>', '↑':'^', '↓':'v', '↔':'<>',
                             '⚔':'', 'ⓘ':'i', '▶':'>', '●':'*', '○':'o', '−':'-', '–':'-', '…':'...'})
 
     def __init__(self, size):
-        self.source = pg.font.Font(str(Path(__file__).parent / 'assets/fonts/VT323-Regular.ttf'), size)
+        self.source = pg.font.SysFont('Arial', size)
 
     def render(self, text, antialias, color, background=None):
-        return self.source.render(str(text).translate(self.symbols), False, color, background)
+        return self.source.render(str(text).translate(self.symbols), True, color, background)
 
     def size(self, text):
         return self.source.size(str(text).translate(self.symbols))

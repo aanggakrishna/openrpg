@@ -49,6 +49,7 @@ class FlowMixin:
         self.invitation = None
         self.encounter_grace = 12.0
         self.daily_page = 0
+        self.journal_page = 0
         self.wizard = {}
         self.profile_action = 'load'
         self.profile_return = 'title'
@@ -106,7 +107,7 @@ class FlowMixin:
             return
         self.save_current()
         self.save_path=path
-        if int(data.get('version',3))<4:
+        if int(data.get('version',3))<5:
             backup=ROOT/'.openrpg/backups'/f'{path.stem}-before-adventure-{time.time_ns()}.json'
             backup.parent.mkdir(parents=True,exist_ok=True)
             shutil.copy2(path,backup)
@@ -130,6 +131,9 @@ class FlowMixin:
         self.center_page=0
         self.last_save=self.life.elapsed
         self.last_location=(self.life.scene,int(self.life.x//1280),int(self.life.y//1600))
+        self.life.discover_biome()
+        milestones=self.life.claim_collection_rewards()
+        if milestones:self.save_current()
         self.encounter_grace=15
         # Cache the active team and the three Pokémon used in the sanctuary
         # entrance before showing the world. Remaining species stay on-demand.
@@ -139,7 +143,11 @@ class FlowMixin:
             self.pokedex.request(ident)
         self.set_mode('asset_loading')
         pg.key.stop_text_input()
-        self.notify(self.words('B terminal · J misi harian · E interaksi · P Pokédex','B terminal · J daily quests · E interact · P Pokédex'))
+        message=self.words('B terminal · J misi · L jurnal · E interaksi · P Pokédex',
+                           'B terminal · J quests · L journal · E interact · P Pokédex')
+        if milestones:
+            message += ' · ' + self.words('Hadiah koleksi: ', 'Collection rewards: ') + ', '.join(row[0] for row in milestones)
+        self.notify(message)
 
     def asset_loading_progress(self):
         statuses = [self.pokedex.media_status.get(ident, 'loading') for ident in self.asset_loading_ids]
@@ -312,7 +320,7 @@ class FlowMixin:
         pg.key.stop_text_input()
         self.center_selected=index
         self.assigning_slot=True
-        self.nav_index=1+min(8,len(self.filtered_collection()[self.center_page*8:self.center_page*8+8]))
+        self.nav_index=1+min(6,len(self.filtered_collection()[self.center_page*6:self.center_page*6+6]))
         ident=self.center_pokemon_id()
         self.pokedex.request(ident); self.pokedex.request_species(ident)
 
@@ -345,6 +353,7 @@ class FlowMixin:
             d=self.pokemon_data(ident) or pokemon_db.detail(ident)
             self.life.pokemon_health[str(ident)]=self.base_stat(d,'hp',45)+self.pokemon_level(ident)*2
         self.center_message=self.words(f'Tim pulih! Biaya {cost} koin.',f'Team restored! Cost: {cost} coins.')
+        self.life.record_daily_quest('heal',1)
         self.save_current();self.play_action_sound('pickup-rare',.3)
 
     def buy_center_pokeballs(self):
@@ -373,7 +382,9 @@ class FlowMixin:
         self.button(self.center_type_label(),(357,152,145,40),lambda:self.cycle_center_type(1),self.center_type_filter!='all')
         self.button('▶',(506,152,32,40),lambda:self.cycle_center_type(1))
         collection=self.filtered_collection()
-        entries=collection[self.center_page*8:self.center_page*8+8]
+        # Keep the collection to three rows so the Poké Ball / money area below
+        # never paints over the fourth row on shorter game windows.
+        entries=collection[self.center_page*6:self.center_page*6+6]
         for i,ident in enumerate(entries):
             x=65+(i%2)*245;y=207+(i//2)*101
             d=self.pokemon_data(ident) or pokemon_db.detail(ident) or {}
@@ -395,10 +406,12 @@ class FlowMixin:
             self.text(f"{slot+1}   {d.get('name',self.words('Kosong','Empty')).title()}",632,227+slot*99,C,self.font)
             if ident:self.text(f"HP {min(self.life.pokemon_health.get(str(ident),0),self.base_stat(d,'hp',45)+self.pokemon_level(ident)*2)}   /   Lv.{self.pokemon_level(ident)}",665,258+slot*99,G,self.small)
         ident=self.center_pokemon_id()
-        self.text(self.words('Pilihan: ','Selected: ')+(self.pokemon_data(ident) or pokemon_db.detail(ident) or {}).get('name',str(ident)).title(),610,530,G,self.font)
-        selected=self.pokemon_data(ident) or {}
-        self.text(' / '.join(t['type']['name'].upper() for t in selected.get('types',[]))+f'   Lv.{self.pokemon_level(ident)}',610,555,M,self.small)
-        self.text(' / '.join(m['name'] for m in self.skills_for(ident)[:2])[:64],610,649,G,self.small)
+        selected=(self.pokemon_data(ident) or pokemon_db.detail(ident) or {}) if ident is not None else {}
+        selected_name=selected.get('name',str(ident) if ident is not None else self.words('Tidak ada pilihan','No selection'))
+        self.text(self.words('Pilihan: ','Selected: ')+selected_name.title(),610,530,G,self.font)
+        if ident is not None:
+            self.text(' / '.join(t['type']['name'].upper() for t in selected.get('types',[]))+f'   Lv.{self.pokemon_level(ident)}',610,555,M,self.small)
+            self.text(' / '.join(m['name'] for m in self.skills_for(ident)[:2])[:64],610,649,G,self.small)
         balls=int(self.life.bag.get('Pokeball',0));quantity=min(5,max(0,10-balls))
         self.text(self.words(f'Poké Ball {balls}/10  ·  Uang {self.life.money} koin',
                              f'Poké Balls {balls}/10  ·  Money {self.life.money} coins'),65,548,M,self.small)
@@ -409,7 +422,7 @@ class FlowMixin:
         self.button(self.words('Pulihkan tim','Heal team')+f' / ${self.center_cost()}',(610,575,285,50),self.heal_pokemon_party)
         self.button(self.words('Evolusi','Evolve')+' / $10',(915,575,285,50),self.evolve_selected)
         self.button('<',(65,632,75,45),lambda:self.page_center(-1))
-        self.text(f'{self.center_page+1} / {max(1,math.ceil(len(self.filtered_collection())/8))}',160,645,M,self.small)
+        self.text(f'{self.center_page+1} / {max(1,math.ceil(len(self.filtered_collection())/6))}',160,645,M,self.small)
         self.button('>',(290,632,75,45),lambda:self.page_center(1))
         self.button(self.words('Aktifkan / keluarkan','Add / remove active'),(610,687,285,50),self.toggle_active_pokemon)
         self.button(self.words('Kembali','Back')+' / Esc',(915,687,285,50),self.back)
@@ -442,7 +455,7 @@ class FlowMixin:
         pg.key.start_text_input()
 
     def page_center(self,delta):
-        self.center_page=(self.center_page+delta)%max(1,math.ceil(len(self.filtered_collection())/8))
+        self.center_page=(self.center_page+delta)%max(1,math.ceil(len(self.filtered_collection())/6))
         self.nav_index=0
 
     def check_daily_quest_rewards(self):
@@ -470,16 +483,20 @@ class FlowMixin:
         pool=random.SystemRandom().choices((STARTERS,(147,246,280,443,633),(133,447,371)),weights=(80,15,5))[0]
         ident=random.SystemRandom().choice(pool)
         duplicate=ident in self.life.pokemon_party
+        milestones=[]
         if not duplicate:
             self.life.pokemon_party.append(ident)
             self.life.pokemon_caught=list(dict.fromkeys(self.life.pokemon_caught+[ident]))
             self.life.pokemon_seen=list(dict.fromkeys(self.life.pokemon_seen+[ident]))
             self.life.pokemon_levels[str(ident)]=random.randint(3,5)
             self.life.pokemon_health[str(ident)]=100
+            milestones=self.life.claim_collection_rewards()
         else:
             self.life.money+=40
         self.pokedex.request(ident)
-        self.show_reward(self.words('Duplikat: +40 koin','Duplicate: +40 coins') if duplicate else self.words('Partner baru!','New partner!'),'daily_quests',ident)
+        label=self.words('Duplikat: +40 koin','Duplicate: +40 coins') if duplicate else self.words('Partner baru!','New partner!')
+        if milestones:label += f" · {milestones[0][0]} +{milestones[0][1]}"
+        self.show_reward(label,'daily_quests',ident)
         self.play_pokemon_cry(ident)
 
     def draw_daily_quests(self):
@@ -719,7 +736,9 @@ class FlowMixin:
         before=getattr(self,'last_location',None)
         super().update(dt)
         after=(self.life.scene, int(self.life.x//1280),int(self.life.y//1600))
-        if before is not None and before!=after:self.life.record_daily_quest('explore',unique=str(after))
+        if before is not None and before!=after:
+            self.life.record_daily_quest('explore',unique=str(after))
+            self.life.discover_biome()
         self.last_location=after
         self.update_challenges(dt)
 
@@ -776,19 +795,25 @@ class FlowMixin:
             self.text(self.words('TERSIMPAN','SAVED'),1178,665,G,self.tiny,True)
 
     def evolve_selected(self):
+        pokemon_id=self.center_pokemon_id()
+        xp_cost=self.evolution_xp_cost(pokemon_id) if pokemon_id else 0
         if self.life.money<10:
             self.center_message=self.words('Evolusi membutuhkan 10 koin.','Evolution service costs 10 coins.')
             return
-        if getattr(self.life, 'trainer_xp', 0) < 100:
-            self.center_message=self.words('Evolusi membutuhkan 100 XP pelatih dan syarat level Pokémon.',
-                                           'Evolution requires 100 trainer XP and the Pokémon level condition.')
+        if getattr(self.life, 'trainer_xp_bank', 0) < xp_cost:
+            self.center_message=self.words(f'Evolusi ini membutuhkan {xp_cost} XP pelatih tersimpan.',
+                                           f'This evolution needs {xp_cost} banked Trainer XP.')
             return
         super().evolve_selected()
+        if self.evolution_anim:
+            self.evolution_anim['trainer_xp_cost']=xp_cost
 
     def finish_evolution(self):
         was_active=self.evolution_anim is not None
+        xp_cost=int(self.evolution_anim.get('trainer_xp_cost',0)) if self.evolution_anim else 0
         super().finish_evolution()
         if was_active:
             self.life.money=max(0,self.life.money-10)
-            self.life.trainer_xp=max(0,self.life.trainer_xp-100)
+            self.life.trainer_xp_bank=max(0,self.life.trainer_xp_bank-xp_cost)
+            self.life.record_daily_quest('evolve',1)
             self.save_current()

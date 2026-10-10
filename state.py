@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 import random
 from world_regions import weather_for
+from world_regions import biome_at
+from world_features import STORIES, COLLECTIONS, COLLECTION_COSMETICS
 
 ITEMS = ("Sayur", "Ikan", "Telur", "Makanan", "Daging", "Kulit", "Kayu", "Obat", "Tombak", "Busur", "Panah", "Pokeball")
 BUY = {"Makanan": 24, "Obat": 35, "Tombak": 80, "Busur": 160, "Panah": 3, "Pokeball": 12}
@@ -41,6 +43,7 @@ class Life:
     health: float = 100
     money: int = 150
     trainer_xp: int = 0
+    trainer_xp_bank: int = 0
     trainer_level: int = 1
     weapon: str = ""
     mounted: bool = False
@@ -62,8 +65,20 @@ class Life:
     pokemon_health: dict = field(default_factory=lambda: {"1": 100})
     daily_quests: list = field(default_factory=list)
     quest_day: int = 0
+    biome_stories: dict = field(default_factory=dict)
+    discovered_biomes: list = field(default_factory=list)
+    discovered_secrets: list = field(default_factory=list)
+    badges: list = field(default_factory=list)
+    cosmetics: list = field(default_factory=list)
+    active_cosmetic: str = ""
+    collection_claimed: list = field(default_factory=list)
+    story_notice: str = ""
+    world_trainer_xp: int = 0
+    world_event_next: float = 55.0
+    world_event: dict = field(default_factory=dict)
+    npc_talk_day: dict = field(default_factory=dict)
     language: str = "id"
-    version: int = 4
+    version: int = 5
 
     def __post_init__(self):
         for item in ITEMS:
@@ -88,6 +103,11 @@ class Life:
                 ("eat",1,"Nikmati masakan sendiri","Eat a home-cooked meal",15,"extra","🍲"),
                 ("catch",1,"Tangkap 1 Pokémon","Catch 1 Pokémon",45,"extra","⭐"),
                 ("battle",1,"Menangkan 1 duel","Win 1 battle",40,"extra","🥊"),
+                ("talk",2,"Bicara dengan 2 NPC","Talk to 2 NPCs",25,"extra","💬"),
+                ("event",1,"Ikuti 1 event dunia","Join a world event",45,"extra","🎉"),
+                ("secret",1,"Temukan 1 tempat rahasia","Find a secret place",40,"extra","🗝️"),
+                ("evolve",1,"Evolusikan Pokémon","Evolve a Pokémon",60,"extra","✨"),
+                ("heal",1,"Pulihkan tim di Pokémon Center","Heal your team at a Pokémon Center",25,"extra","🏥"),
             ]]
 
     def ensure_daily_quests(self):
@@ -118,7 +138,72 @@ class Life:
             quest["progress"] = min(quest["target"], before + amount)
             if before < quest["target"] <= quest["progress"]:
                 completed.append(quest)
+        self.record_world_action(action, amount)
         return completed
+
+    def current_biome(self):
+        return biome_at(self.scene, self.x, self.y)
+
+    def discover_biome(self, biome=None):
+        biome = biome or self.current_biome()
+        if biome not in STORIES or biome in self.discovered_biomes:
+            return False
+        self.discovered_biomes.append(biome)
+        self.biome_stories.setdefault(biome, {"progress": 0, "completed": False})
+        title = STORIES[biome][0 if self.language == "id" else 1]
+        self.story_notice = f"Cerita baru: {title}" if self.language == "id" else f"New story: {title}"
+        return True
+
+    def record_world_action(self, action, amount=1, biome=None):
+        biome = biome or self.current_biome()
+        story = STORIES.get(biome)
+        if not story:
+            return False
+        key = story[4]
+        aliases = {"garden": ("plant", "harvest"), "battle": ("battle",),
+                   "explore": ("explore",), "wood": ("wood",),
+                   "fish": ("fish",), "catch": ("catch", "catch_swamp"),
+                   "secret": ("secret",)}
+        if action not in aliases.get(key, (key,)):
+            return False
+        progress = self.biome_stories.setdefault(biome, {"progress": 0, "completed": False})
+        if progress.get("completed"):
+            return False
+        progress["progress"] = min(story[5], int(progress.get("progress", 0)) + max(1, int(amount)))
+        if progress["progress"] < story[5]:
+            return False
+        progress["completed"] = True
+        badge = story[6 if self.language == "id" else 7]
+        if badge not in self.badges:
+            self.badges.append(badge)
+        reward = 75 + 20 * ("meadow forest desert coast swamp".split().index(biome) if biome in "meadow forest desert coast swamp".split() else 5)
+        self.money += reward
+        self.world_trainer_xp += 40
+        self.story_notice = (f"Cerita selesai: {badge} · +{reward} koin · +40 XP pelatih" if self.language == "id"
+                             else f"Story complete: {badge} · +{reward} coins · +40 trainer XP")
+        return True
+
+    def claim_collection_rewards(self):
+        count = len(set(self.pokemon_caught))
+        claimed_now = []
+        for threshold, title_en, title_id, reward in COLLECTIONS:
+            key = str(threshold)
+            if count < threshold or key in self.collection_claimed:
+                continue
+            self.collection_claimed.append(key)
+            title = title_id if self.language == "id" else title_en
+            if title not in self.badges:
+                self.badges.append(title)
+            cosmetic = next((row for row in COLLECTION_COSMETICS if row[0] == threshold), None)
+            if cosmetic:
+                if cosmetic[1] not in self.cosmetics:
+                    self.cosmetics.append(cosmetic[1])
+                if not self.active_cosmetic:
+                    self.active_cosmetic = cosmetic[1]
+            self.money += reward
+            self.gacha_tickets += 1
+            claimed_now.append((title, reward))
+        return claimed_now
 
     def claim_quest(self, quest):
         if quest.get("claimed") or quest.get("progress",0) < quest["target"]:
@@ -329,6 +414,8 @@ class Life:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
             state = cls(**{k: v for k, v in raw.items() if k in cls.__dataclass_fields__})
+            if "trainer_xp_bank" not in raw:
+                state.trainer_xp_bank = max(0, int(raw.get("trainer_xp", 0)))
             if state.scene not in ("outdoors", "house", "bedroom", "forest", "market", "reserve", "coast", "mountain"):
                 raise ValueError("invalid scene")
             state.character = int(state.character) % 9
@@ -359,7 +446,7 @@ class Life:
                 setattr(state, field_name, list(dict.fromkeys(max(1, int(value)) for value in values))[:limit])
             if int(raw.get("version", 3)) < 4:
                 state.pokemon_party = list(dict.fromkeys(state.pokemon_party + state.pokemon_caught))
-            state.version = 4
+            state.version = 5
             if not state.pokemon_party:
                 state.pokemon_party = [1]
             active = raw.get("pokemon_active", state.pokemon_party[:3])
