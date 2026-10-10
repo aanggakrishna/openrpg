@@ -13,13 +13,15 @@ WEATHER_TYPES={'Cerah':({'fire','flying'},{'water'}),'Berawan':({'normal','bug',
                'Hujan':({'water','electric'},{'fire'}),'Salju':({'ice'},{'fire','grass'}),
                'Badai':({'electric','flying'},{'ground'})}
 WEATHER_EMOJI={'Cerah':'☀','Berawan':'☁','Hujan':'🌧','Salju':'❄','Badai':'⛈'}
-from combat_rules import EMOJI, VARIANTS, skill
+from combat_rules import EMOJI, VARIANTS, skill, fighter_loadout
 
 class FighterMixin:
     def update_battle(self,dt):
         b=self.battle
         if b and b.get('ko_anim'):
             ko=b['ko_anim'];ko['timer']=max(0,ko['timer']-dt)
+            for impact in b.get('impacts',[]):impact['timer']=max(0,impact['timer']-dt)
+            b['impacts']=[impact for impact in b.get('impacts',[]) if impact['timer']>0]
             if ko['timer']<=0:
                 b.pop('ko_anim',None)
                 if ko.get('next_pokemon') is not None and not b.get('result'):
@@ -39,6 +41,7 @@ class FighterMixin:
         b.setdefault('shots',[]);b.setdefault('impacts',[]);b.setdefault('cooldowns',{})
         b.setdefault('guard',100.0);b.setdefault('player_vx',0.0);b.setdefault('enemy_vy',0.0)
         b.setdefault('guard_break',0.0);b.setdefault('enemy_decision',.6)
+        b.setdefault('player_stun_timer',0.0);b.setdefault('enemy_stun_timer',0.0)
         b['api_moves']=[m['name'] for m in pokemon_db.loadout(b['player_id'])[:2]]
         self.refresh_battle_difficulty()
         if b.get('player_max'):
@@ -85,8 +88,14 @@ class FighterMixin:
             moves=[self.pokedex.moves[e['move']['name']] for e in d.get('moves',[]) if e['move']['name'] in self.pokedex.moves and self.pokedex.moves[e['move']['name']].get('power')]
         if not moves:
             return []
-        while len(moves)<3:moves=moves+[moves[-1]]
-        return [skill(moves[0]),skill(moves[1]),skill(moves[2],True)]
+        return fighter_loadout(moves)[0]
+
+    def ultimate_for(self,ident):
+        moves=pokemon_db.loadout(ident)
+        if moves:return fighter_loadout(moves)[1]
+        skills=self.skills_for(ident)
+        return dict(skills[-1],style='beam',range=1100,cooldown=12.0,ultimate=True,
+                    power=min(150,max(100,int(skills[-1]['power']*1.25)))) if skills else None
 
     def random_battle_platforms(self):
         # A connected route: each ledge is within one regular jump of its neighbor.
@@ -106,11 +115,11 @@ class FighterMixin:
 
     def can_attack(self):
         b=self.battle
-        return bool(b and 'wild_hp' in b and not any(b.get(k) for k in ('result','intro','capture','ultimate_cutin','ko_anim')) and not self.needs_depleted() and b.get('player_cooldown',0)<=0)
+        return bool(b and 'wild_hp' in b and not any(b.get(k) for k in ('result','intro','capture','ultimate_cutin','ko_anim')) and not self.needs_depleted() and b.get('player_stun_timer',0)<=0 and b.get('player_cooldown',0)<=0)
 
     def pokemon_attack(self,heavy=False):
         if not self.can_attack():return
-        move={'name':'Strike','type':'fighting','power':30,'accuracy':100,'emoji':'🥊','style':'melee','range':113,'cooldown':.45,'ultimate':False}
+        move={'name':'Strike','type':'fighting','power':30,'accuracy':100,'emoji':'🥊','style':'melee','range':78,'cooldown':.45,'ultimate':False}
         self.cast_move('player',move)
         self.battle['attack_flash']=.22
         self.battle['player_cooldown']=.45
@@ -127,10 +136,10 @@ class FighterMixin:
     def pokemon_ultimate(self):
         if not self.can_attack():return
         b=self.battle;moves=self.skills_for(b['player_id'])
-        if not moves or b.get('super_meter',0)<100 or b['cooldowns'].get(self.skill_key(b['player_id'],2),0)>0:return
-        move=moves[2]
+        move=self.ultimate_for(b['player_id'])
+        if not move or b.get('super_meter',0)<100 or b['cooldowns'].get(self.skill_key(b['player_id'],'ultimate'),0)>0:return
         b['super_meter']=0;b['player_cooldown']=.8
-        b['cooldowns'][self.skill_key(b['player_id'],2)]=move['cooldown']
+        b['cooldowns'][self.skill_key(b['player_id'],'ultimate')]=move['cooldown']
         b['ultimate_cutin']={'timer':1.0,'duration':1.0,'move_type':move['type'],'move_name':move['name'],
                             'emoji':move['emoji'],'pokemon_id':b['player_id'],'move':move}
         self.queue_pokemon_cry(b['player_id']);self.play_battle_sound('ultimate_charge',.65)
@@ -147,7 +156,7 @@ class FighterMixin:
             self.apply_status(owner,move,source_id,target_id,x,y)
             return
         tx=b[target+'_x'];ty=606+b[target+'_y']-self.fighter_size(target_id)*.5
-        length=max(1,math.hypot(tx-x,ty-y));speed=620 if move['style']=='beam' else 455
+        length=max(1,math.hypot(tx-x,ty-y));speed=1320 if move.get('ultimate') else 700 if move.get('stun_chance') else 455
         shot=dict(move,owner=owner,x=x,y=y,sx=x,sy=y,vx=(tx-x)/length*speed,vy=(ty-y)/length*speed,
                   age=0,windup=.20 if owner=='player' else .42,travel=0,source_id=source_id,trail=[])
         b.setdefault('shots',[]).append(shot)
@@ -164,7 +173,7 @@ class FighterMixin:
         if name in ('transform','sketch'):
             copied=pokemon_db.loadout(target_id)
             if copied:
-                b.setdefault('copied_skills',{})[source_id]=[skill(copied[0]),skill(copied[1]),skill(copied[2],True)]
+                b.setdefault('copied_skills',{})[source_id]=fighter_loadout(copied)[0]
                 if name=='transform':b[owner+'_appearance']=target_id
         elif name=='teleport':
             b[owner+'_x']=max(65,min(1215,b[owner+'_x']+(-230 if b[owner+'_x']<640 else 230)))
@@ -215,19 +224,20 @@ class FighterMixin:
 
     def update_fighter_sim(self,dt,keys):
         b=self.battle
-        for timer in ('player_cooldown','special_cooldown','type_cooldown','enemy_cooldown','hit_flash','enemy_flash','block_flash','attack_flash','enemy_attack_flash','enemy_guard_timer','guard_break'):
+        for timer in ('player_cooldown','special_cooldown','type_cooldown','enemy_cooldown','hit_flash','enemy_flash','block_flash','attack_flash','enemy_attack_flash','enemy_guard_timer','guard_break','player_stun_timer','enemy_stun_timer'):
             b[timer]=max(0,b.get(timer,0)-dt)
         for key in b['cooldowns']:b['cooldowns'][key]=max(0,b['cooldowns'][key]-dt)
         b['jump_buffer']=max(0,b.get('jump_buffer',0)-dt)
-        guarding=(keys[pg.K_LSHIFT] or keys[pg.K_RSHIFT]) and b['guard']>0 and not b['guard_break']
+        guarding=keys[pg.K_s] and b['guard']>0 and not b['guard_break'] and b['player_stun_timer']<=0
         b['guarding']=guarding
         b['guard']=max(0,min(100,b['guard']+(-19 if guarding else 16)*dt))
         if b['guard']<=0:b['guard_break']=1.4
         axis=int(keys[pg.K_RIGHT])-int(keys[pg.K_LEFT])
-        self.physics('player',dt,axis*.35 if guarding else axis,b.get('jump_buffer',0)>0,keys[pg.K_UP],keys[pg.K_DOWN])
+        if b['player_stun_timer']>0:axis=0
+        self.physics('player',dt,axis*.35 if guarding else axis,b.get('jump_buffer',0)>0 and b['player_stun_timer']<=0,keys[pg.K_UP] and b['player_stun_timer']<=0,keys[pg.K_DOWN])
         b['player_facing']=1 if b['enemy_x']>=b['player_x'] else -1
         b['enemy_decision']=max(0,b.get('enemy_decision',.5)-dt)
-        if b['enemy_decision']==0:
+        if b['enemy_decision']==0 and b['enemy_stun_timer']<=0:
             gap=abs(b['player_x']-b['enemy_x']);direction=1 if b['player_x']>b['enemy_x'] else -1
             level_gap=b.get('level_gap',0)
             attack_weight=max(3,min(10,6+level_gap*.12))
@@ -242,13 +252,13 @@ class FighterMixin:
             if action=='attack' and b['enemy_cooldown']<=0:
                 moves=self.skills_for(b['wild_id'])
                 if moves:
-                    move=self.pokemon_rng.choice(moves[:2])
+                    move=self.pokemon_rng.choice(moves)
                     if gap<=move['range']:
                         self.cast_move('enemy',move)
                         cooldown_scale=max(.68,min(1.22,1-(level_gap*.009)))
                         b['enemy_cooldown']=self.pokemon_rng.uniform(1.3,2.2)*cooldown_scale
                     else:b['enemy_axis']=direction
-        self.physics('enemy',dt,b.get('enemy_axis',0),b.get('enemy_action')=='jump',True)
+        self.physics('enemy',dt,0 if b['enemy_stun_timer']>0 else b.get('enemy_axis',0),b.get('enemy_action')=='jump' and b['enemy_stun_timer']<=0,True)
         self.update_shots(dt)
 
     def update_shots(self,dt):
@@ -262,8 +272,9 @@ class FighterMixin:
             rect=pg.Rect(b[target+'_x']-size*.35,606+b[target+'_y']-size,size*.7,size)
             old=(shot['x'],shot['y'])
             if shot['style']=='melee':
-                direction=1 if shot['vx']>=0 else -1
-                end=(shot['sx']+direction*shot['range'],shot['sy'])
+                direction_length=max(1,math.hypot(shot['vx'],shot['vy']))
+                end=(shot['sx']+shot['vx']/direction_length*shot['range'],
+                     shot['sy']+shot['vy']/direction_length*shot['range'])
                 hit=bool(rect.clipline(old,end));shot['x'],shot['y']=end
                 expired=True
             else:
@@ -274,8 +285,13 @@ class FighterMixin:
                 hit=bool(rect.inflate(radius,radius).clipline(old,(shot['x'],shot['y'])))
                 expired=shot['travel']>=shot['range'] or shot['age']>3.5
             if hit:
-                self.apply_hit(shot,target)
-                b['impacts'].append({'x':shot['x'],'y':shot['y'],'timer':.35,'color':COLORS.get(shot['type'],retro.GOLD),'emoji':shot['emoji']})
+                landed=self.apply_hit(shot,target)
+                duration=.72 if shot.get('ultimate') and landed else .35
+                b['impacts'].append({'x':shot['x'],'y':shot['y'],'timer':duration,'duration':duration,
+                                     'ultimate':bool(shot.get('ultimate') and landed),'type':shot['type'],
+                                     'color':COLORS.get(shot['type'],retro.GOLD),'emoji':shot['emoji']})
+                if shot.get('ultimate') and landed:
+                    self.play_ultimate_impact(shot['type'])
                 if b.get('ko_anim'):
                     remaining.clear()
                     break
@@ -287,9 +303,9 @@ class FighterMixin:
 
     def apply_hit(self,shot,target):
         b=self.battle
-        if b.get('result'):return
+        if b.get('result'):return False
         if self.pokemon_rng.random()*100>shot['accuracy']:
-            b['phase']='MISS';return
+            b['phase']='MISS';return False
         defending=b['guarding'] if target=='player' else b.get('enemy_guard_timer',0)>0
         ident=b['player_id' if target=='player' else 'wild_id']
         attacker=self.pokemon_data(shot['source_id']);defender=self.pokemon_data(ident)
@@ -307,14 +323,18 @@ class FighterMixin:
         damage=int(damage*factor)
         if shot['ultimate']:damage=int(damage*1.9)
         if defending:
-            damage=int(damage*.25) if factor==0 else max(1,int(damage*.25));b['block_flash']=.22
+            damage=max(1,int(damage*(.40 if shot.get('ultimate') else .15)));b['block_flash']=.22
             if target=='player':b['guard']=max(0,b['guard']-12)
         hpkey='player_hp' if target=='player' else 'wild_hp'
         b[hpkey]=max(0,b[hpkey]-damage)
         b['hit_flash' if target=='player' else 'enemy_flash']=.24
         b['super_meter']=min(100,b['super_meter']+(7 if target=='player' else 13))
+        stunned=False
+        if shot.get('stun_chance') and not defending and self.pokemon_rng.random()<shot['stun_chance']:
+            b[target+'_stun_timer']=self.pokemon_rng.uniform(1.0,3.0)
+            stunned=True
         self.play_hit_cry(ident)
-        b['phase']=('BLOCK ' if defending else '')+f'-{damage} HP'
+        b['phase']=('STUN! ' if stunned else 'BLOCK ' if defending else '')+f'-{damage} HP'
         if target=='player':
             self.life.pokemon_health[str(ident)]=b['player_hp']
             if b['player_hp']<=0:
@@ -329,6 +349,7 @@ class FighterMixin:
             b['ko_anim']={'owner':'enemy','pokemon_id':ident,'timer':.82,'duration':.82,'next_pokemon':None}
             b['shots']=[]
             self._win_battle()
+        return True
 
     def draw_fight_vfx(self,b):
         for shot in b.get('shots',[]):
@@ -337,18 +358,31 @@ class FighterMixin:
                 radius=int(10+shot['age']/shot['windup']*18)
                 pg.draw.circle(self.canvas,color,(int(shot['sx']),int(shot['sy'])),radius,2)
                 continue
-            size=54 if shot['ultimate'] else 25
-            if shot['style']=='beam':pg.draw.line(self.canvas,color,(shot['sx'],shot['sy']),(shot['x'],shot['y']),8 if shot['ultimate'] else 4)
+            size=74 if shot['ultimate'] else 25
+            if shot['style']=='beam':
+                pg.draw.line(self.canvas,(255,248,220),(shot['sx'],shot['sy']),(shot['x'],shot['y']),20 if shot['ultimate'] else 4)
+                pg.draw.line(self.canvas,color,(shot['sx'],shot['sy']),(shot['x'],shot['y']),12 if shot['ultimate'] else 4)
             for i,(x,y) in enumerate(shot['trail']):
                 pg.draw.circle(self.canvas,color,(int(x),int(y)),max(1,i//2))
             self.emoji(shot['emoji'],(shot['x'],shot['y']),size)
+            if shot.get('stun_chance'):self.emoji('❔',(shot['x'],shot['y']-20),20)
             if shot['style']=='area':
                 for offset in (-35,35):self.emoji(shot['emoji'],(shot['x']+offset,shot['y']+math.sin(self.frame*.2+offset)*24),size//2)
         for impact in b.get('impacts',[]):
-            p=1-impact['timer']/.35
-            pg.draw.circle(self.canvas,impact['color'],(int(impact['x']),int(impact['y'])),max(2,int(12+p*35)),3)
-            self.emoji(impact['emoji'],(impact['x'],impact['y']),int(25+p*20))
-
+            p=1-impact['timer']/max(.01,impact.get('duration',.35));center=(int(impact['x']),int(impact['y']))
+            if impact.get('ultimate'):
+                radius=24+int(160*p)
+                pg.draw.circle(self.canvas,impact['color'],center,radius,7)
+                pg.draw.circle(self.canvas,(255,246,203),center,max(8,radius//2),4)
+                for index in range(12):
+                    angle=index*math.tau/12+p*.7;inner=radius*.72;outer=radius+38
+                    pg.draw.line(self.canvas,impact['color'],
+                                 (int(center[0]+math.cos(angle)*inner),int(center[1]+math.sin(angle)*inner)),
+                                 (int(center[0]+math.cos(angle)*outer),int(center[1]+math.sin(angle)*outer)),6)
+                self.emoji(impact['emoji'],center,int(62+38*math.sin(p*math.pi)))
+            else:
+                pg.draw.circle(self.canvas,impact['color'],center,max(2,int(12+p*35)),3)
+                self.emoji(impact['emoji'],center,int(25+p*20))
     def draw_pokemon_battle(self):
         super().draw_pokemon_battle()
         b=self.battle
@@ -358,11 +392,13 @@ class FighterMixin:
             self.box((x,y,153,77),retro.PANEL)
             self.emoji(m['emoji'],(x+23,y+23),23)
             cooldown=b.get('cooldowns',{}).get(self.skill_key(b['player_id'],i),0)
-            self.text(('S','D','F')[i]+' / '+(f'{cooldown:.1f}s' if cooldown else f"{int(b.get('super_meter',0))}%" if i==2 and b.get('super_meter',0)<100 else 'READY'),x+44,y+13,retro.GOLD if not cooldown else retro.MUTED,self.tiny)
+            self.text(('Q','W','E')[i]+' / '+(f'{cooldown:.1f}s' if cooldown else 'READY'),x+44,y+13,retro.GOLD if not cooldown else retro.MUTED,self.tiny)
             label=m['name']
             if self.tiny.size(label)[0]>143:label=label[:19]
             self.text(label,x+7,y+44,retro.CREAM,self.tiny)
-        self.text('GUARD',57,244,retro.MUTED,self.tiny)
+        ult_cooldown=b.get('cooldowns',{}).get(self.skill_key(b['player_id'],'ultimate'),0)
+        self.text('R / '+(f'{ult_cooldown:.1f}s' if ult_cooldown else f"ULT {int(b.get('super_meter',0))}%"),544,244,retro.GOLD if not ult_cooldown and b.get('super_meter',0)>=100 else retro.MUTED,self.tiny)
+        self.text('S GUARD',57,244,retro.MUTED,self.tiny)
         retro.meter(self.canvas,(113,246,180,9),b.get('guard',100),100,(108,194,246))
         for row,ident in enumerate(self.active_pokemon_team()):
             self.text(f"{row+1} / {(self.pokemon_data(ident) or {}).get('name',str(ident)).title()}  HP {self.life.pokemon_health.get(str(ident),0)}",57,685+row*23,retro.GREEN,self.small)

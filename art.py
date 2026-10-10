@@ -1,7 +1,10 @@
 """Kenney CC0 pixel assets: tile maps, furniture and character sprites."""
 from pathlib import Path
 import math
+import queue
 import random
+import threading
+from collections import OrderedDict
 import pygame as pg
 
 ROOT = Path(__file__).resolve().parent / "assets"
@@ -104,8 +107,21 @@ class RPGArt:
                                             for r in self.reserve_paths)]
         # Sanctuary terrain is split into independently cached 1280×1600 zones.
         # A small LRU cache caps map-background memory regardless of world size.
-        self.reserve_chunks = {}
-        self.reserve_chunk_limit = 2
+        self.reserve_chunks = OrderedDict()
+        # A camera view at a zone corner can show 2 columns × 2 rows. Keep all
+        # visible chunks resident; a two-entry cache rebuilt half the map on
+        # every frame at intersections, causing severe stutter and allocations.
+        self.reserve_chunk_limit = 4
+        # Biome chunks are expensive to rasterize. Build them away from the
+        # render loop so entering an unexplored region cannot stall movement.
+        self.reserve_chunk_jobs = queue.Queue()
+        self.reserve_chunk_results = queue.Queue()
+        self.reserve_chunk_pending = set()
+        self.reserve_chunk_errors = set()
+        self.reserve_chunk_worker = threading.Thread(
+            target=self._reserve_chunk_worker, name="openrpg-biome-render", daemon=True)
+        self.reserve_chunk_worker.start()
+        self.request_reserve_chunk(0)
         self.coast_background = None
         self.mountain_background = None
 
@@ -411,20 +427,58 @@ class RPGArt:
         top = max(0, cam_y // RESERVE_ZONE_H)
         right = min(RESERVE_COLUMNS - 1, (cam_x + target.get_width() - 1) // RESERVE_ZONE_W)
         bottom = min(RESERVE_ROWS - 1, (cam_y + target.get_height() - 1) // RESERVE_ZONE_H)
+        # Install completed chunks on the main thread and keep the normal LRU
+        # cap. Pygame drawing and display updates stay on the game thread.
+        while True:
+            try:
+                index, chunk, error = self.reserve_chunk_results.get_nowait()
+            except queue.Empty:
+                break
+            self.reserve_chunk_pending.discard(index)
+            if chunk is not None:
+                self.reserve_chunks[index] = chunk
+                self.reserve_chunks.move_to_end(index)
+                while len(self.reserve_chunks) > self.reserve_chunk_limit:
+                    self.reserve_chunks.pop(next(iter(self.reserve_chunks)))
+            elif error:
+                self.reserve_chunk_errors.add(index)
+
+        visible = []
         for row in range(top, bottom + 1):
             for col in range(left, right + 1):
                 index = row * RESERVE_COLUMNS + col
-                chunk = self.reserve_chunks.get(index)
-                if chunk is None:
-                    chunk = self.build_reserve_chunk(index)
-                    self.reserve_chunks[index] = chunk
-                    while len(self.reserve_chunks) > self.reserve_chunk_limit:
-                        self.reserve_chunks.pop(next(iter(self.reserve_chunks)))
-                else:
-                    self.reserve_chunks.pop(index)
-                    self.reserve_chunks[index] = chunk
-                zone = RESERVE_ZONES[index]
+                visible.append(index)
+                if index not in self.reserve_chunks:
+                    self.request_reserve_chunk(index)
+
+        for index in visible:
+            zone = RESERVE_ZONES[index]
+            chunk = self.reserve_chunks.get(index)
+            if chunk is None:
+                # A flat biome-color placeholder is cheap and avoids freezing
+                # for a frame while the worker draws a never-visited region.
+                rect = pg.Rect(zone["x"] - cam_x, zone["y"] - cam_y,
+                               RESERVE_ZONE_W, RESERVE_ZONE_H).clip(target.get_rect())
+                if rect.width and rect.height:
+                    target.fill(zone["color"], rect)
+            else:
+                self.reserve_chunks.move_to_end(index)
                 target.blit(chunk, (zone["x"] - cam_x, zone["y"] - cam_y))
+
+    def request_reserve_chunk(self, index):
+        if (0 <= index < len(RESERVE_ZONES) and index not in self.reserve_chunks
+                and index not in self.reserve_chunk_pending and index not in self.reserve_chunk_errors):
+            self.reserve_chunk_pending.add(index)
+            self.reserve_chunk_jobs.put(index)
+
+    def _reserve_chunk_worker(self):
+        while True:
+            index = self.reserve_chunk_jobs.get()
+            try:
+                chunk = self.build_reserve_chunk(index)
+                self.reserve_chunk_results.put((index, chunk, None))
+            except Exception as error:
+                self.reserve_chunk_results.put((index, None, error))
 
     def build_reserve_chunk(self, index):
         """Bake only the requested sanctuary region, keeping visited zones cached."""

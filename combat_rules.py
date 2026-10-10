@@ -17,3 +17,21 @@ def skill(move,ultimate=False):
             'range':150 if melee else 410 if area else 610 if beam else 750,
             'cooldown':12 if ultimate else round(1.4+power/65+(0.7 if area else 0),1),'ultimate':ultimate}
 
+def fighter_loadout(moves):
+    """Build the same Q/W/E/R controls for offline, online, and bot fighters."""
+    if not moves:
+        return [], None
+    moves=list(moves[:3])
+    while len(moves)<3:moves.append(moves[-1])
+    q,w,e=(skill(move) for move in moves)
+    # Preserve each Pokémon's real move name/type/emoji, while making the
+    # combat roles readable and predictable across every battle mode.
+    q.update(style='projectile',range=max(420,q['range']),cooldown=max(6.0,q['cooldown']),
+             stun_chance=.42)
+    w.update(style='melee',range=116,cooldown=max(1.7,min(3.2,w['cooldown'])))
+    if e['style'] in ('melee','status'):e['style']='projectile'
+    e.update(range=max(650,e['range']),cooldown=max(3.5,min(5.5,e['cooldown'])))
+    ultimate=dict(e)
+    ultimate.update(style='beam',range=1100,cooldown=12.0,ultimate=True,
+                    power=min(150,max(100,int(ultimate['power']*1.25))),stun_chance=0)
+    return [q,w,e],ultimate

@@ -11,6 +11,9 @@ from online_client import OnlineClient
 
 ROOT=Path(__file__).resolve().parent
 C,G,M,GOLD=retro.CREAM,retro.GREEN,retro.MUTED,retro.GOLD
+ONLINE_ELEMENT_COLORS={'fire':(255,116,64),'water':(79,190,255),'ground':(208,158,95),'rock':(190,159,110),
+                       'flying':(150,218,255),'grass':(117,230,113),'bug':(174,212,98),'electric':(255,218,74),
+                       'ice':(166,239,255),'psychic':(249,126,201),'ghost':(174,128,240),'dragon':(133,136,255)}
 
 
 class OnlineMixin:
@@ -172,7 +175,7 @@ class OnlineMixin:
                         self.online_error=''
                 else:self.online_error=str(data)
             keys=pg.key.get_pressed();enabled=self.mode=='online_room' and not self.online_input
-            self.net.keys={name:bool(enabled and keys[key]) for name,key in [('left',pg.K_LEFT),('right',pg.K_RIGHT),('up',pg.K_UP),('down',pg.K_DOWN),('a',pg.K_a),('s',pg.K_s),('d',pg.K_d),('f',pg.K_f),('guard',pg.K_LSHIFT),('1',pg.K_1),('2',pg.K_2),('3',pg.K_3)]}
+            self.net.keys={name:bool(enabled and keys[key]) for name,key in [('left',pg.K_LEFT),('right',pg.K_RIGHT),('up',pg.K_UP),('down',pg.K_DOWN),('a',pg.K_a),('q',pg.K_q),('w',pg.K_w),('e',pg.K_e),('r',pg.K_r),('guard',pg.K_s),('1',pg.K_1),('2',pg.K_2),('3',pg.K_3)]}
         if self.mode.startswith('online_') or self.online_terminal:
             self.frame+=dt*60;self.terminal.poll();self.load_pokemon_events()
             return
@@ -211,11 +214,13 @@ class OnlineMixin:
             if event['kind']=='attack':
                 self.play_type_sound(event['type'],event['ultimate'])
                 if event['ultimate']:self.play_pokemon_cry(event['pokemon'])
-            elif event['kind']=='hit':self.play_pokemon_cry(event['pokemon'])
+            elif event['kind']=='hit':
+                if event.get('ultimate'):self.play_ultimate_impact(event.get('type','normal'))
+                self.play_pokemon_cry(event['pokemon'])
         if battle['result'] and not self.online_audio_result:
             self.online_audio_result=True;self.play_battle_sound('victory',.4)
 
-    def online_sprite(self,ident,x,y,size=70,flip=False):
+    def online_sprite(self,ident,x,y,size=70,flip=False,angle=0):
         if ident not in self.online_images:
             try:
                 loaded=pg.image.load(str(ROOT/'assets/pokemon-sprites'/f'{ident}.png')).convert_alpha()
@@ -235,6 +240,7 @@ class OnlineMixin:
                 if flip:scaled=pg.transform.flip(scaled,True,False)
                 self.online_scaled_images[key]=scaled
                 while len(self.online_scaled_images)>120:self.online_scaled_images.pop(next(iter(self.online_scaled_images)))
+            if angle:scaled=pg.transform.rotate(scaled,angle)
             self.canvas.blit(scaled,scaled.get_rect(midbottom=(int(x),int(y))))
 
     def online_position(self,key,x,y):
@@ -410,7 +416,12 @@ class OnlineMixin:
         for uid,f in b['fighters'].items():
             f=dict(f);f['x'],f['y']=self.online_position(b['id']+uid,f['x'],f['y'])
             p=f['team'][f['slot']];size=105 if p.get('boss') else 70
-            if p['hp']>0:self.online_sprite(p['id'],f['x'],f['y'],size,f['facing']>0)
+            if p['hp']>0:
+                angle=(self.frame*8)%360 if f.get('stun',0)>0 else 0
+                self.online_sprite(p['id'],f['x'],f['y'],size,f['facing']>0,angle)
+                if f.get('stun',0)>0:
+                    mark=self.emoji_font.render('❔',False,C);mark=pg.transform.scale(mark,(34,34))
+                    self.canvas.blit(mark,mark.get_rect(center=(int(f['x']),int(f['y']-size-20))))
             else:self.text('KO',f['x'],f['y']-30,GOLD,self.font,True)
             self.text(f"{p['name']} Lv.{p['level']}",f['x'],f['y']-size-33,C,self.small,True)
             if uid in b.get('active_bots',[]):
@@ -422,17 +433,34 @@ class OnlineMixin:
             if f['guard']:pg.draw.circle(self.canvas,(94,187,230),(int(f['x']),int(f['y']-32)),42,2)
         for shot in b['shots']:
             glyph=self.emoji_font.render(shot['emoji'],False,C)
-            glyph=pg.transform.scale(glyph,(28,28));self.canvas.blit(glyph,(int(shot['x'])-14,int(shot['y'])-14))
+            glyph=pg.transform.scale(glyph,(66,66) if shot.get('ultimate') else (28,28))
+            if shot.get('ultimate'):
+                color=ONLINE_ELEMENT_COLORS.get(shot.get('type'),GOLD)
+                start=(shot['x']-shot['vx']*.08,shot['y']-shot['vy']*.08);end=(shot['x'],shot['y'])
+                pg.draw.line(self.canvas,(255,247,214),start,end,20);pg.draw.line(self.canvas,color,start,end,12)
+            self.canvas.blit(glyph,glyph.get_rect(center=(int(shot['x']),int(shot['y']))))
         for e in b['effects']:
-            if e.get('ultimate'):
+            if e.get('blast'):
+                color=ONLINE_ELEMENT_COLORS.get(e.get('type'),GOLD);progress=1-max(0,e['ttl'])/.7
+                radius=20+int(115*progress);center=(int(e['x']),int(e['y']))
+                pg.draw.circle(self.canvas,color,center,radius,5)
+                pg.draw.circle(self.canvas,(255,246,203),center,max(6,radius//2),3)
+                for index in range(10):
+                    angle=index*math.tau/10;end=(int(center[0]+math.cos(angle)*(radius+30)),int(center[1]+math.sin(angle)*(radius+30)))
+                    pg.draw.line(self.canvas,color,center,end,4)
+                boom=self.emoji_font.render(e['text'],False,C);size=int(45+70*progress);boom=pg.transform.scale(boom,(size,size))
+                self.canvas.blit(boom,boom.get_rect(center=center))
+            elif e.get('ultimate') and not e.get('cutin'):
                 self.box((330,155,620,110),retro.PANEL);self.online_sprite(e['ultimate'],395,255,86);self.text(e['text'][:42],740,205,GOLD,self.font,True)
             else:self.text(e['text'],e['x'],e['y'],GOLD,self.small,True)
         if own:
             p=own['team'][own['slot']]
             self.text(f"{p['name']} / HP {p['hp']}/{p['maximum']} / ULT {int(own['energy'])}%",35,35,C,self.font)
             for i,move in enumerate(p['moves']):
-                self.text(f"{'SDF'[i]} {move['name']} {own['cooldowns'][i+1]:.1f}s",35,660+i*25,G,self.small)
-        self.text('Arrows / A punch / S D skills / F ultimate / Shift guard / 1 2 3 team',35,615,M,self.small)
+                self.text(f"{'QWE'[i]} {move['emoji']} {move['name']} {own['cooldowns'][i+1]:.1f}s",35,660+i*25,G,self.small)
+            ultimate=p.get('ultimate') or {}
+            self.text(f"R {ultimate.get('emoji','✨')} {ultimate.get('name','Ultimate')} / {own['cooldowns'][4]:.1f}s",700,660,GOLD,self.small)
+        self.text('Arrows / A close / S guard / Q stun / W close / E ranged / R ultimate (40% pierce) / 1-3 team',35,615,M,self.small)
         if b['intro']>0:self.text(str(math.ceil(b['intro'])),640,300,GOLD,self.big,True)
         if b['result']:
             self.box((400,300,480,135),retro.PANEL)
@@ -442,3 +470,14 @@ class OnlineMixin:
             if drops:self.text('DROP: '+', '.join(f'{name} x{count}' for name,count in drops),640,355,G,self.small,True)
             self.button('Return to room',(440,370,400,48),lambda:self.online_send('leave_battle'))
         else:self.button('Forfeit',(1010,690,235,40),lambda:self.online_send('leave_battle'))
+        cutin=next((e for e in reversed(b['effects']) if e.get('cutin')),None)
+        if cutin:
+            progress=max(0,min(1,1-cutin['ttl']/.82));accent=ONLINE_ELEMENT_COLORS.get(cutin.get('type'),GOLD)
+            overlay=pg.Surface((1280,760),pg.SRCALPHA);overlay.fill((8,13,31,242));self.canvas.blit(overlay,(0,0))
+            pg.draw.polygon(self.canvas,accent,[(0,190),(1280,70),(1280,560),(0,680)])
+            pg.draw.polygon(self.canvas,(11,18,37),[(0,220),(1280,105),(1280,520),(0,635)])
+            self.online_sprite(cutin['ultimate'],335,560,285,False)
+            self.text('ULTIMATE!',820,190,GOLD,self.big,True)
+            self.text(cutin.get('text','Pokémon Ultimate')[-42:],820,255,C,self.font,True)
+            glyph=self.emoji_font.render(cutin.get('emoji','💥'),False,C);size=int(90+38*math.sin(progress*math.pi));glyph=pg.transform.scale(glyph,(size,size))
+            self.canvas.blit(glyph,glyph.get_rect(center=(820,365)))

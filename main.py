@@ -153,7 +153,7 @@ class LegacyGame:
         if pg.mixer.get_init():
             pg.mixer.set_num_channels(16)
             self.countdown_tts_channel = pg.mixer.Channel(8)
-            for sound_name in ("fire", "water", "earth", "wind", "leaf", "punch", "ultimate_charge"):
+            for sound_name in ("fire", "water", "earth", "wind", "leaf", "punch", "ultimate_charge", "ultimate_explosion"):
                 try:
                     self.battle_sounds[sound_name] = pg.mixer.Sound(str(ROOT / "assets" / "audio" / "sfx" / f"{sound_name}.ogg"))
                 except (pg.error, OSError):
@@ -180,6 +180,10 @@ class LegacyGame:
         self.poke_surfaces = {}
         self.poke_battle_surfaces = {}
         self.poke_animations = {}
+        # Reuse rasterized sprites and emoji across frames instead of copying,
+        # resizing, and pixelating the same surfaces at 60 FPS.
+        self.pokemon_render_cache = {}
+        self.emoji_render_cache = {}
         self.pokeball_surface = None
         self.pokemon_cache_events = []
         self.dex_detail = None
@@ -1163,6 +1167,11 @@ class LegacyGame:
         }.get(move_type, "punch")
         self.play_battle_sound(sound_name, .62 if ultimate else .42)
 
+    def play_ultimate_impact(self, move_type):
+        """Play a CC0 blast together with the matching elemental sound."""
+        self.play_battle_sound("ultimate_explosion", .72)
+        self.play_type_sound(move_type, True)
+
     @staticmethod
     def valid_countdown_audio(path):
         # A interrupted OS speech renderer can leave a valid header with no PCM.
@@ -1841,7 +1850,10 @@ class LegacyGame:
         b["fruits"] = remaining_fruits
 
     def load_pokemon_events(self):
-        for kind, value in self.pokedex.poll():
+        # Decode at most one downloaded image per frame. If several PokéAPI
+        # requests finish together, converting every full-size sprite here
+        # can freeze the game loop for multiple frames.
+        for kind, value in self.pokedex.poll(limit=1):
             if kind == "catalog":
                 self.notify(f"Pokédex siap: {len(value)} spesies. Gambar disimpan saat dibuka.")
                 if self.life.scene == "reserve" and not self.wild_pokemon:
@@ -1919,6 +1931,8 @@ class LegacyGame:
                     image = pg.image.load(BytesIO(value["image"])).convert_alpha()
                     self.poke_surfaces[ident] = self.fit_pokemon_sprite(image, 96)
                     self.poke_battle_surfaces[ident] = self.fit_pokemon_sprite(image, 136)
+                    for key in [key for key in self.pokemon_render_cache if key[0] == ident]:
+                        del self.pokemon_render_cache[key]
                 except (pg.error, ValueError):
                     pass
             detail = value["detail"]
@@ -1936,22 +1950,36 @@ class LegacyGame:
         return pg.transform.scale(surface, size)
 
     def pokemon_surface(self, pokemon_id, target_size=96):
-        frames = self.poke_animations.get(int(pokemon_id))
+        ident = int(pokemon_id)
+        frames = self.poke_animations.get(ident)
+        frame_index = -1
+        source = None
         if frames:
             total = sum(duration for _, duration in frames)
             tick = int((self.frame / 60 * 1000) % max(1, total))
-            for surface, duration in frames:
+            for index, (surface, duration) in enumerate(frames):
                 if tick < duration:
-                    return self.fit_pokemon_sprite(surface, target_size)
+                    source = surface
+                    frame_index = index
+                    break
                 tick -= duration
-        ident = int(pokemon_id)
-        surface = self.poke_surfaces.get(ident) if target_size <= 100 else self.poke_battle_surfaces.get(ident, self.poke_surfaces.get(ident))
-        if surface and max(surface.get_width(), surface.get_height()) != target_size:
-            surface = self.fit_pokemon_sprite(surface, target_size)
-        if surface is None:
+        if source is None:
+            source = self.poke_surfaces.get(ident) if target_size <= 100 else self.poke_battle_surfaces.get(ident, self.poke_surfaces.get(ident))
+        if source is None:
             return None
-        surface = surface.copy()
+        key = (ident, int(target_size), frame_index)
+        cached = self.pokemon_render_cache.get(key)
+        if cached is not None:
+            return cached
+        surface = source
+        if max(surface.get_width(), surface.get_height()) != target_size:
+            surface = self.fit_pokemon_sprite(surface, target_size)
+        else:
+            surface = surface.copy()
         retro.pixelate(surface, 2)
+        self.pokemon_render_cache[key] = surface
+        if len(self.pokemon_render_cache) > 160:
+            self.pokemon_render_cache.pop(next(iter(self.pokemon_render_cache)))
         return surface
 
     def prepare_battle(self):
@@ -2764,7 +2792,7 @@ class LegacyGame:
                      "Esc meninggalkan PC · F10 Escape shell · Ctrl/Cmd+V paste.",
                      "P: Pokédex. M: peta global · roda / +/- zoom · klik bioma untuk fokus.",
                      "Dekati Pokémon di suaka, tekan E untuk memilih duel atau info Pokédex.",
-                     "Duel: panah · A pukul · S/D jurus · F ultimate · Shift blok · Tab ganti.",
+                     "Duel: panah · A dekat · S bertahan · Q stun · W dekat · E jauh · R ultimate · Tab ganti.",
                      "Pokémon Center: pilih hingga 3 aktif, pulihkan HP, naik level, dan evolusi.",
                      "Pokémon KO diganti otomatis; pulihkan di Center. Pelatih Lv.>20 bawa 3 lawan.",
                      "Semakin jauh dari suaka, Pokémon yang ditemui semakin langka dan kuat."]
@@ -3184,6 +3212,9 @@ class LegacyGame:
                 # the fighter needs to face right toward its opponent.
                 if faces_right:
                     sprite = pg.transform.flip(sprite, True, False)
+                stunned=b.get(key+"_stun_timer",0)>0
+                if stunned and not self.life.reduced_motion:
+                    sprite=pg.transform.rotate(sprite,(self.frame*7)%360)
                 flash = b.get("hit_flash", 0) if key == "player" else b.get("enemy_flash", 0)
                 if flash > 0 and not self.life.reduced_motion and int(flash * 50) % 2:
                     # Brighten RGB only; RGBA blending changes transparent GIF pixels too.
@@ -3222,6 +3253,10 @@ class LegacyGame:
                     else:
                         self.canvas.blit(sprite, (x - sprite.get_width() // 2,
                                                   ground - sprite.get_height() + fighter_y))
+                if stunned:
+                    question=self.emoji_font.render("❔",True,CREAM)
+                    question=pg.transform.scale(question,(38,38))
+                    self.canvas.blit(question,question.get_rect(center=(x,ground-sprite.get_height()-25+fighter_y)))
                 if key == "enemy" and b.get("enemy_guard_timer", 0) > 0 and not (b.get("ko_anim") or {}).get("owner") == key:
                     pg.draw.ellipse(self.canvas, (125, 207, 246),
                                     (x - 58, ground - 124 + fighter_y, 116, 121), 4)
@@ -3256,9 +3291,9 @@ class LegacyGame:
             self.box((300, 536, 680, 40), (35, 54, 48), 12)
             self.text(phase, W // 2, 556, CREAM, self.small, True)
         self.box((910, 142, 340, 66), (32, 51, 48), 9)
-        self.text("← → gerak · ↑ lompat/panjat · Shift tangkis", 924, 151, CREAM, self.tiny)
-        self.text("A pukul · S/D jurus · F ultimate · 1–3 ganti", 924, 170, GREEN, self.tiny)
-        self.text(f"O Poké Ball · {int(b.get('time_left', 60))} dtk · Esc keluar", 924, 185, MUTED, self.tiny)
+        self.text("← → gerak · ↑ lompat/panjat · S tahan", 924, 151, CREAM, self.tiny)
+        self.text("A dekat · S tahan · Q stun · W dekat · E jauh · R ult · 1–3 ganti", 924, 170, GREEN, self.tiny)
+        self.text(f"O bola · ult tembus 40% guard · {int(b.get('time_left', 60))} dtk · Esc", 924, 185, MUTED, self.tiny)
         if b.get("result") and b["player_hp"] <= 0:
             self.box((470, 586, 340, 44), (32, 51, 48), 12)
             self.text("Enter / Esc · kembali ke peta", W // 2, 608, CREAM, self.small, True)
@@ -3801,11 +3836,13 @@ class LegacyGame:
                     return
                 if event.key == pg.K_a:
                     self.pokemon_attack()
-                elif event.key == pg.K_s:
+                elif event.key == pg.K_q:
                     self.pokemon_type_attack(0)
-                elif event.key == pg.K_d:
+                elif event.key == pg.K_w:
                     self.pokemon_type_attack(1)
-                elif event.key == pg.K_f:
+                elif event.key == pg.K_e:
+                    self.pokemon_type_attack(2)
+                elif event.key == pg.K_r:
                     self.pokemon_ultimate()
                 elif event.key in (pg.K_1, pg.K_2, pg.K_3):
                     lineup = self.active_pokemon_team()
@@ -4037,7 +4074,8 @@ class LegacyGame:
                 self.overlay()
         sw, sh = self.window.get_size()
         scale = min(sw / W, sh / H)
-        image = pg.transform.scale(self.canvas, (int(W * scale), int(H * scale)))
+        scaled_size = (int(W * scale), int(H * scale))
+        image = self.canvas if scaled_size == (W, H) else pg.transform.scale(self.canvas, scaled_size)
         self.window.fill((18, 27, 23))
         self.window.blit(image, ((sw - image.get_width()) // 2, (sh - image.get_height()) // 2))
         pg.display.flip()

@@ -470,9 +470,16 @@ class FlowMixin:
         if pages>1:self.button(f'{self.daily_page+1}/{pages} >',(70,690,250,48),lambda:setattr(self,'daily_page',(self.daily_page+1)%pages))
 
     def emoji(self,value,center,size):
-        icon=self.emoji_font.render(value,True,C)
-        ratio=size/max(icon.get_size())
-        icon=pg.transform.scale(icon,(max(1,int(icon.get_width()*ratio)),max(1,int(icon.get_height()*ratio))))
+        cache=getattr(self,'emoji_render_cache',None)
+        key=(value,int(size))
+        icon=cache.get(key) if cache is not None else None
+        if icon is None:
+            icon=self.emoji_font.render(value,True,C)
+            ratio=size/max(icon.get_size())
+            icon=pg.transform.scale(icon,(max(1,int(icon.get_width()*ratio)),max(1,int(icon.get_height()*ratio))))
+            if cache is not None:
+                cache[key]=icon
+                if len(cache)>256:cache.pop(next(iter(cache)))
         self.canvas.blit(icon,icon.get_rect(center=center))
 
     def draw_reward(self):

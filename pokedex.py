@@ -256,13 +256,13 @@ class PokedexClient:
             except Exception as exc:  # Network errors are reported to the game thread.
                 self.results.put(("error", {"id": pokemon_id, "message": str(exc)}))
 
-    def poll(self):
+    def poll(self, limit=None):
         items = []
-        while True:
+        while limit is None or len(items) < max(0, int(limit)):
             try:
                 kind, value = self.results.get_nowait()
             except queue.Empty:
-                return items
+                break
             if kind == "catalog":
                 self.catalog = value
             elif kind == "pokemon":
@@ -307,3 +307,4 @@ class PokedexClient:
                     self.requested_moves.clear()
                     self.requested_cries.discard(value["id"])
             items.append((kind, value))
+        return items

@@ -160,6 +160,9 @@ class RedesignTests(unittest.TestCase):
         for n in range(900):g.update_battle(1/60)
         self.assertLess(b['player_hp'],hp)
         self.assertAlmostEqual(b['time_left'],45,places=2)
+        # The AI can now stun the player; isolate this ultimate-cutin check
+        # from the preceding long combat simulation.
+        b['player_stun_timer']=0
         b['super_meter']=100;b['player_cooldown']=0;g.pokemon_ultimate();g.draw()
         pg.image.save(g.canvas,str(ROOT/'artifacts/redesign-ultimate.png'))
         self.assertIsNotNone(b.get('ultimate_cutin'))

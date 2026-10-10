@@ -4,7 +4,7 @@ import secrets
 from collections import deque
 import random
 import pokemon_db
-from combat_rules import skill
+from combat_rules import skill, fighter_loadout
 
 
 def creature(ident, level, boss=False):
@@ -12,9 +12,10 @@ def creature(ident, level, boss=False):
     stats = {s['stat']['name']: s['base_stat'] for s in data.get('stats', [])}
     hp = int((40 + stats.get('hp', 50) * .65 + level * 3) * (2.5 if boss else 1))
     moves = pokemon_db.loadout(ident)
+    skills,ultimate=fighter_loadout(moves)
     return dict(id=ident, name=data.get('name', str(ident)).title(), level=level, hp=hp, maximum=hp,
                 attack=stats.get('attack', 50) + level * 2, defense=stats.get('defense', 50) + level,
-                moves=[skill(m, i == 2) for i, m in enumerate(moves)], boss=boss)
+                moves=skills, ultimate=ultimate, boss=boss)
 
 
 class Battle:
@@ -47,7 +48,7 @@ class Battle:
     @staticmethod
     def fighter(team, x, side):
         return dict(team=team, slot=next((i for i,c in enumerate(team) if c['hp']>0),0), x=float(x), y=570., vy=0., side=side, facing=1 if side == 0 else -1,
-                    energy=25., guard=False, cooldowns=[0., 0., 0., 0.], keys={}, input_age=0., ai=0.)
+                    energy=25., guard=False, cooldowns=[0., 0., 0., 0., 0.], keys={}, input_age=0., ai=0.,stun=0.)
 
     def wave(self):
         self.fighters = {k:v for k,v in self.fighters.items() if not k.startswith('bot:')}
@@ -68,21 +69,28 @@ class Battle:
     def control(self, uid, keys):
         if uid in self.fighters:
             f = self.fighters[uid]
-            f['keys'] = {k:bool(keys.get(k)) for k in ('left','right','up','guard','a','s','d','f','1','2','3')}
+            f['keys'] = {k:bool(keys.get(k)) for k in ('left','right','up','down','guard','a','q','w','e','r','1','2','3')}
             f['input_age'] = 0.
 
-    def hit(self, attacker, target, power, ultimate=False):
+    def hit(self, attacker, target, power, ultimate=False, move=None):
         f, g = self.fighters[attacker], self.fighters[target]
         p, q = f['team'][f['slot']], g['team'][g['slot']]
         if q['hp'] <= 0:
             return
         damage = max(2, int(power * .20 * (p['attack'] + 80) / (q['defense'] + 80)))
         if p.get('boss'): damage = int(damage * 1.3)
-        if g['guard']: damage = max(1, int(damage * .18))
+        if g['guard']: damage = max(1, int(damage * (.40 if ultimate else .15)))
         q['hp'] = max(0, q['hp'] - damage)
-        self.emit('hit',pokemon=q['id'])
+        stunned=False
+        if move and move.get('stun_chance') and not g['guard'] and self.rng.random()<move['stun_chance']:
+            g['stun']=self.rng.uniform(1.0,3.0);stunned=True
+        self.emit('hit',pokemon=q['id'],type=(move or {}).get('type','normal'),ultimate=ultimate,
+                  emoji=(move or {}).get('emoji','💥'),stunned=stunned)
         f['energy'] = min(100, f['energy'] + (0 if ultimate else 7))
         self.effects.append(dict(x=g['x'], y=g['y']-35, text='BLOCK' if g['guard'] else str(damage), ttl=.5))
+        if ultimate:
+            self.effects.append(dict(x=g['x'],y=g['y']-45,text=(move or {}).get('emoji','💥'),ttl=.7,
+                                     blast=True,type=(move or {}).get('type','normal')))
         if q['hp'] == 0:
             # Dungeon enemies enter one at a time. Keep later enemies visible
             # in the arena, but never let all of them attack together.
@@ -97,34 +105,39 @@ class Battle:
             live = next((i for i,c in enumerate(g['team']) if c['hp'] > 0), None)
             if live is not None:
                 g['slot'] = live
-                g['cooldowns'] = [1.]*4
+                g['cooldowns'] = [1.]*5
 
     def attack(self, uid, slot):
         f = self.fighters[uid]; p = f['team'][f['slot']]
-        if f['cooldowns'][slot] > 0 or (slot == 3 and f['energy'] < 100): return
+        ultimate=slot==4
+        if f['stun']>0 or f['cooldowns'][slot] > 0 or (ultimate and f['energy'] < 100): return
         enemies = [(k,v) for k,v in self.fighters.items() if v['side'] != f['side'] and v['team'][v['slot']]['hp'] > 0]
         if not enemies: return
         target, g = min(enemies, key=lambda kv: math.hypot(kv[1]['x']-f['x'], kv[1]['y']-f['y']))
         move = dict(name='Punch',power=42,range=85,cooldown=.55,emoji='🥊',accuracy=100,type='normal',style='melee')
-        if slot and p['moves']: move = p['moves'][min(slot-1,len(p['moves'])-1)]
+        if 1<=slot<=3 and p['moves']: move = p['moves'][slot-1]
+        elif ultimate:move=p['ultimate'] or p['moves'][-1]
         f['cooldowns'][slot] = move['cooldown']
-        self.emit('attack',type=move['type'],ultimate=slot==3,pokemon=p['id'])
-        if slot == 3:
+        self.emit('attack',type=move['type'],ultimate=ultimate,pokemon=p['id'],name=move['name'],emoji=move['emoji'])
+        if ultimate:
             f['energy'] = 0
-            self.effects.append(dict(x=640,y=230,text=p['name']+' — '+move['name'],ttl=.8,ultimate=p['id']))
+            self.effects.append(dict(x=640,y=230,text=p['name']+' — '+move['name'],ttl=.82,ultimate=p['id'],
+                                     cutin=True,type=move['type'],emoji=move['emoji']))
         dx, dy = g['x']-f['x'], g['y']-f['y']; distance = max(1, math.hypot(dx,dy))
         f['facing'] = 1 if dx >= 0 else -1
         self.effects.append(dict(x=f['x']+f['facing']*30,y=f['y']-35,text=move['emoji'],ttl=.25))
         if self.rng.random()*100 > move['accuracy']:
             self.effects.append(dict(x=f['x'],y=f['y']-65,text='MISS',ttl=.5)); return
-        power = move['power'] * (1.8 if slot == 3 else 1)
+        power = move['power'] * (1.8 if ultimate else 1)
         favored = {'sun':'fire','rain':'water','snow':'ice','wind':'flying'}[self.weather]
         if move['type'] in (favored,self.arena): power *= 1.15
-        if not slot or move['style'] == 'melee':
-            if distance <= (85 if not slot else move['range']): self.hit(uid,target,power,slot==3)
+        if slot==0 or move['style'] == 'melee':
+            if distance <= (85 if slot==0 else move['range']): self.hit(uid,target,power,ultimate,move)
             return
-        self.shots.append(dict(owner=uid,side=f['side'],x=f['x'],y=f['y']-30,vx=dx/distance*420,vy=dy/distance*420,
-                               remaining=move['range'],emoji=move['emoji'],power=power,ultimate=slot==3))
+        speed=1100 if ultimate else 500 if move.get('stun_chance') else 420
+        self.shots.append(dict(owner=uid,side=f['side'],x=f['x'],y=f['y']-30,vx=dx/distance*speed,vy=dy/distance*speed,
+                               remaining=move['range'],emoji=move['emoji'],power=power,ultimate=ultimate,
+                               type=move['type'],name=move['name'],style=move['style'],age=0.,windup=.78 if ultimate else 0.,stun_chance=move.get('stun_chance',0)))
 
     def tick(self, dt):
         if self.result: return
@@ -150,16 +163,17 @@ class Battle:
                         target = min(targets, key=lambda v: abs(v['x']-f['x']))
                         dx = target['x']-f['x']
                         f['keys'] = dict(left=dx < -100,right=dx > 100,up=target['y'] < f['y']-50 or self.rng.random()<.15,
-                                         guard=self.rng.random()<.14,a=abs(dx)<90,s=True,d=self.rng.random()<.4,f=True)
+                                         guard=self.rng.random()<.14,a=abs(dx)<90,q=self.rng.random()<.7,
+                                         w=self.rng.random()<.65,e=self.rng.random()<.5,r=self.rng.random()<.08)
                     f['ai'] = self.rng.uniform(.25,.65)
-            keys = f['keys']; f['guard'] = bool(keys.get('guard'))
+            keys = f['keys'];f['stun']=max(0,f['stun']-dt); f['guard'] = bool(keys.get('guard')) and f['stun']<=0
             for i in range(3):
                 if keys.get(str(i+1)) and i < len(f['team']) and f['team'][i]['hp'] > 0: f['slot'] = i
-            movement = int(keys.get('right',False))-int(keys.get('left',False))
+            movement = (int(keys.get('right',False))-int(keys.get('left',False))) if f['stun']<=0 else 0
             if movement: f['facing'] = movement
             f['x'] = max(40,min(1240,f['x']+movement*(90 if f['guard'] else 230)*dt))
             grounded = f['y'] >= 570 or any(x-12 <= f['x'] <= x+w+12 and abs(f['y']-y)<1 for x,w,y in self.platforms)
-            if keys.get('up') and grounded: f['vy'] = -465
+            if keys.get('up') and grounded and f['stun']<=0: f['vy'] = -465
             old_y = f['y']; f['vy'] += 1150*dt; f['y'] += f['vy']*dt
             if f['vy'] >= 0:
                 for x,w,y in self.platforms:
@@ -167,14 +181,18 @@ class Battle:
             if f['y'] >= 570: f['y']=570;f['vy']=0
             f['energy'] = min(100, f['energy']+dt*4)
             f['cooldowns'] = [max(0,c-dt) for c in f['cooldowns']]
-            for i,k in enumerate(('a','s','d','f')):
-                if keys.get(k) and not f['guard']: self.attack(uid,i)
+            if f['stun']<=0:
+                for key,slot in (('a',0),('q',1),('w',2),('e',3),('r',4)):
+                    if keys.get(key) and not f['guard']: self.attack(uid,slot)
         for shot in list(self.shots):
-            shot['x'] += shot['vx']*dt; shot['y'] += shot['vy']*dt;shot['remaining'] -= 420*dt
+            shot['age']+=dt
+            if shot['age']<shot['windup']:continue
+            shot['x'] += shot['vx']*dt; shot['y'] += shot['vy']*dt
+            speed=math.hypot(shot['vx'],shot['vy']);shot['remaining']-=speed*dt
             hit = False
             for uid,f in self.fighters.items():
-                if f['side'] != shot['side'] and f['team'][f['slot']]['hp'] > 0 and math.hypot(f['x']-shot['x'], f['y']-30-shot['y'])<28:
-                    self.hit(shot['owner'],uid,shot['power'],shot['ultimate']);hit=True;break
+                if f['side'] != shot['side'] and f['team'][f['slot']]['hp'] > 0 and math.hypot(f['x']-shot['x'], f['y']-30-shot['y'])<(52 if shot['ultimate'] else 28):
+                    self.hit(shot['owner'],uid,shot['power'],shot['ultimate'],shot);hit=True;break
             if hit or shot['remaining'] <= 0: self.shots.remove(shot)
         self.effects = [dict(e,ttl=e['ttl']-dt) for e in self.effects if e['ttl']>dt]
         sides = {f['side'] for f in self.fighters.values() if any(p['hp']>0 for p in f['team'])}
