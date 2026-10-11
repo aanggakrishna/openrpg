@@ -1,4 +1,8 @@
 .venv/
+node_modules/
+.web_wasm_build/
+output/
+public/config.js
 __pycache__/
 .openrpg/
 computer-workspace/

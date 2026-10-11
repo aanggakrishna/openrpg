@@ -197,3 +197,17 @@ Evolution at a Pokémon Center costs 10 coins and currently supports ordinary le
 Walk north from the home clearing and press **E** at **ONLINE GYM**. Connect to your own HTTP server for room chat, consent-based PvP, Pokémon trading, and four-player co-op dungeon runs across ten level tiers. The server stores online progress separately from offline saves.
 
 Run `python3 online_server.py --port 8765 --join-code YOUR_ROOM_CODE` on the host, then enter `http://YOUR_SERVER_IP:8765` in the game. See the [server setup, controls, progression, and limitations](docs/ONLINE.md).
+
+## Web edition (Vercel)
+
+The `openrpg-vercel` branch serves the same Pygame game engine through Pygbag/WebAssembly, with browser login, cloud saves, and the existing online gym. The local terminal is intentionally unavailable in browsers.
+
+Set these Vercel environment variables before deploying:
+
+```text
+DATABASE_URL=your Neon/Postgres connection string
+SESSION_SECRET=a random value of at least 32 bytes
+NEXT_PUBLIC_ONLINE_SERVER_URL=https://your-online-server.example
+```
+
+Deploy **the `openrpg-vercel` branch**. Vercel runs `npm run build`; the prebuilt WebAssembly archive in `public/desktop/openrpg-game.tar.gz` is included in the repository so no Python compiler is needed during deployment. The online server needs HTTPS and CORS access for the deployed Vercel domain.

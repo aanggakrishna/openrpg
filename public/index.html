@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenRPG</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/config.js"></script>
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <main id="auth-shell" class="auth-shell">
+      <section class="card">
+        <p class="eyebrow">OPENRPG · WEB EDITION</p>
+        <h1>Continue your adventure</h1>
+        <p class="copy">Sign in to save your trainer, team, and progress securely.</p>
+        <div class="tabs" role="tablist"><button class="selected" data-mode="login">Log in</button><button data-mode="register">Create account</button></div>
+        <form id="auth-form">
+          <label>Username <input name="username" autocomplete="username" minlength="3" maxlength="20" required /></label>
+          <label>Password <input name="password" type="password" autocomplete="current-password" minlength="10" maxlength="72" required /></label>
+          <button id="submit" type="submit">Log in</button>
+          <p id="message" role="status"></p>
+        </form>
+      </section>
+    </main>
+    <main id="game-shell" hidden>
+      <header><strong>OPENRPG WEB</strong><span id="player"></span><button id="logout">Log out</button></header>
+      <iframe id="game" title="OpenRPG game" allow="autoplay" tabindex="0"></iframe>
+    </main>
+  </body>
+</html>

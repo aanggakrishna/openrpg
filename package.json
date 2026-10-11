@@ -1,0 +1,15 @@
+{
+  "name": "openrpg-web",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=20"},
+  "scripts": {
+    "build": "node tools/build_web_assets.mjs",
+    "dev": "npx vercel dev"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
+    "bcryptjs": "^3.0.2",
+    "jose": "^6.1.0"
+  }
+}
