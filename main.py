@@ -2389,12 +2389,12 @@ class LegacyGame:
             return
         b["opponent_index"] = index
         b["wild_id"] = int(lineup[index])
-        if b.get("trainer", {}).get("local_dungeon"):
+        if (b.get("trainer") or {}).get("local_dungeon"):
             b["wild_level"] = int(b.get("dungeon_enemy_levels", [])[index])
             b["dungeon_round_label"] = self.local_dungeon_round_label(
                 index, len(lineup))
         else:
-            b["wild_level"] = min(100, int(b.get("trainer", {}).get("level", 20)) + index * 2)
+            b["wild_level"] = min(100, int((b.get("trainer") or {}).get("level", 20)) + index * 2)
         b.pop("wild_hp", None)
         b.pop("wild_max", None)
         b["result"] = ""
@@ -2410,7 +2410,7 @@ class LegacyGame:
         self.pokedex.request_cry(b["wild_id"])
         if self.pokemon_data(b["wild_id"]) and self.pokemon_data(b["player_id"]):
             self.prepare_battle()
-        if b.get("trainer", {}).get("local_dungeon"):
+        if (b.get("trainer") or {}).get("local_dungeon"):
             b["dungeon_round_label"] = self.local_dungeon_round_label(
                 index, len(lineup))
             if index >= len(lineup) - 1:
@@ -5002,7 +5002,7 @@ class LegacyGame:
             sprite = pg.transform.flip(sprite, True, False)
             self.canvas.blit(sprite, sprite.get_rect(center=(370, 420)))
         biome = battle.get("dungeon_biome", "cave").replace("_", " ").upper()
-        if battle.get("trainer", {}).get("local_dungeon"):
+        if (battle.get("trainer") or {}).get("local_dungeon"):
             dungeon = self.local_dungeon_name(battle.get("dungeon_tier", 1)).upper()
         else:
             zone_index = battle.get("reserve_zone")
