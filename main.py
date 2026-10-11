@@ -4978,8 +4978,14 @@ class LegacyGame:
             pg.draw.polygon(self.canvas, (35, 30, 48),
                             [(x, 0), (x + 88, 0), (x + 172, H), (x + 80, H)])
         accent = (255, 183, 70)
-        glow = pg.Surface((W, H), pg.SRCALPHA)
-        glow.fill((92, 39, 31, 75))
+        # Reuse this full-screen overlay. Allocating a 1280×800 alpha surface
+        # every frame during the boss cinematic caused a large allocation
+        # churn on lower-memory laptops and could terminate the game on entry.
+        glow = getattr(self, "_boss_intro_glow", None)
+        if glow is None:
+            glow = pg.Surface((W, H), pg.SRCALPHA)
+            glow.fill((92, 39, 31, 75))
+            self._boss_intro_glow = glow
         self.canvas.blit(glow, (0, 0))
         for index in range(10):
             y = int((index * 97 + self.frame * (5 + index % 3)) % H)
@@ -4997,7 +5003,11 @@ class LegacyGame:
         if battle.get("trainer", {}).get("local_dungeon"):
             dungeon = self.local_dungeon_name(battle.get("dungeon_tier", 1)).upper()
         else:
-            zone = RESERVE_ZONES[battle.get("reserve_zone", 0)] if RESERVE_ZONES else {"name": "POKÉMON SANCTUARY"}
+            zone_index = battle.get("reserve_zone")
+            if isinstance(zone_index, int) and 0 <= zone_index < len(RESERVE_ZONES):
+                zone = RESERVE_ZONES[zone_index]
+            else:
+                zone = {"name": "POKÉMON SANCTUARY"}
             dungeon = self.words(f"PENJAGA · {zone['name']}", f"GUARDIAN · {zone['name']}").upper()
         self.text(self.words("BOSS DUNGEON", "DUNGEON BOSS"), 790, 210,
                   accent, self.big, True)
