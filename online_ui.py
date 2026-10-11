@@ -48,7 +48,14 @@ class OnlineMixin:
 
     def stations(self):
         result=super().stations()
-        if self.life.scene=='outdoors':result.append(('online',640,180,self.words('Gym online di utara','Online gym to the north')))
+        if self.life.scene=='outdoors':result.append(('dungeon_hub',640,180,self.words('Hub utara · Gym & dungeon','North hub · Gym & dungeon')))
+        if self.life.scene=='dungeon_hub':
+            result.extend([('online_gym',145,435,self.words('Gym Online · ke kiri','Online Gym · left')),
+                           ('local_dungeon',1135,435,self.words('Dungeon lokal · ke kanan','Local dungeon · right')),
+                           ('outside',640,628,self.words('Kembali ke rumah','Return home'))])
+        if self.life.scene=='local_dungeon':
+            result.extend([('dungeon_start',640,267,self.words('Mulai / lanjut dungeon','Start / continue dungeon')),
+                           ('dungeon_hub',640,625,self.words('Kembali ke hub','Return to hub'))])
         return result
 
     def obstacles(self,scene=None):
@@ -60,7 +67,7 @@ class OnlineMixin:
         super().outdoors()
         self.art.scenery.gate(self.canvas,640,180,"north","meadow")
         self.box((547,154,185,40),retro.PANEL)
-        self.text('ONLINE GYM / E',640,174,G,self.small,True)
+        self.text('HUB UTARA / E',640,174,G,self.small,True)
 
     def interact(self):
         super().interact()

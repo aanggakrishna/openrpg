@@ -113,8 +113,23 @@ class FighterMixin:
         elif gap<=17:label=self.words('SULIT','HARD')
         else:label=self.words('ELITE','ELITE')
         b['difficulty_label']=label
-        b['enemy_power_factor']=max(.8,min(1.28,1+gap*.006))
-        b['enemy_reflex_factor']=max(.62,min(1.28,1+gap*.009))
+        # Wild encounters explicitly store trainer=None, so normalize optional
+        # encounter records before inspecting their metadata.
+        trainer=b.get('trainer') or {}
+        wild=b.get('wild') or {}
+        if trainer.get('local_dungeon'):
+            tier=max(1,int(b.get('dungeon_tier',1)))
+            boss=bool(b.get('dungeon_is_boss'))
+            b['enemy_power_factor']=min(1.85,(1.38+tier*.018) if not boss else (1.62+tier*.025))
+            b['enemy_reflex_factor']=min(1.55,(1.08+tier*.018) if not boss else (1.22+tier*.025))
+            b['difficulty_label']=self.words('BOSS · SANGAT SULIT','BOSS · VERY HARD') if boss else self.words('DUNGEON · SULIT','DUNGEON · HARD')
+        elif wild.get('is_boss'):
+            b['enemy_power_factor']=1.68
+            b['enemy_reflex_factor']=1.28
+            b['difficulty_label']=self.words('BOSS · SANGAT SULIT','BOSS · VERY HARD')
+        else:
+            b['enemy_power_factor']=max(.8,min(1.28,1+gap*.006))
+            b['enemy_reflex_factor']=max(.62,min(1.28,1+gap*.009))
 
     def environment_modifiers(self,ident):
         """Small, visible attack/defence shifts from stage affinity and weather."""
@@ -143,7 +158,24 @@ class FighterMixin:
 
     def ultimate_for(self,ident):
         moves=pokemon_db.loadout(ident)
-        if moves:return fighter_loadout(moves)[1]
+        if moves:
+            detail=self.pokemon_data(ident) or {}
+            native_types=[row.get('type',{}).get('name') for row in detail.get('types',[])]
+            # The third regular skill is often a coverage move (frequently
+            # Normal), which made many unrelated Pokémon show the same star
+            # ultimate. Use the strongest real STAB move for the Pokémon's
+            # own type(s), favoring its primary type when powers are close.
+            move_options, generated_ultimate=fighter_loadout(moves)
+            candidates=[move for move in move_options if move.get('type') in native_types]
+            if candidates:
+                primary=native_types[0] if native_types else None
+                move=max(candidates,key=lambda item:(item.get('power',0)+(8 if item.get('type')==primary else 0)))
+            else:
+                move=generated_ultimate
+            ultimate=dict(move)
+            ultimate.update(style='beam',range=1100,cooldown=12.0,ultimate=True,
+                            power=min(150,max(100,int(ultimate['power']*1.25))))
+            return ultimate
         skills=self.skills_for(ident)
         return dict(skills[-1],style='beam',range=1100,cooldown=12.0,ultimate=True,
                     power=min(150,max(100,int(skills[-1]['power']*1.25)))) if skills else None
@@ -196,7 +228,94 @@ class FighterMixin:
 
     def can_attack(self):
         b=self.battle
-        return bool(b and 'wild_hp' in b and not any(b.get(k) for k in ('result','intro','capture','ultimate_cutin','ko_anim')) and not self.needs_depleted() and b.get('player_stun_timer',0)<=0 and b.get('player_cooldown',0)<=0)
+        return bool(b and 'wild_hp' in b and not any(b.get(k) for k in ('result','intro','capture','ultimate_cutin','boss_intro','boss_evolution','ko_anim')) and not self.needs_depleted() and b.get('player_stun_timer',0)<=0 and b.get('player_cooldown',0)<=0)
+
+    def boss_evolution_target(self, pokemon_id):
+        """Return a real next-stage species from the bundled Pokédex chain."""
+        species = self.pokedex.species.get(int(pokemon_id)) or pokemon_db.species(int(pokemon_id))
+        if not species:
+            return None
+        chain_url = species.get('evolution_chain', {}).get('url', '')
+        try:
+            chain_id = int(chain_url.rstrip('/').split('/')[-1])
+        except (AttributeError, TypeError, ValueError):
+            return None
+        chain = self.pokedex.evolution.get(chain_id) or pokemon_db.evolution(chain_id)
+        if not chain:
+            return None
+
+        def locate(link):
+            try:
+                current_id = int(link.get('species', {}).get('url', '').rstrip('/').split('/')[-1])
+            except (TypeError, ValueError, AttributeError):
+                current_id = -1
+            if current_id == int(pokemon_id):
+                return link
+            for child in link.get('evolves_to', []):
+                found = locate(child)
+                if found:
+                    return found
+            return None
+
+        node = locate(chain.get('chain', {}))
+        children = (node or {}).get('evolves_to', [])
+        options = []
+        for child in children:
+            try:
+                ident = int(child['species']['url'].rstrip('/').split('/')[-1])
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+            if 1 <= ident <= 1025 and ident != int(pokemon_id):
+                options.append((ident, child['species'].get('name', f'Pokémon #{ident}')))
+        return self.pokemon_rng.choice(options) if options else None
+
+    def trigger_boss_evolution(self):
+        """Give a boss one chance to evolve at critical HP, restoring its phase."""
+        b = self.battle
+        if not b or b.get('boss_phase_checked') or b.get('wild_max', 0) <= 0:
+            return False
+        is_boss = bool(b.get('dungeon_is_boss') or (b.get('wild') or {}).get('is_boss'))
+        if not is_boss or b.get('wild_hp', 0) / b['wild_max'] > .25:
+            return False
+        b['boss_phase_checked'] = True
+        if self.pokemon_rng.random() >= .58:
+            b['phase'] = self.words('Boss bertahan di fase terakhirnya!', 'The boss holds its final form!')
+            return False
+        evolved = self.boss_evolution_target(b['wild_id'])
+        if not evolved:
+            b['phase'] = self.words('Boss mengerahkan kekuatan terakhirnya!', 'The boss unleashes its final strength!')
+            return False
+        old_id, new_id = b['wild_id'], int(evolved[0])
+        b['wild_id'] = new_id
+        if isinstance(b.get('wild'), dict):
+            b['wild']['id'] = new_id
+        b['wild_level'] = min(100, int(b.get('wild_level', 5)) + 5)
+        b['boss_phase'] = 2
+        b['boss_evolved'] = True
+        b['boss_evolution'] = {'from': old_id, 'to': new_id, 'name': evolved[1],
+                               'timer': 3.2, 'duration': 3.2}
+        b.pop('wild_appearance', None)
+        b['enemy_x'], b['enemy_y'] = 930.0, 0.0
+        b['enemy_vx'], b['enemy_vy'] = 0.0, 0.0
+        b['enemy_cooldown'], b['enemy_ai_timer'] = 1.0, .45
+        b['enemy_guard_timer'], b['enemy_stun_timer'] = 0.0, 0.0
+        b['shots'] = []
+        self.pokedex.request(new_id)
+        self.pokedex.request_animation(new_id)
+        self.pokedex.request_cry(new_id)
+        self.prepare_battle()
+        b['wild_hp'] = b['wild_max']
+        b['enemy_stat_multiplier'] = min(2.25, b.get('enemy_stat_multiplier', 1.0) * 1.15)
+        b['wild_max'] = max(1, round(b['wild_max'] * 1.15))
+        b['wild_hp'] = b['wild_max']
+        b['enemy_power_factor'] = min(2.0, b.get('enemy_power_factor', 1.0) * 1.12)
+        b['phase'] = self.words('FASE 2 · Boss berevolusi dan pulih penuh!',
+                                'PHASE 2 · The boss evolved and fully recovered!')
+        b.setdefault('impacts', []).append({'x': b['enemy_x'], 'y': b.get('enemy_y', 0),
+                                            'timer': .75, 'duration': .75,
+                                            'color': retro.GOLD, 'emoji': '✨'})
+        self.queue_pokemon_cry(new_id)
+        return True
 
     def pokemon_attack(self,heavy=False):
         if not self.can_attack():return
@@ -424,6 +543,12 @@ class FighterMixin:
         if factor == 0:
             b['phase']=self.words('TIDAK MEMPAN','NO EFFECT')
             return True
+        if target=='player' and getattr(self.life,'godmode',False):
+            b['phase']='GOD MODE · serangan ditahan' if self.life.language=='id' else 'GOD MODE · attack blocked'
+            b['impacts'].append({'x':b['player_x'],'y':b.get('player_y',0),'timer':.35,
+                                 'color':retro.GOLD,'emoji':'🛡️'})
+            b['block_flash']=.28
+            return True
         if shot['ultimate']:damage=int(damage*1.9)
         if defending:
             damage=max(1,int(damage*(.40 if shot.get('ultimate') else .15)));b['block_flash']=.22
@@ -448,6 +573,8 @@ class FighterMixin:
                 name=(self.pokemon_data(ident) or {}).get('name','Pokémon').title()
                 b['phase']=self.words(f'{name} tumbang!',f'{name} fainted!')
                 if not living:b['result']=self.words('Tim KO / Esc kembali','Team KO / Esc to return')
+        elif self.trigger_boss_evolution():
+            return True
         elif b['wild_hp']<=0:
             b['ko_anim']={'owner':'enemy','pokemon_id':ident,'timer':.82,'duration':.82,'next_pokemon':None}
             b['shots']=[]
@@ -487,9 +614,13 @@ class FighterMixin:
                 pg.draw.circle(self.canvas,impact['color'],center,max(2,int(12+p*35)),3)
                 self.emoji(impact['emoji'],center,int(25+p*20))
     def draw_pokemon_battle(self):
-        super().draw_pokemon_battle()
         b=self.battle
-        if not b or b.get('intro') or b.get('ultimate_cutin'):return
+        if not b:return
+        super().draw_pokemon_battle()
+        if b.get('boss_evolution'):
+            self.draw_boss_evolution(b,b['boss_evolution'])
+            return
+        if b.get('intro') or b.get('ultimate_cutin') or b.get('boss_intro'):return
         for i,m in enumerate(self.skills_for(b['player_id'])):
             x=56+i*163;y=154
             self.box((x,y,153,77),retro.PANEL)
@@ -505,6 +636,41 @@ class FighterMixin:
         retro.meter(self.canvas,(113,246,180,9),b.get('guard',100),100,(108,194,246))
         for row,ident in enumerate(self.active_pokemon_team()):
             self.text(f"{row+1} / {(self.pokemon_data(ident) or {}).get('name',str(ident)).title()}  HP {self.life.pokemon_health.get(str(ident),0)}",57,685+row*23,retro.GREEN,self.small)
+
+    def draw_boss_evolution(self,b,animation):
+        """Cinematic mid-fight evolution with a clean full-health phase reset."""
+        elapsed=animation['duration']-animation['timer']
+        old_id,new_id=animation['from'],animation['to']
+        detail=self.pokemon_data(new_id) or {}
+        types=[row.get('type',{}).get('name') for row in detail.get('types',[])]
+        accent=COLORS.get(types[0],retro.GOLD) if types else retro.GOLD
+        self.canvas.fill((12,15,34))
+        for index in range(16):
+            angle=index*math.tau/16+elapsed*.42
+            reach=1200 if index%2 else 900
+            start=(640+math.cos(angle)*90,390+math.sin(angle)*42)
+            end=(640+math.cos(angle)*reach,390+math.sin(angle)*reach*.55)
+            pg.draw.line(self.canvas,(36,43,71),start,end,3)
+        veil=pg.Surface((1280,800),pg.SRCALPHA);veil.fill((*accent,42));self.canvas.blit(veil,(0,0))
+        self.text(self.words('EVOLUSI BOSS','BOSS EVOLUTION'),640,130,retro.GOLD,self.big,True)
+        self.text(self.words('FASE 2 · HP DIPULIHKAN','PHASE 2 · HP RESTORED'),640,184,retro.CREAM,self.small,True)
+        old_sprite=self.pokemon_surface(old_id,245)
+        new_sprite=self.pokemon_surface(new_id,270)
+        reveal=max(0.0,min(1.0,(elapsed-1.55)/.95))
+        if reveal<1 and old_sprite:
+            spin=(elapsed*850)%360
+            old_sprite=pg.transform.rotozoom(old_sprite,spin,.82+.18*math.sin(elapsed*10)**2)
+            self.canvas.blit(old_sprite,old_sprite.get_rect(center=(640,412)))
+        if reveal>0 and new_sprite:
+            alpha=int(255*min(1,reveal*2))
+            new_sprite=new_sprite.copy();new_sprite.set_alpha(alpha)
+            new_sprite=pg.transform.rotozoom(new_sprite,(1-reveal)*180,.45+.55*reveal)
+            self.canvas.blit(new_sprite,new_sprite.get_rect(center=(640,412)))
+        old_name=(self.pokemon_data(old_id) or {}).get('name','Pokémon').title()
+        self.text(f"{old_name}  →  {animation.get('name',detail.get('name','Pokémon')).title()}",
+                  640,585,retro.CREAM,self.medium,True)
+        self.text(self.words('BOSS RECOVER PENUH · LEBIH KUAT','BOSS FULLY HEALED · POWER INCREASED'),
+                  640,635,accent,self.small,True)
 
     def draw_ultimate_cutin(self,b,cutin):
         progress=1-cutin['timer']/cutin['duration'];accent=COLORS.get(cutin['move_type'],retro.GOLD)

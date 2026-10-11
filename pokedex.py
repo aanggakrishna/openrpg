@@ -65,7 +65,10 @@ class PokedexClient:
 
     def request(self, pokemon_id):
         pokemon_id = int(pokemon_id)
-        if not 1 <= pokemon_id <= 2000 or pokemon_id in self.requested or (pokemon_id in self.details and pokemon_id in self.sprites):
+        # PokéAPI's alternate forms have IDs above the original species range
+        # (for example Mega/Origin forms around 10,000). They still need their
+        # own detail and sprite request so battle opponents are not invisible.
+        if not 1 <= pokemon_id <= 20000 or pokemon_id in self.requested or (pokemon_id in self.details and pokemon_id in self.sprites):
             return
         self.requested.add(pokemon_id)
         self.media_status[pokemon_id] = "loading"

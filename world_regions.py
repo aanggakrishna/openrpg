@@ -20,6 +20,29 @@ RESERVE_ZONE_BIOMES = list(BIOMES) + [
 ]
 RESERVE_GRID_TO_INDEX = {pos: index for index, pos in enumerate(RESERVE_GRID_POSITIONS)}
 
+# Country spaces share the same world grid as the sanctuary, but each gets a
+# distinct, readable landmark.  These keys are consumed by Scenery so gameplay
+# geometry stays independent from visual decoration.
+COUNTRY_LANDMARKS = {
+    16: ('rice_terrace', 'Teras Sawah'), 17: ('torii', 'Gerbang Torii'),
+    18: ('pagoda', 'Pagoda Bambu'), 19: ('temple', 'Kuil Monsun'),
+    20: ('pyramid', 'Piramida Giza'), 21: ('acropolis', 'Akropolis'),
+    22: ('colosseum', 'Colosseum'), 23: ('eiffel', 'Menara Eiffel'),
+    24: ('castle', 'Kastel Dataran Tinggi'), 25: ('stave_church', 'Gereja Fjord'),
+    26: ('geyser', 'Geyser Aurora'), 27: ('acacia', 'Pohon Akasia'),
+    28: ('mountain_peak', 'Puncak Kilimanjaro'), 29: ('baobab', 'Pohon Baobab'),
+    30: ('statue', 'Patung Penjaga Amazon'), 31: ('ruins', 'Reruntuhan Andes'),
+    32: ('cenote', 'Cenote'), 33: ('maple_cabin', 'Pondok Maple'),
+    34: ('redwood', 'Redwood Raksasa'), 35: ('uluru', 'Batu Uluru'),
+    36: ('meeting_house', 'Rumah Māori'), 37: ('balloons', 'Balon Cappadocia'),
+    38: ('kasbah', 'Kasbah Atlas'), 39: ('stupa', 'Stupa Himalaya'),
+    40: ('thai_temple', 'Kuil Teratai'), 41: ('island_huts', 'Rumah Panggung'),
+    42: ('palace', 'Istana Korea'), 43: ('chalet', 'Chalet Alpen'),
+    44: ('windmill', 'Kincir Angin'), 45: ('table_mountain', 'Table Mountain'),
+    46: ('iceberg', 'Gunung Es Aurora'), 47: ('lighthouse', 'Mercusuar Azores'),
+    48: ('observatory', 'Observatorium Atacama'), 49: ('glacier', 'Gletser Patagonia'),
+}
+
 def reserve_index_at(x, y):
     col = max(0, min(RESERVE_COLUMNS - 1, int(x // 1280)))
     row = max(0, min(RESERVE_ROWS - 1, int(y // 1600)))
@@ -68,7 +91,7 @@ HABITAT_TYPES = {
  'deepsea':('water',), 'dragon_valley':('dragon',), 'legendary_ruins':('psychic','dragon','fairy','steel'),
 }
 DUNGEON_BIOMES=('cave','forest','swamp','badlands','snow','volcano','crystal','sky','dragon_valley','legendary_ruins')
-SCENE_BIOMES={'outdoors':'meadow','market':'meadow','forest':'forest','coast':'coast','mountain':'mountain','house':'meadow','bedroom':'meadow'}
+SCENE_BIOMES={'outdoors':'meadow','market':'meadow','forest':'forest','coast':'coast','mountain':'mountain','house':'meadow','bedroom':'meadow','dungeon_hub':'crystal','local_dungeon':'cave'}
 
 def biome_at(scene,x=0,y=0):
     if scene=='reserve':return RESERVE_ZONE_BIOMES[reserve_index_at(x,y)]
@@ -112,6 +135,9 @@ def border(w,top,bottom,openings):
 @lru_cache(maxsize=64)
 def reserve_layout(index):
     biome=RESERVE_ZONE_BIOMES[index];col,row=RESERVE_GRID_POSITIONS[index]
+    landmark=COUNTRY_LANDMARKS.get(index)
+    # Keep landmark footprints off the central path and boss spawn point.
+    landmark_rect=(884,548,152,104) if landmark else None
     neighbors = RESERVE_GRID_TO_INDEX
     gates=[]
     for side,dc,dr,x,y in [('west',-1,0,80,800),('east',1,0,1200,800),
@@ -157,6 +183,7 @@ def reserve_layout(index):
         visual=(x-55,y-105,110,116)
         # Never decorate the route, bridge landing, service apron, or an entrance.
         exclusions=paths+bridges+ice+[(x-125,y-155,250,220) for _,x,y in buildings]
+        if landmark_rect: exclusions.append(landmark_rect)
         if any(overlaps(visual,r) for r in exclusions) or any(overlaps(footprint,r) for r in solids):continue
         if any(abs(x-p[1])<95 and abs(y-p[2])<100 for p in props):continue
         kind='tree' if leafy and rng.random()<.8 else 'rock'
@@ -165,6 +192,11 @@ def reserve_layout(index):
         if biome=='volcano':kind='rock'
         props.append((kind,x,y,rng.randrange(4)))
         solids.append(footprint)
+    if landmark:
+        # The landmark is a proper solid prop: trainers and Pokémon cannot
+        # walk through it, while the front remains visible as an attraction.
+        props.append(('landmark',960,650,index))
+        solids.append((906,626,108,30))
     if biome in ('forest','ancient_forest','swamp'):
         for x in range(95,1200,85):
             if 540<x<740:continue
@@ -204,6 +236,12 @@ def scene_layout(scene):
         gates=[('south',640,640)];paths=[(610,175,60,489),(260,530,790,60)]
         ice=[(90,320,180,155),(950,290,190,130)]
         props=[('tree',350,260,0),('tree',790,270,1),('tree',1135,500,2)]
+    elif scene=='dungeon_hub':
+        paths=[(90,365,1100,150),(580,240,120,310)]
+        props=[('rock',360,302,0),('crystal',920,300,0),('rock',370,585,1),('crystal',920,585,1)]
+    elif scene=='local_dungeon':
+        paths=[(260,355,760,200),(580,225,120,210)]
+        props=[('rock',300,290,0),('rock',980,295,1),('crystal',310,590,0),('rock',970,580,2)]
     walls=border(1280,135,710,[(s,y if s in ('east','west') else x) for s,x,y in gates])
     solids=walls+water+lava
     solids += [(x-23,y-20,46,32) for _,x,y,_ in props]

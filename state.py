@@ -45,6 +45,7 @@ class Life:
     trainer_xp: int = 0
     trainer_xp_bank: int = 0
     trainer_level: int = 1
+    godmode: bool = False
     weapon: str = ""
     mounted: bool = False
     horse_x: float = 1075
@@ -66,8 +67,14 @@ class Life:
     reserve_space_wins: dict = field(default_factory=dict)
     reserve_space_boss_thresholds: dict = field(default_factory=dict)
     reserve_space_bosses: list = field(default_factory=list)
+    local_dungeon_tier: int = 1
+    local_dungeon_cleared: list = field(default_factory=list)
+    local_dungeon_champion: bool = False
     tutorial_active: bool = False
     tutorial_step: int = 0
+    tutorial_reward_claimed: bool = False
+    farm_drop_day: int = 0
+    farm_drops: list = field(default_factory=list)
     daily_quests: list = field(default_factory=list)
     quest_day: int = 0
     biome_stories: dict = field(default_factory=dict)
@@ -265,6 +272,12 @@ class Life:
     def tick(self, dt, moving=False):
         self.elapsed += dt
         self.advance_time(dt * 1.3)
+        if self.godmode:
+            self.health = 100
+            for name in self.stats:
+                self.stats[name] = 100
+            self.grow_crops()
+            return
         for name, rate in (("Kenyang", .035), ("Minum", .05), ("Energi", .045 if moving else .014), ("Senang", .012)):
             self.stats[name] = max(0, self.stats[name] - dt * rate)
         self.grow_crops()
@@ -421,8 +434,10 @@ class Life:
             state = cls(**{k: v for k, v in raw.items() if k in cls.__dataclass_fields__})
             if "trainer_xp_bank" not in raw:
                 state.trainer_xp_bank = max(0, int(raw.get("trainer_xp", 0)))
-            if state.scene not in ("outdoors", "house", "bedroom", "forest", "market", "reserve", "coast", "mountain"):
+            if state.scene not in ("outdoors", "house", "bedroom", "forest", "market", "reserve", "coast", "mountain", "dungeon_hub", "local_dungeon"):
                 raise ValueError("invalid scene")
+            state.local_dungeon_tier = max(1, min(11, int(getattr(state, "local_dungeon_tier", 1))))
+            state.local_dungeon_cleared = sorted({int(v) for v in getattr(state, "local_dungeon_cleared", []) if 1 <= int(v) <= 10})
             state.character = int(state.character) % 9
             state.x, state.y = float(state.x), float(state.y)
             if set(state.stats) != {"Kenyang", "Minum", "Energi", "Senang"} or len(state.crops) != 6:
@@ -452,6 +467,7 @@ class Life:
             if int(raw.get("version", 3)) < 4:
                 state.pokemon_party = list(dict.fromkeys(state.pokemon_party + state.pokemon_caught))
             state.version = 5
+            state.godmode = bool(raw.get("godmode", False))
             if not state.pokemon_party:
                 state.pokemon_party = [1]
             active = raw.get("pokemon_active", state.pokemon_party[:3])

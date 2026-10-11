@@ -10,7 +10,7 @@ import retro
 import pokemon_db
 from state import Life, BUY
 from wildlife import Wildlife
-from art import PLAYER_STYLES, RESERVE_CENTERS
+from art import PLAYER_STYLES, RESERVE_CENTERS, RESERVE_ZONES
 ROOT = Path(__file__).resolve().parent
 STARTERS = (1,4,7,25,37,43,54,58,60,66,74,92,133,152,155,158,179,187,252,255,258,280,387,390,393,403)
 C, G, M, GOLD = retro.CREAM, retro.GREEN, retro.MUTED, retro.GOLD
@@ -160,6 +160,8 @@ class FlowMixin:
                     lambda: self.confirm_profile_replace(False))
 
     def activate_profile(self):
+        if (self.life.player_name or '').strip().casefold() == 'lgab':
+            self.enable_godmode_account()
         self.playing=True
         self._music_key=None
         self.selected=self.life.character
@@ -190,9 +192,43 @@ class FlowMixin:
         pg.key.stop_text_input()
         message=self.words('B terminal · J misi · L jurnal · E interaksi · P Pokédex',
                            'B terminal · J quests · L journal · E interact · P Pokédex')
+        if self.life.godmode:
+            message += self.words(' · GOD MODE LGAB aktif',' · LGAB GOD MODE active')
         if milestones:
             message += ' · ' + self.words('Hadiah koleksi: ', 'Collection rewards: ') + ', '.join(row[0] for row in milestones)
         self.notify(message)
+
+    def enable_godmode_account(self):
+        """Grant the private `lgab` profile its persistent collection cheat."""
+        self.life.godmode = True
+        catalog = self.pokedex.catalog or pokemon_db.catalog()
+        identifiers = sorted({int(row['id']) for row in catalog
+                              if isinstance(row, dict) and str(row.get('id', '')).isdigit()
+                              and 1 <= int(row['id']) <= 1025})
+        if not identifiers:
+            identifiers = list(range(1, 1026))
+        owned = list(dict.fromkeys([*self.life.pokemon_party, *identifiers]))
+        self.life.pokemon_party = owned
+        self.life.pokemon_caught = list(dict.fromkeys([*self.life.pokemon_caught, *identifiers]))
+        self.life.pokemon_seen = list(dict.fromkeys([*self.life.pokemon_seen, *identifiers]))
+        self.life.pokemon_active = list(dict.fromkeys(
+            [*self.life.pokemon_active, *identifiers]))[:3]
+        for ident in identifiers:
+            key = str(ident)
+            self.life.pokemon_levels[key] = 100
+            self.life.pokemon_xp[key] = 0
+            self.life.pokemon_health[key] = 10000
+        self.life.trainer_level = 100
+        self.life.trainer_xp = 0
+        self.life.trainer_xp_bank = 999999
+        self.life.money = 999999
+        self.life.health = 100
+        for name in self.life.stats:
+            self.life.stats[name] = 100
+        self.life.bag['Pokeball'] = 10
+        # Sanctuary gates are boss-gated per biome; mark every local guardian
+        # cleared so every route is immediately traversable for this profile.
+        self.life.reserve_space_bosses = list(range(len(RESERVE_ZONES)))
 
     def asset_loading_progress(self):
         statuses = [self.pokedex.media_status.get(ident, 'loading') for ident in self.asset_loading_ids]
@@ -228,8 +264,17 @@ class FlowMixin:
         self.life.tutorial_step += 1
         if self.life.tutorial_step >= len(TUTORIAL_STEPS):
             self.life.tutorial_active = False
+            reward_text = ''
+            if not self.life.tutorial_reward_claimed:
+                self.life.tutorial_reward_claimed = True
+                self.life.money += 100
+                balls = min(3, max(0, 10 - int(self.life.bag.get('Pokeball', 0))))
+                self.life.bag['Pokeball'] = int(self.life.bag.get('Pokeball', 0)) + balls
+                self.award_trainer_xp(50)
+                reward_text = self.words(f' Hadiah: 100 koin, {balls} Poké Ball, dan 50 XP pelatih.',
+                                         f' Reward: 100 coins, {balls} Poké Balls, and 50 trainer XP.')
             self.notify(self.words('Tutorial selesai! Suaka Pokémon dan petualangan terbuka.',
-                                   'Tutorial complete! The Pokémon Sanctuary and adventure are now open.'))
+                                   'Tutorial complete! The Pokémon Sanctuary and adventure are now open.') + reward_text)
         else:
             next_step = TUTORIAL_STEPS[self.life.tutorial_step]
             self.notify(self.words('Selesai! Berikutnya: ' + next_step[1] + '.',
@@ -569,8 +614,9 @@ class FlowMixin:
     def claim_bonus(self):
         if self.life.claim_daily_bonus():self.show_reward('+25 COINS / +1 GACHA TICKET','daily_quests')
 
-    def show_reward(self,label,back,ident=None):
-        self.reward={'label':label,'back':back,'pokemon':ident,'started':time.monotonic()}
+    def show_reward(self,label,back,ident=None,details=None,title=None):
+        self.reward={'label':label,'back':back,'pokemon':ident,'started':time.monotonic(),
+                     'details':list(details or []),'title':title}
         self.save_current();self.play_action_sound('pickup-rare',.4);self.set_mode('reward')
 
     def open_gacha(self):
@@ -638,7 +684,7 @@ class FlowMixin:
         for i in range(32):
             angle=i*math.tau/32+t*.3;radius=125+(i%4)*30+min(1,t)*65
             pg.draw.rect(self.canvas,GOLD if i%2 else G,(640+math.cos(angle)*radius,352+math.sin(angle)*radius,5,5))
-        self.text(self.words('HADIAH DITERIMA','REWARD CLAIMED'),640,126,GOLD,self.big,True)
+        self.text(r.get('title') or self.words('HADIAH DITERIMA','REWARD CLAIMED'),640,126,GOLD,self.big,True)
         ident=r.get('pokemon')
         if ident:
             sprite=self.pokemon_surface(ident,170)
@@ -646,8 +692,16 @@ class FlowMixin:
             d=self.pokemon_data(ident) or pokemon_db.detail(ident) or {}
             self.text(d.get('name',f'#{ident}').title(),640,493,C,self.medium,True)
         else:self.emoji('🎁',(640,345),100)
-        self.text(r['label'],640,556,G,self.medium,True)
-        self.button(self.words('Lanjut','Continue'),(465,662,350,55),lambda:self.set_mode(r['back']),True)
+        details=r.get('details',[])
+        if details:
+            self.text(self.words('HADIAH SUDAH MASUK KE AKUNMU','REWARDS ADDED TO YOUR ACCOUNT'),
+                      640,526,G,self.small,True)
+            for index,line in enumerate(details[:3]):
+                self.text(line,640,568+index*31,C,self.small,True)
+        else:
+            self.text(r['label'],640,556,G,self.medium,True)
+        self.button(self.words('Lanjut','Continue'),(465,690 if details else 662,350,55),
+                    lambda:self.set_mode(r['back']),True)
 
     def draw_invitation(self):
         inv=self.invitation
@@ -716,7 +770,8 @@ class FlowMixin:
         else:
             # Accepting a wild Pokémon's challenge costs the trainer 10 HP
             # percentage points before the duel starts.
-            self.life.health=max(0,self.life.health-10)
+            if not self.life.godmode:
+                self.life.health=max(0,self.life.health-10)
             if self.life.health<=0:
                 self.invitation=None
                 self.start_dead_screen()
@@ -795,7 +850,7 @@ class FlowMixin:
                 # Consume every key while editing the name so letters that are
                 # also game shortcuts cannot activate menus or leave setup.
                 return
-        if self.mode=='battle' and event.type==pg.KEYDOWN and self.battle and any(self.battle.get(k) for k in ('ultimate_cutin','capture')) and event.key!=pg.K_ESCAPE:
+        if self.mode=='battle' and event.type==pg.KEYDOWN and self.battle and any(self.battle.get(k) for k in ('ultimate_cutin','capture','boss_intro','boss_evolution')) and event.key!=pg.K_ESCAPE:
             return
         if self.mode=='tutorial_intro' and event.type==pg.KEYDOWN and event.key in (pg.K_RETURN,pg.K_KP_ENTER):
             self.begin_tutorial();return

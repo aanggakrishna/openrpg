@@ -1,5 +1,5 @@
 """Shared move definitions, usable by the headless online server."""
-EMOJI={'normal':'⭐','fire':'🔥','water':'💧','grass':'🍃','electric':'⚡','ice':'❄️','ground':'🪨',
+EMOJI={'normal':'💥','fire':'🔥','water':'💧','grass':'🍃','electric':'⚡','ice':'❄️','ground':'🪨',
        'rock':'🪨','ghost':'👻','psychic':'🔮','poison':'☠️','flying':'🌪️','dark':'🌙','fairy':'✨','steel':'⚙️','bug':'🐛','dragon':'🐉','fighting':'🥊'}
 VARIANTS={'wood':'🪵','branch':'🪵','leaf':'🍃','seed':'🌱','vine':'🌿','solar':'☀️','rain':'🌧️',
           'storm':'⛈️','thunder':'⚡','blizzard':'🌨️','snow':'❄️','bubble':'🫧','surf':'🌊','wave':'🌊',

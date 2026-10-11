@@ -3,7 +3,7 @@ import math
 import random
 import pygame as pg
 
-OUTSIDE = ("outdoors", "forest", "market", "reserve", "coast", "mountain")
+OUTSIDE = ("outdoors", "forest", "market", "reserve", "coast", "mountain", "dungeon_hub", "local_dungeon")
 
 
 class Environment:
