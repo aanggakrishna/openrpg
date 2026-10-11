@@ -3,6 +3,8 @@ name: Desktop app builds
 on:
   workflow_dispatch:
   push:
+    branches:
+      - openrpg-vercel
     tags:
       - "desktop-v*"
 
