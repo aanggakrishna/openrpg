@@ -106,7 +106,8 @@ class ShellTerminal:
         env["LANG"] = "en_US.UTF-8"
         env["LC_CTYPE"] = "en_US.UTF-8"
         try:
-            command = [sys.executable, str(Path(__file__).resolve()), "--pty-child", binary]
+            command = ([sys.executable, "--pty-child", binary] if getattr(sys, "frozen", False)
+                       else [sys.executable, str(Path(__file__).resolve()), "--pty-child", binary])
             if self.screen_binary:
                 command.extend(("--screen", self.screen_binary, "--session", self.screen_session))
             self.process = subprocess.Popen(

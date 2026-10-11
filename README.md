@@ -6,7 +6,7 @@
 
 ## Getting started
 
-**Requirements:** Python 3.10+ and macOS or Linux. The Pokédex database and all 1,025 standard Pokémon sprites are included in the project. Additional artwork, such as animated battle sprites, can still be fetched from PokéAPI when needed.
+**Requirements for running from source:** Python 3.10+ and macOS or Linux. The Pokédex database and all 1,025 standard Pokémon sprites are included in the project. Additional artwork, such as animated battle sprites, can still be fetched from PokéAPI when needed.
 
 On macOS, double-click `run.command`. Or launch from a terminal:
 
@@ -18,7 +18,15 @@ python3 -m venv .venv
 .venv/bin/python main.py
 ```
 
-After pulling updates, run the `pip install -r requirements.txt` command again so Python installs the bundled CA certificates used for secure PokéAPI downloads.
+After pulling source updates, run the `pip install -r requirements.txt` command again so Python installs the bundled CA certificates used for secure PokéAPI downloads.
+
+### One-click desktop apps
+
+You can download a standalone desktop build for **macOS (Apple silicon or Intel)** and **Windows** from the repository's **Releases** page. Extract the downloaded ZIP, then double-click `OpenRPG.app` on Mac or `OpenRPG.exe` on Windows. These builds include Python, Pygame, the Pokédex database, sprites, and game assets; you do not need to install Python, pip, or game dependencies.
+
+The packaged game stores saves and its writable cache in your user data folder (`~/Library/Application Support/OpenRPG` on macOS or `%LOCALAPPDATA%\\OpenRPG` on Windows). The game itself does not need administrator access. Builds are created by the GitHub Actions workflow when a `desktop-v*` release tag is published. Unsigned builds may show the usual first-launch security prompt from macOS or Windows.
+
+To build locally from source, install the dependencies in `requirements-build.txt`, then run `python tools/package_desktop.py` on macOS or Windows. This build step is only for developers; players can use the downloaded app directly.
 
 Select **New Game**, choose an empty profile, enter a name, and finish character setup. The game gives you a random low-level starter Pokémon. Progress is saved automatically; existing saves remain supported.
 
@@ -131,7 +139,7 @@ Terminal history holds up to 2,000 lines. New output or input returns the view t
 
 ## Platform and notes
 
-Locations include the yard, forest, Pokémon sanctuary, coast, mountains, market, home, and bedroom. Pokédex data is fetched from PokéAPI and requires an internet connection for items not yet cached. The embedded terminal supports macOS and Linux and is keyboard-controlled.
+Locations include the yard, forest, Pokémon sanctuary, coast, mountains, market, home, and bedroom. Pokédex data is fetched from PokéAPI and requires an internet connection for items not yet cached. The embedded shell terminal supports macOS and Linux and is keyboard-controlled; Windows builds remain playable, while that terminal panel reports that it is unavailable on Windows.
 
 ## Retro 8-bit theme
 

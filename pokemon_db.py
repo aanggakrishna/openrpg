@@ -5,7 +5,9 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 from functools import lru_cache
-PATH = Path(__file__).resolve().parent / '.openrpg/database/pokedex.sqlite3'
+from app_paths import user_data_dir
+ROOT = Path(__file__).resolve().parent
+PATH = user_data_dir(ROOT) / 'database/pokedex.sqlite3'
 PACKAGED_PATH = Path(__file__).resolve().parent / 'assets/data/pokedex.sqlite3.gz'
 
 def _install_packaged_database():

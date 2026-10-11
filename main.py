@@ -19,6 +19,7 @@ import pygame as pg
 import retro
 from PIL import Image
 import pokemon_db
+from app_paths import user_data_dir
 
 from state import Life, BUY, SELL, WEAPONS
 from terminal import ShellTerminal
@@ -39,6 +40,7 @@ from world_features import (COLLECTION_COSMETICS, EVENTS, EVENT_NAMES_ID, NPC_SC
 from pokedex import PokedexClient
 
 ROOT = Path(__file__).resolve().parent
+DATA_DIR = user_data_dir(ROOT)
 W, H = 1280, 800
 INK, CREAM, MUTED, GREEN = retro.INK, retro.CREAM, retro.MUTED, retro.GREEN
 BATTLE_WEATHER_EMOJI = {"Cerah":"☀", "Berawan":"☁", "Hujan":"🌧", "Salju":"❄", "Badai":"⛈"}
@@ -91,12 +93,12 @@ class LegacyGame:
         self.cell_w = self.mono.size("M")[0]
         self.cell_h = self.mono.get_linesize()
         self.terminal_area = pg.Rect((W - self.cell_w * 132) // 2, 123, self.cell_w * 132, self.cell_h * 36)
-        self.save_path = save_path or ROOT / ".openrpg/save.json"
+        self.save_path = save_path or DATA_DIR / "save.json"
         self.life = Life.load(self.save_path)
         self.terminal = ShellTerminal(project, shell=shell)
         # PC and phone are two interfaces to one live PTY/session.
         self.phone_terminal = self.terminal
-        self.pokedex = PokedexClient(ROOT / ".openrpg/pokedex")
+        self.pokedex = PokedexClient(DATA_DIR / "pokedex")
         self.art = RPGArt()
         self.wildlife = Wildlife(self.life)
         self.environment = Environment()
@@ -143,7 +145,7 @@ class LegacyGame:
         self._tts_queue = []
         self._tts_lock = threading.Lock()
         self._tts_worker_running = False
-        self.countdown_tts_dir = ROOT / ".openrpg" / "countdown-tts"
+        self.countdown_tts_dir = DATA_DIR / "countdown-tts"
         self.countdown_tts_sounds = {}
         self.countdown_tts_pending = []
         self.countdown_tts_lock = threading.Lock()
@@ -5869,8 +5871,15 @@ class Game(OnlineMixin, FlowMixin, FighterMixin, LegacyGame):
     pass
 
 def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == "--pty-child":
+        from terminal import pty_child
+        shell = sys.argv[2]
+        screen = sys.argv[4] if len(sys.argv) >= 5 and sys.argv[3] == "--screen" else None
+        session = sys.argv[6] if screen and len(sys.argv) >= 7 and sys.argv[5] == "--session" else None
+        pty_child(shell, screen, session)
+        return
     parser = argparse.ArgumentParser(description="OpenRPG — RPG kehidupan dengan PC terminal shell asli")
-    parser.add_argument("--project", type=Path, default=ROOT / "computer-workspace", help="Folder awal terminal PC")
+    parser.add_argument("--project", type=Path, default=DATA_DIR / "computer-workspace", help="Folder awal terminal PC")
     parser.add_argument("--shell", help="Shell terminal, default mengikuti SHELL")
     args = parser.parse_args()
     Game(args.project, shell=args.shell).run()

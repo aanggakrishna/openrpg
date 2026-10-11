@@ -8,10 +8,12 @@ import time
 import pygame as pg
 import retro
 import pokemon_db
+from app_paths import user_data_dir
 from state import Life, BUY
 from wildlife import Wildlife
 from art import PLAYER_STYLES, RESERVE_CENTERS, RESERVE_ZONES
 ROOT = Path(__file__).resolve().parent
+DATA_DIR = user_data_dir(ROOT)
 STARTERS = (1,4,7,25,37,43,54,58,60,66,74,92,133,152,155,158,179,187,252,255,258,280,387,390,393,403)
 C, G, M, GOLD = retro.CREAM, retro.GREEN, retro.MUTED, retro.GOLD
 TYPE_ICONS = {
@@ -45,10 +47,10 @@ TUTORIAL_STEPS = (
 class FlowMixin:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.profile_root = ROOT / '.openrpg/profiles'
+        self.profile_root = DATA_DIR / 'profiles'
         self.profile_root.mkdir(parents=True, exist_ok=True)
         try:
-            prefs=json.loads((ROOT/'.openrpg/preferences.json').read_text())
+            prefs=json.loads((DATA_DIR/'preferences.json').read_text())
             for key in ('language','music_volume','effects_volume','cry_volume','reduced_motion'):
                 if key in prefs:setattr(self.life,key,prefs[key])
         except (OSError,ValueError):pass
@@ -95,7 +97,7 @@ class FlowMixin:
         self.buttons = []
 
     def profile_slots(self):
-        paths = [ROOT / '.openrpg/save.json'] + [self.profile_root / f'slot-{i}.json' for i in range(1,5)]
+        paths = [self.save_path] + [self.profile_root / f'slot-{i}.json' for i in range(1,5)]
         result=[]
         for path in paths:
             try:
@@ -124,7 +126,7 @@ class FlowMixin:
         self.save_current()
         self.save_path=path
         if int(data.get('version',3))<5:
-            backup=ROOT/'.openrpg/backups'/f'{path.stem}-before-adventure-{time.time_ns()}.json'
+            backup=DATA_DIR/'backups'/f'{path.stem}-before-adventure-{time.time_ns()}.json'
             backup.parent.mkdir(parents=True,exist_ok=True)
             shutil.copy2(path,backup)
         self.life=Life.load(path)
@@ -918,7 +920,7 @@ class FlowMixin:
         self.save_preferences();self.save_current()
 
     def save_preferences(self):
-        path=ROOT/'.openrpg/preferences.json'
+        path=DATA_DIR/'preferences.json'
         tmp=path.with_suffix('.tmp')
         tmp.write_text(json.dumps({key:getattr(self.life,key) for key in ('language','music_volume','effects_volume','cry_volume','reduced_motion')}))
         tmp.replace(path)

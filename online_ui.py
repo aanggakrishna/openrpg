@@ -7,9 +7,11 @@ import queue
 import pygame as pg
 import retro
 import pokemon_db
+from app_paths import user_data_dir
 from online_client import OnlineClient
 
 ROOT=Path(__file__).resolve().parent
+DATA_DIR=user_data_dir(ROOT)
 C,G,M,GOLD=retro.CREAM,retro.GREEN,retro.MUTED,retro.GOLD
 ONLINE_ELEMENT_COLORS={'fire':(255,116,64),'water':(79,190,255),'ground':(208,158,95),'rock':(190,159,110),
                        'flying':(150,218,255),'grass':(117,230,113),'bug':(174,212,98),'electric':(255,218,74),
@@ -25,12 +27,12 @@ class OnlineMixin:
         self.online_images={};self.online_scaled_images={};self.online_team_page=0;self.media_prune_timer=0.;self.online_terminal=False;self.online_last_hp={};self.online_audio_id=None;self.online_audio_seq=0;self.online_audio_result=False;self.online_visual_positions={}
         self.online_room_background=None;self.online_room_background_key=None
         super().__init__(*args,**kwargs)
-        try:self.online_url=json.loads((ROOT/'.openrpg/online/preferences.json').read_text()).get('url',self.online_url)
+        try:self.online_url=json.loads((DATA_DIR/'online/preferences.json').read_text()).get('url',self.online_url)
         except (OSError,ValueError):pass
         # A server URL is safe to persist in preferences; the room code is
         # kept in the local, git-ignored access file created during setup.
         try:
-            for line in (ROOT/'.openrpg/online/server-access.env').read_text().splitlines():
+            for line in (DATA_DIR/'online/server-access.env').read_text().splitlines():
                 if line.startswith('OPENRPG_JOIN_CODE='):
                     self.online_code=line.split('=',1)[1].strip()
                     break
@@ -79,7 +81,7 @@ class OnlineMixin:
         if self.net:self.net.close()
         self.save_current()
         identity=hashlib.sha256((self.online_url+'|'+str(self.save_path)).encode()).hexdigest()[:24]
-        self.online_credentials=ROOT/'.openrpg/online'/f'{identity}.json'
+        self.online_credentials=DATA_DIR/'online'/f'{identity}.json'
         token=''
         try:token=json.loads(self.online_credentials.read_text()).get('token','')
         except (OSError,ValueError):pass

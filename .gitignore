@@ -2,6 +2,8 @@
 node_modules/
 .web_wasm_build/
 output/
+dist/
+build/
 public/config.js
 __pycache__/
 .openrpg/

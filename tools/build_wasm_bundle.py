@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STAGE = ROOT / ".web_wasm_build"
 
 MODULES = [
-    "adventure_flow.py", "art.py", "combat_rules.py", "environment.py", "fighter.py",
+    "adventure_flow.py", "app_paths.py", "art.py", "combat_rules.py", "environment.py", "fighter.py",
     "i18n.py", "online_combat.py", "online_ui.py", "pokedex.py", "pokemon_db.py",
     "retro.py", "scenery.py", "state.py", "wildlife.py", "world_features.py", "world_regions.py",
 ]
