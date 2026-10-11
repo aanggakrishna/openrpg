@@ -18,6 +18,7 @@ async function request(path, options = {}) {
   return data;
 }
 function startGame(user) {
+  if (!user?.username) throw new Error('The account response did not include a trainer profile. Please sign in again.');
   currentUser = user;
   window.OPENRPG_WASM_SAVE = typeof user.gameState === 'string' ? user.gameState : JSON.stringify(user.gameState || {});
   window.OPENRPG_CONFIG = window.OPENRPG_CONFIG || { onlineServerUrl: '' };
@@ -36,13 +37,20 @@ window.addEventListener('message', event => {
 });
 window.addEventListener('message', event => {
   let payload; try { payload = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
-  if (payload?.type === 'openrpg-wasm-error') console.error('OpenRPG browser startup error:', payload.error);
+  if (payload?.type !== 'openrpg-wasm-error') return;
+  console.error('OpenRPG browser startup error:', payload.error);
+  const error = $('#game-error');
+  error.textContent = `Game startup failed:\n${payload.error || 'Unknown browser runtime error.'}`;
+  error.hidden = false;
 });
 document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => selectMode(button.dataset.mode)));
 $('#auth-form').addEventListener('submit', async event => {
   event.preventDefault(); const form = new FormData(event.currentTarget); const body = Object.fromEntries(form);
   message(mode === 'login' ? 'Signing in…' : 'Creating account…');
-  try { startGame(await request(`/api/auth/${mode}`, { method: 'POST', body: JSON.stringify(body) })); }
+  try {
+    const result = await request(`/api/auth/${mode}`, { method: 'POST', body: JSON.stringify(body) });
+    startGame(result.user);
+  }
   catch (error) { message(error.message, true); }
 });
 $('#logout').addEventListener('click', async () => { await request('/api/auth/logout', { method: 'POST' }).catch(() => {}); location.reload(); });

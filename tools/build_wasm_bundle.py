@@ -32,10 +32,11 @@ import sys
 from pathlib import Path
 import pygame as pg
 import browser_media
-from game_engine import Game, ROOT
 
 
 async def main():
+    # Import after browser startup so failures are shown in the outer shell.
+    from game_engine import Game, ROOT
     save_path = ROOT / ".openrpg" / "save.json"
     save_path.parent.mkdir(parents=True, exist_ok=True)
     if sys.platform == "emscripten":
