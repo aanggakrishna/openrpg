@@ -197,10 +197,14 @@ def main() -> None:
     for module in MODULES: shutil.copy2(ROOT / module, STAGE / module)
     shutil.copytree(ROOT / "assets", STAGE / "assets", ignore=shutil.ignore_patterns("pokedex.sqlite3"))
     engine = (ROOT / "main.py").read_text(encoding="utf-8")
+    # The browser Python runtime does not bundle the stdlib wave module. The
+    # desktop-only countdown WAV verifier is deliberately disabled there.
+    engine = engine.replace("import wave", "if sys.platform != 'emscripten':\n    import wave\nelse:\n    wave = None")
     engine = engine.replace("from PIL import Image", "try:\n    from PIL import Image\nexcept ImportError:\n    Image = None")
     engine = engine.replace("from terminal import ShellTerminal", "if sys.platform == 'emscripten':\n    from browser_terminal import BrowserTerminal as ShellTerminal\nelse:\n    from terminal import ShellTerminal")
     engine = engine.replace("        pg.scrap.init()", "        if sys.platform != 'emscripten':\n            try: pg.scrap.init()\n            except pg.error: pass")
     engine = engine.replace("    def prepare_countdown_audio(self):\n", "    def prepare_countdown_audio(self):\n        if sys.platform == 'emscripten':\n            self.countdown_tts_loading = False\n            return\n")
+    engine = engine.replace("        # A interrupted OS speech renderer can leave a valid header with no PCM.\n        # SDL_mixer may accept that file but crash when its empty Sound is played.\n        try:", "        # A interrupted OS speech renderer can leave a valid header with no PCM.\n        # SDL_mixer may accept that file but crash when its empty Sound is played.\n        if wave is None:\n            return False\n        try:")
     engine = engine.replace("    def speak_free_tts(self, phrase, rate=235):\n", "    def speak_free_tts(self, phrase, rate=235):\n        if sys.platform == 'emscripten':\n            return\n")
     write(STAGE / "game_engine.py", engine)
     art = (ROOT / "art.py").read_text(encoding="utf-8")
