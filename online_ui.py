@@ -437,15 +437,65 @@ class OnlineMixin:
                 x=(i*137+int(self.frame*2))%1280;y=(i*83+int(self.frame*4))%570
                 pg.draw.line(self.canvas,(95,132,164),(x,y),(x-3,y+9),1 if b['weather']=='rain' else 3)
         for x,w,y in b['platforms']:pg.draw.rect(self.canvas,(161,132,82),(x,y,w,16));pg.draw.rect(self.canvas,(80,66,57),(x+10,y+16,w-20,570-y))
+        # The server owns these seven-second marks; every online client draws
+        # the same water, fire, stone wall, bush, ice and wind state.
+        for effect in b.get('arena_effects',[]):
+            x,y=int(effect['x']),int(effect['y']);radius=int(effect.get('radius',128))
+            mark=pg.Surface((radius*2+12,76),pg.SRCALPHA);kind=effect['kind']
+            if kind in ('water','charged','ice'):
+                fill=(73,169,236,110) if kind!='ice' else (201,242,255,125)
+                pg.draw.ellipse(mark,fill,(6,22,radius*2,45))
+                for index in range(4):pg.draw.arc(mark,(227,251,255,185),(18+index*13,30+index*8,radius*2-36,16),.2,2.7,2)
+                if kind=='charged':
+                    for index in range(5):
+                        px=24+index*(radius*2-44)//4;pg.draw.line(mark,(255,235,93,230),(px,24),(px-8,57),3)
+            elif kind in ('burn','wildfire'):
+                pg.draw.ellipse(mark,(230,81,45,78),(6,27,radius*2,38))
+                for index in range(7):
+                    px=18+index*(radius*2-28)//6;height=18+(index%3)*9
+                    pg.draw.polygon(mark,(255,163,56,215),[(px,60),(px+8,60),(px+4,60-height)])
+            elif kind=='wall':
+                pg.draw.rect(mark,(112,105,100,245),(radius-22,6,44,65))
+                for yy in range(12,68,16):pg.draw.line(mark,(177,167,148,225),(radius-19,yy),(radius+19,yy),3)
+            elif kind=='bush':
+                for index in range(6):pg.draw.circle(mark,(74,152+(index%2)*22,78,228),(18+index*(radius*2-36)//5,51-(index%3)*8),20)
+            elif kind=='gust':
+                for index in range(4):pg.draw.arc(mark,(206,242,255,195),(16,20+index*13,radius*2-30,18),.2,2.8,3)
+            self.canvas.blit(mark,(x-radius-6,y-64))
+            glyph=self.emoji_font.render(effect['emoji'],False,C);glyph=pg.transform.scale(glyph,(25,25))
+            self.canvas.blit(glyph,glyph.get_rect(center=(x,y-84)))
+            self.text(f"{effect['label']} {effect['timer']:.0f}s",x,y-109,C,self.tiny,True)
         self.text(f"{max(0,math.ceil(b['remaining'])):02d}",640,40,GOLD,self.big,True)
         self.text(f"{b['weather'].upper()} / {b['arena'].upper()} / "+(f"STAGE {b['stage']+1}/4" if b['tier'] else 'PVP'),640,85,G,self.small,True)
         for uid,f in b['fighters'].items():
             f=dict(f);f['x'],f['y']=self.online_position(b['id']+uid,f['x'],f['y'])
             p=f['team'][f['slot']];size=105 if p.get('boss') else 70
             if p['hp']>0:
-                angle=(self.frame*8)%360 if f.get('stun',0)>0 else 0
+                statuses=f.get('effects',{})
+                angle=(self.frame*8)%360 if statuses.get('confuse',0)>0 else 0
                 self.online_sprite(p['id'],f['x'],f['y'],size,f['facing']>0,angle)
-                if f.get('stun',0)>0:
+                # Match the local game's transparent, per-status fighter overlays.
+                overlay=pg.Surface((size+54,size+50),pg.SRCALPHA);cx=(size+54)//2;cy=(size+50)//2
+                def status_icon(value,px,py,scale=30,alpha=210):
+                    glyph=self.emoji_font.render(value,False,C);glyph=pg.transform.scale(glyph,(scale,scale));glyph.set_alpha(alpha)
+                    overlay.blit(glyph,glyph.get_rect(center=(px,py)))
+                if f.get('stun',0)>0:status_icon('⚡',cx,10,28)
+                if statuses.get('freeze',0):
+                    pg.draw.ellipse(overlay,(167,230,255,112),(22,18,size+10,size+18));status_icon('🧊',cx,cy,46,145)
+                if statuses.get('entomb',0):
+                    for ox,oy in ((-25,18),(0,27),(25,17)):status_icon('🪨',cx+ox,cy+oy,34,145)
+                if statuses.get('bind',0):status_icon('🌿',cx-20,cy,37,180);status_icon('🕸️',cx+22,cy-6,34,170)
+                if statuses.get('burn',0):status_icon('🔥',cx-24,cy+18,31);status_icon('🔥',cx+25,cy+15,28,190)
+                if statuses.get('poison',0):status_icon('☠️',cx,cy-5,31,185)
+                if statuses.get('slow',0):status_icon('🐌',cx,cy+20,29,185)
+                if statuses.get('confuse',0):status_icon('😵‍💫',cx,10,31)
+                if statuses.get('fear',0):status_icon('👻',cx,10,30,185)
+                if statuses.get('blind',0):status_icon('🌫️',cx,cy,47,135)
+                if statuses.get('armor_break',0):status_icon('💥',cx,10,27);status_icon('🛡️',cx,cy+16,32,120)
+                if statuses.get('intimidate',0) or statuses.get('charm',0):status_icon('📉',cx,10,26)
+                if f.get('stun',0)>0 or statuses:
+                    self.canvas.blit(overlay,(int(f['x']-overlay.get_width()/2),int(f['y']-size/2-overlay.get_height()/2)))
+                if statuses.get('confuse',0):
                     mark=self.emoji_font.render('❔',False,C);mark=pg.transform.scale(mark,(34,34))
                     self.canvas.blit(mark,mark.get_rect(center=(int(f['x']),int(f['y']-size-20))))
             else:self.text('KO',f['x'],f['y']-30,GOLD,self.font,True)
@@ -459,7 +509,8 @@ class OnlineMixin:
             if f['guard']:pg.draw.circle(self.canvas,(94,187,230),(int(f['x']),int(f['y']-32)),42,2)
         for shot in b['shots']:
             glyph=self.emoji_font.render(shot['emoji'],False,C)
-            glyph=pg.transform.scale(glyph,(66,66) if shot.get('ultimate') else (28,28))
+            size=66 if shot.get('ultimate') else int(26+min(42,float(shot.get('power',50))*.32))
+            glyph=pg.transform.scale(glyph,(size,size))
             if shot.get('ultimate'):
                 color=ONLINE_ELEMENT_COLORS.get(shot.get('type'),GOLD)
                 start=(shot['x']-shot['vx']*.08,shot['y']-shot['vy']*.08);end=(shot['x'],shot['y'])
@@ -483,10 +534,11 @@ class OnlineMixin:
             p=own['team'][own['slot']]
             self.text(f"{p['name']} / HP {p['hp']}/{p['maximum']} / ULT {int(own['energy'])}%",35,35,C,self.font)
             for i,move in enumerate(p['moves']):
-                self.text(f"{'QWE'[i]} {move['emoji']} {move['name']} {own['cooldowns'][i+1]:.1f}s",35,660+i*25,G,self.small)
+                prefix=(move.get('effect_label','')+' · ') if i==0 and move.get('effect_label') else ''
+                self.text(f"{'QWE'[i]} {move['emoji']} {prefix}{move['name']} {own['cooldowns'][i+1]:.1f}s",35,660+i*25,G,self.small)
             ultimate=p.get('ultimate') or {}
             self.text(f"R {ultimate.get('emoji','✨')} {ultimate.get('name','Ultimate')} / {own['cooldowns'][4]:.1f}s",700,660,GOLD,self.small)
-        self.text('Arrows / A close / S guard / Q stun / W close / E ranged / R ultimate (40% pierce) / 1-3 team',35,615,M,self.small)
+        self.text('Arrows / A close / S guard / Q control / W close / E ranged / R ultimate / 1-3 team',35,615,M,self.small)
         if b['intro']>0:self.text(str(math.ceil(b['intro'])),640,300,GOLD,self.big,True)
         if b['result']:
             self.box((400,300,480,135),retro.PANEL)
@@ -507,3 +559,14 @@ class OnlineMixin:
             self.text(cutin.get('text','Pokémon Ultimate')[-42:],820,255,C,self.font,True)
             glyph=self.emoji_font.render(cutin.get('emoji','💥'),False,C);size=int(90+38*math.sin(progress*math.pi));glyph=pg.transform.scale(glyph,(size,size))
             self.canvas.blit(glyph,glyph.get_rect(center=(820,365)))
+            style=cutin.get('ultimate_style','beam')
+            if style=='area':
+                for radius in (64,104,146):pg.draw.circle(self.canvas,accent,(1030,365),radius,4)
+            elif style=='rush':
+                for index in range(6):pg.draw.line(self.canvas,accent,(920,390+index*24),(1180,315+index*24),6)
+            elif style=='barrage':
+                for index in range(8):
+                    mini=self.emoji_font.render(cutin.get('emoji','💥'),False,C);mini=pg.transform.scale(mini,(30,30))
+                    self.canvas.blit(mini,mini.get_rect(center=(910+(index%4)*72,340+(index//4)*65)))
+            elif style=='wave':
+                for index in range(4):pg.draw.arc(self.canvas,accent,(900,305+index*22,275,90),.1,math.pi-.1,5)

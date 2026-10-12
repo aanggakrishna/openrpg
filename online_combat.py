@@ -6,6 +6,13 @@ import random
 import pokemon_db
 from combat_rules import skill, fighter_loadout
 
+ONLINE_ARENA_MARKS={
+    'fire':('burn','🔥','RUMPUT TERBAKAR'), 'water':('water','💧','GENANGAN AIR'),
+    'electric':('charged','⚡','AIR TERSETRUM'), 'ground':('wall','🪨','DINDING BATU'),
+    'rock':('wall','🪨','DINDING BATU'), 'grass':('bush','🌿','SEMAK PERLINDUNGAN'),
+    'ice':('ice','🧊','LANTAI ES'), 'flying':('gust','🌪️','ARUS ANGIN'),
+}
+
 
 def creature(ident, level, boss=False):
     data = pokemon_db.detail(ident) or {}
@@ -41,6 +48,9 @@ class Battle:
         self.age = 0.0
         self.shots = []
         self.effects = []
+        self.arena_effects = []
+        self.arena_combo = ''
+        self.arena_combo_timer = 0.
         self.biome=DUNGEON_BIOMES[max(0,min(9,tier-1))] if tier else 'crystal'
         weather_names,weights=CLIMATES[self.biome]
         weather=self.rng.choices(weather_names,weights=weights)[0]
@@ -60,7 +70,7 @@ class Battle:
     @staticmethod
     def fighter(team, x, side):
         return dict(team=team, slot=next((i for i,c in enumerate(team) if c['hp']>0),0), x=float(x), y=570., vy=0., side=side, facing=1 if side == 0 else -1,
-                    energy=25., guard=False, cooldowns=[0., 0., 0., 0., 0.], keys={}, input_age=0., ai=0.,stun=0., effects={})
+                    energy=25., guard=False, cooldowns=[0., 0., 0., 0., 0.], keys={}, input_age=0., ai=0.,stun=0., effects={},status_tick=1.)
 
     def wave(self):
         self.fighters = {k:v for k,v in self.fighters.items() if not k.startswith('bot:')}
@@ -84,6 +94,46 @@ class Battle:
             f = self.fighters[uid]
             f['keys'] = {k:bool(keys.get(k)) for k in ('left','right','up','down','guard','a','q','w','e','r','1','2','3')}
             f['input_age'] = 0.
+
+    def activate_arena(self, attacker, target, move):
+        """Server-owned seven second elemental arena state for every client."""
+        if not move or move.get('type') not in ONLINE_ARENA_MARKS:return
+        kind,emoji,label=ONLINE_ARENA_MARKS[move['type']]
+        f,g=self.fighters[attacker],self.fighters[target]
+        x,y=(f['x'],f['y']) if kind=='bush' else (g['x'],g['y'])
+        water=next((entry for entry in self.arena_effects if entry['kind'] in ('water','charged') and entry['timer']>0),None)
+        fire=next((entry for entry in self.arena_effects if entry['kind']=='burn' and entry['timer']>0),None)
+        combo=''
+        if move['type']=='electric' and water:
+            kind,emoji,label='charged','⚡','AIR TERSETRUM';x,y=water['x'],water['y'];water['timer']=0;combo='💧 + ⚡  AIR TERSETRUM!'
+        elif move['type']=='ice' and water:
+            kind,emoji,label='ice','🧊','AIR MEMBEKU';x,y=water['x'],water['y'];water['timer']=0;combo='💧 + ❄️  LANTAI ES!'
+        elif move['type']=='flying' and fire:
+            kind,emoji,label='wildfire','🔥','API MENYEBAR';x,y=fire['x'],fire['y'];fire['timer']=0;combo='🔥 + 🌪️  API MENYEBAR!'
+        elif move['type']=='fire' and any(entry['kind']=='bush' and entry['timer']>0 for entry in self.arena_effects):
+            kind,emoji,label='wildfire','🔥','SEMAK TERBAKAR';combo='🌿 + 🔥  SEMAK TERBAKAR!'
+        self.arena_effects=[entry for entry in self.arena_effects if entry['timer']>0 and entry['kind']!=kind]
+        self.arena_effects.append(dict(kind=kind,type=move['type'],emoji=emoji,label=label,owner=attacker,
+                                       x=x,y=y,timer=7.,tick=1.,radius=165 if kind in ('burn','wildfire','charged') else 128))
+        self.arena_effects=self.arena_effects[-3:]
+        self.arena_combo=combo;self.arena_combo_timer=2.4 if combo else 0.
+        if kind=='gust':g['x']=max(40,min(1240,g['x']+(110 if f['side']==0 else -110)))
+
+    def tick_arena(self,dt):
+        self.arena_combo_timer=max(0.,self.arena_combo_timer-dt)
+        active=[]
+        for effect in self.arena_effects:
+            effect['timer']-=dt;effect['tick']-=dt
+            if effect['timer']<=0:continue
+            if effect['kind'] in ('burn','wildfire','charged') and effect['tick']<=0:
+                effect['tick']+=1.
+                for uid,f in self.fighters.items():
+                    p=f['team'][f['slot']]
+                    if p['hp']>0 and math.hypot(f['x']-effect['x'],f['y']-effect['y'])<=effect['radius']:
+                        p['hp']=max(0,p['hp']-(3 if effect['kind']=='charged' else 2))
+                        self.effects.append(dict(x=f['x'],y=f['y']-55,text='-'+str(3 if effect['kind']=='charged' else 2),ttl=.45))
+            active.append(effect)
+        self.arena_effects=active
 
     def hit(self, attacker, target, power, ultimate=False, move=None):
         f, g = self.fighters[attacker], self.fighters[target]
@@ -110,6 +160,7 @@ class Battle:
             else:g.setdefault('effects',{})[effect]=max(g.setdefault('effects',{}).get(effect,0),duration)
         self.emit('hit',pokemon=q['id'],type=attack_type,ultimate=ultimate,
                   emoji=(move or {}).get('emoji','💥'),stunned=effect in ('stun','freeze','entomb'),effect=effect,effectiveness=effectiveness)
+        if effectiveness>0:self.activate_arena(attacker,target,move)
         f['energy'] = min(100, f['energy'] + (0 if ultimate else 7))
         label=('NO EFFECT' if effectiveness==0 else 'BLOCK' if g['guard'] else
                'SUPER!' if effectiveness>=2 else 'RESIST' if effectiveness<=.5 else str(damage))
@@ -148,7 +199,7 @@ class Battle:
         if ultimate:
             f['energy'] = 0
             self.effects.append(dict(x=640,y=230,text=p['name']+' — '+move['name'],ttl=.82,ultimate=p['id'],
-                                     cutin=True,type=move['type'],emoji=move['emoji']))
+                                     cutin=True,type=move['type'],emoji=move['emoji'],ultimate_style=move.get('ultimate_style','beam')))
         dx, dy = g['x']-f['x'], g['y']-f['y']; distance = max(1, math.hypot(dx,dy))
         f['facing'] = 1 if dx >= 0 else -1
         self.effects.append(dict(x=f['x']+f['facing']*30,y=f['y']-35,text=move['emoji'],ttl=.25))
@@ -173,6 +224,7 @@ class Battle:
         if self.intro > 0:
             self.intro -= dt; return
         self.remaining -= dt
+        self.tick_arena(dt)
         for uid,f in self.fighters.items():
             p = f['team'][f['slot']]
             if p['hp'] <= 0: continue
@@ -196,13 +248,22 @@ class Battle:
                     f['ai'] = self.rng.uniform(.25,.65)
             keys = f['keys'];f['stun']=max(0,f['stun']-dt); f['guard'] = bool(keys.get('guard')) and f['stun']<=0
             f['effects']={name:max(0.,ttl-dt) for name,ttl in f.get('effects',{}).items() if ttl>dt}
+            f['status_tick']=f.get('status_tick',1.)-dt
+            if f['status_tick']<=0:
+                f['status_tick']+=1.
+                dot=(2 if f['effects'].get('burn') else 0)+(2 if f['effects'].get('poison') else 0)
+                if dot:
+                    p['hp']=max(0,p['hp']-dot)
+                    self.effects.append(dict(x=f['x'],y=f['y']-55,text='-'+str(dot),ttl=.45))
             for i in range(3):
                 if keys.get(str(i+1)) and i < len(f['team']) and f['team'][i]['hp'] > 0: f['slot'] = i
             movement = (int(keys.get('right',False))-int(keys.get('left',False))) if f['stun']<=0 else 0
             if f['effects'].get('confuse') and self.rng.random()<.03: movement*=-1
-            speed_scale=.58 if (f['effects'].get('slow') or f['effects'].get('bind')) else 1.
+            in_water=any(entry['kind'] in ('water','charged') and math.hypot(f['x']-entry['x'],f['y']-entry['y'])<=entry['radius'] for entry in self.arena_effects)
+            speed_scale=.58 if (f['effects'].get('slow') or f['effects'].get('bind') or in_water) else 1.
             if movement: f['facing'] = movement
-            f['x'] = max(40,min(1240,f['x']+movement*(90 if f['guard'] else 230)*speed_scale*dt))
+            previous=f['x'];f['x'] = max(40,min(1240,f['x']+movement*(90 if f['guard'] else 230)*speed_scale*dt))
+            if any(entry['kind']=='wall' and entry['owner']!=uid and abs(f['x']-entry['x'])<34 for entry in self.arena_effects):f['x']=previous
             grounded = f['y'] >= 570 or any(x-12 <= f['x'] <= x+w+12 and abs(f['y']-y)<1 for x,w,y in self.platforms)
             if keys.get('up') and grounded and f['stun']<=0: f['vy'] = -465
             old_y = f['y']; f['vy'] += 1150*dt; f['y'] += f['vy']*dt
@@ -246,5 +307,6 @@ class Battle:
     def snapshot(self):
         return dict(id=self.ident,events=list(self.events),fighters={uid:{k:v for k,v in f.items() if k not in ('keys','input_age','ai')} for uid,f in self.fighters.items()},
                     remaining=round(self.remaining,1),intro=round(self.intro,1),stage=self.stage,tier=self.tier,
-                    shots=self.shots,effects=self.effects,platforms=self.platforms,weather=self.weather,arena=self.arena,
+                    shots=self.shots,effects=self.effects,arena_effects=self.arena_effects,arena_combo=self.arena_combo,
+                    arena_combo_timer=round(self.arena_combo_timer,2),platforms=self.platforms,weather=self.weather,arena=self.arena,
                     active_bots=self.active_bots,result=self.result)
