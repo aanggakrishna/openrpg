@@ -136,8 +136,6 @@ def border(w,top,bottom,openings):
 def reserve_layout(index):
     biome=RESERVE_ZONE_BIOMES[index];col,row=RESERVE_GRID_POSITIONS[index]
     landmark=COUNTRY_LANDMARKS.get(index)
-    # Keep landmark footprints off the central path and boss spawn point.
-    landmark_rect=(884,548,152,104) if landmark else None
     neighbors = RESERVE_GRID_TO_INDEX
     gates=[]
     for side,dc,dr,x,y in [('west',-1,0,80,800),('east',1,0,1200,800),
@@ -145,31 +143,80 @@ def reserve_layout(index):
         if (col+dc,row+dr) in neighbors or (index==0 and side=='west'):
             gates.append((side,x,y))
     walls=border(1280,120,1600,[(s,y if s in ('west','east') else x) for s,x,y in gates])
-    paths=[(596,155,88,1417),(28,756,1224,88),(222,1038,840,64),
-           (222,800,56,270),(1002,800,56,270)]
-    buildings=[('center',640,955),('restaurant',250,1070),('hotel',1030,1070)]
-    if index==0:buildings.append(('center',160,690));paths.append((132,690,56,110))
-    water=[];bridges=[];ice=[];lava=[]
-    if biome in ('meadow','forest','ancient_forest','swamp','desert','coast','deepsea'):
-        water=[(140,300,300,240),(830,1190,280,220)]
-        if biome in ('coast','deepsea','swamp'):water += [(865,290,250,300),(160,1190,290,200)]
-        # A timber bridge divides the collision rectangles: its deck is walkable.
-        water[0:1]=[(140,300,300,96),(140,452,300,88)]
-        bridges=[(120,396,340,56)]
-    if biome in ('snow','mountain'):ice=[(145,300,300,230),(850,1220,270,185)]
-    if biome=='volcano':lava=[(135,300,310,210),(845,295,275,280),(185,1210,260,230)]
-    if biome in ('cave','crystal','dragon_valley','legendary_ruins'):water=[(150,1220,285,185)]
-    if biome=='sky':water=[(110,300,350,250),(820,300,335,250),(160,1220,260,200)]
+    # Every gate opens onto one continuous local junction at (640, 800). Each
+    # zone then grows its own service street from that junction. That keeps all
+    # 50 maps connected at their shared borders while varying the village plan.
+    presets=((360,610,72),(420,410,68),(860,430,76),(880,1130,68),
+             (390,1130,76),(640,420,64),(640,1130,80),(360,850,68),
+             (920,850,76),(480,535,72))
+    hub_x,hub_y,road_w=presets[index%len(presets)]
+    if index==0:hub_x,hub_y,road_w=360,625,76
+    junction=(640,800)
+    def road_between(a,b,width=road_w):
+        x1,y1=a;x2,y2=b;result=[]
+        if x1!=x2:result.append((min(x1,x2),y1-width//2,abs(x2-x1),width))
+        if y1!=y2:result.append((x2-width//2,min(y1,y2),width,abs(y2-y1)))
+        return result
+    paths=[]
+    for side,x,y in gates:
+        paths.extend(road_between((x,y),junction))
+    # Town square and service lane form an L-shaped, walkable cluster whose
+    # location changes by biome and zone instead of repeating one template.
+    service_y=hub_y+220
+    paths.extend(road_between(junction,(hub_x,hub_y+18)))
+    paths.extend([(hub_x-road_w//2,hub_y+14,road_w,service_y-hub_y+24),
+                  (hub_x-310,service_y-road_w//2,620,road_w)])
+    # Alternate between a compact plaza, a loop street, and a second garden
+    # lane. These are branches of the same connected road network.
+    if index%3==1:
+        for side_x in (hub_x-205,hub_x+205):
+            paths.append((side_x-road_w//2,min(800,service_y),road_w,abs(service_y-800)+road_w//2))
+            paths.append((min(side_x,hub_x)-road_w//2,service_y-road_w//2,
+                          abs(hub_x-side_x)+road_w,road_w))
+    elif index%3==2:
+        spur_x=hub_x+(205 if index%2 else -205)
+        paths.extend(road_between((hub_x,service_y),(spur_x,service_y+145),road_w-8))
+        paths.append((spur_x-90,service_y+145-road_w//2,180,road_w-8))
+    restaurant_x,hotel_x=((hub_x-220,hub_x+220) if index%2==0 else
+                          (hub_x+220,hub_x-220))
+    buildings=[('center',hub_x,hub_y),('restaurant',restaurant_x,service_y),
+               ('hotel',hotel_x,service_y)]
+    water=[];bridges=[];ice=[];lava=[];landmark_rect=None
+    # Pool sites are selected away from roads, buildings and the landmark, so
+    # bridges and shore paths never cover service entrances or gate approaches.
+    pool_candidates=[(165,350,220,150),(895,350,220,150),(165,1260,220,150),
+                     (895,1260,220,150),(190,570,190,145),(900,570,190,145)]
+    rng=random.Random(8100+index)
+    rng.shuffle(pool_candidates)
+    building_clear=[(x-118,y-158,236,270) for _,x,y in buildings]
+    for candidate in pool_candidates:
+        if len(water)+len(ice)+len(lava)>= (3 if biome in ('coast','deepsea','swamp','sky') else 2):break
+        exclusion=paths+building_clear
+        if any(overlaps(candidate,r) for r in exclusion):continue
+        if any(overlaps(candidate,r) for r in water+ice+lava):continue
+        if biome in ('snow','mountain'):ice.append(candidate)
+        elif biome=='volcano':lava.append(candidate)
+        elif biome in ('meadow','forest','ancient_forest','swamp','desert','coast','deepsea','cave','crystal','dragon_valley','legendary_ruins','sky'):
+            water.append(candidate)
     # Broken cliff shelves make rocky regions distinct and create side passages.
     if biome in ('cave','badlands','mountain','dragon_valley','legendary_ruins'):
-        walls += [(140,290,300,64),(140,354,64,240),(865,350,280,64),(1081,414,64,175)]
-    if biome=='crystal':walls += [(180,300,240,48),(860,430,260,48)]
+        walls += [(135,285,250,54),(135,339,54,205),(895,310,250,54),(1091,364,54,190)]
+    if biome=='crystal':walls += [(170,300,230,46),(880,440,230,46)]
     def shoreline(rect):
         x,y,w,h=rect
         return [(x+24,y,w-48,24),(x,y+24,w,h-48),(x+24,y+h-24,w-48,24)]
     water=[r for area in water for r in shoreline(area)]
     lava=[r for area in lava for r in shoreline(area)]
     ice=[r for area in ice for r in shoreline(area)]
+    if landmark:
+        candidates=[(960,430),(320,430),(960,1220),(320,1220),(980,880),(300,880),
+                    (820,300),(460,1320)]
+        for lx,ly in candidates[index%len(candidates):]+candidates[:index%len(candidates)]:
+            candidate=(lx-82,ly-142,164,152)
+            if any(overlaps(candidate,r) for r in paths+building_clear+water+ice+lava+walls):continue
+            landmark_rect=candidate
+            break
+        if landmark_rect is None:landmark_rect=(960,548,152,104)
     solids=walls+water+lava
     for kind,x,y in buildings:solids.append((x-100,y-140,200,114))
     for side,x,y in gates:solids+=gate_posts(x,y,side)
@@ -193,17 +240,19 @@ def reserve_layout(index):
         props.append((kind,x,y,rng.randrange(4)))
         solids.append(footprint)
     if landmark:
+        lx,ly=landmark_rect[0]+82,landmark_rect[1]+142
         # The landmark is a proper solid prop: trainers and Pokémon cannot
         # walk through it, while the front remains visible as an attraction.
-        props.append(('landmark',960,650,index))
-        solids.append((906,626,108,30))
+        props.append(('landmark',lx,ly,index))
+        solids.append((lx-54,ly-24,108,30))
     if biome in ('forest','ancient_forest','swamp'):
         for x in range(95,1200,85):
             if 540<x<740:continue
             for y in (205,1572):
                 props.append(('tree',x,y,1));solids.append((x-23,y-20,46,32))
     return dict(biome=biome,paths=paths,walls=walls,water=water,bridges=bridges,ice=ice,lava=lava,
-                gates=gates,buildings=buildings,props=props,solids=solids)
+                gates=gates,buildings=buildings,props=props,solids=solids,
+                service_hub=(hub_x,hub_y),road_style=index%3,landmark_rect=landmark_rect)
 
 @lru_cache(maxsize=64)
 def reserve_solids(index):

@@ -7,7 +7,7 @@ from pathlib import Path
 import random
 from world_regions import weather_for
 from world_regions import biome_at
-from world_features import STORIES, COLLECTIONS, COLLECTION_COSMETICS
+from world_features import STORIES, COLLECTIONS, COLLECTION_COSMETICS, HOME_DECOR
 
 ITEMS = ("Sayur", "Ikan", "Telur", "Makanan", "Daging", "Kulit", "Kayu", "Obat", "Tombak", "Busur", "Panah", "Pokeball")
 BUY = {"Makanan": 24, "Obat": 35, "Tombak": 80, "Busur": 160, "Panah": 3, "Pokeball": 12}
@@ -29,6 +29,7 @@ class Life:
     quest_archive: list = field(default_factory=list)
     saved_at: str = ""
     character: int = 0
+    trainer_versus_name: str = ""
     scene: str = "outdoors"
     x: float = 490
     y: float = 490
@@ -67,12 +68,16 @@ class Life:
     reserve_space_wins: dict = field(default_factory=dict)
     reserve_space_boss_thresholds: dict = field(default_factory=dict)
     reserve_space_bosses: list = field(default_factory=list)
+    # Team Rocket retains Pokémon stolen after a loss until the player wins a rematch.
+    rocket_stolen_pokemon: list = field(default_factory=list)
     local_dungeon_tier: int = 1
     local_dungeon_cleared: list = field(default_factory=list)
     local_dungeon_champion: bool = False
     tutorial_active: bool = False
     tutorial_step: int = 0
     tutorial_reward_claimed: bool = False
+    starter_reveal_pending: bool = False
+    starter_egg_pattern: int = 0
     farm_drop_day: int = 0
     farm_drops: list = field(default_factory=list)
     daily_quests: list = field(default_factory=list)
@@ -83,6 +88,15 @@ class Life:
     badges: list = field(default_factory=list)
     cosmetics: list = field(default_factory=list)
     active_cosmetic: str = ""
+    # Home furnishings are local save data; each slot stores one owned item.
+    home_decor_owned: list = field(default_factory=lambda: ["wall_photo", "fern"])
+    home_decor: dict = field(default_factory=lambda: {"wall": "wall_photo", "plant": "fern", "trophy": "", "rug": ""})
+    companion_id: int = 0
+    companion_bond: int = 0
+    companion_walk_seconds: float = 0.0
+    companion_quest_day: int = 0
+    companion_quest: dict = field(default_factory=dict)
+    rival_wins: int = 0
     collection_claimed: list = field(default_factory=list)
     story_notice: str = ""
     world_trainer_xp: int = 0
@@ -96,6 +110,68 @@ class Life:
         for item in ITEMS:
             self.bag.setdefault(item, 0)
         self.ensure_daily_quests()
+        self.ensure_companion_quest()
+
+    def ensure_companion_quest(self):
+        """Give the first active Pokémon a small, persistent daily side quest."""
+        if self.companion_id not in self.pokemon_party:
+            self.companion_id = next(iter(self.pokemon_active or self.pokemon_party), 1)
+        if self.companion_quest_day == self.day and self.companion_quest:
+            return
+        options = (("walk", 45, "Jalan bersama Pokémon pendamping", "Walk with your Pokémon companion", "🚶"),
+                   ("battle", 1, "Menangkan duel bersama pendamping", "Win a battle with your companion", "⚔️"),
+                   ("catch", 1, "Temukan Pokémon baru bersama pendamping", "Find a new Pokémon with your companion", "🔎"))
+        rng = random.Random(self.day * 104729 + sum(map(ord, self.player_name)) + self.companion_id)
+        action, target, title, title_en, emoji = rng.choice(options)
+        self.companion_quest = dict(action=action, target=target, progress=0, reward=45,
+                                    claimed=False, title=title, title_en=title_en, emoji=emoji)
+        self.companion_quest_day = self.day
+
+    def companion_activity(self, action, amount=1):
+        self.ensure_companion_quest()
+        if action in ("battle", "catch"):
+            self.companion_bond = min(100, self.companion_bond + (6 if action == "battle" else 8) * max(1, int(amount)))
+        quest = self.companion_quest
+        if quest.get("claimed") or quest.get("action") != action:
+            return False
+        before = float(quest.get("progress", 0))
+        quest["progress"] = min(float(quest["target"]), before + max(0, float(amount)))
+        return before < quest["target"] <= quest["progress"]
+
+    def claim_companion_quest(self):
+        self.ensure_companion_quest()
+        quest = self.companion_quest
+        if quest.get("claimed") or float(quest.get("progress", 0)) < float(quest.get("target", 1)):
+            return 0
+        quest["claimed"] = True
+        self.money += int(quest.get("reward", 45))
+        self.gacha_tickets += 1
+        self.companion_bond = min(100, self.companion_bond + 12)
+        return int(quest.get("reward", 45))
+
+    def own_home_decor(self, item_id):
+        return item_id in self.home_decor_owned
+
+    def buy_home_decor(self, item_id):
+        item = next((row for row in HOME_DECOR if row[0] == item_id), None)
+        if not item:
+            return "Dekorasi tidak tersedia."
+        if item_id in self.home_decor_owned:
+            return "Dekorasi ini sudah dimiliki."
+        _, _, _, _, _, price, wood = item
+        if self.money < price or self.bag.get("Kayu", 0) < wood:
+            return f"Butuh {price} koin dan {wood} kayu."
+        self.money -= price
+        self.bag["Kayu"] = max(0, self.bag.get("Kayu", 0) - wood)
+        self.home_decor_owned.append(item_id)
+        return "Dekorasi dibeli. Pasang di rumah kapan saja."
+
+    def equip_home_decor(self, item_id):
+        item = next((row for row in HOME_DECOR if row[0] == item_id), None)
+        if not item or item_id not in self.home_decor_owned:
+            return False
+        self.home_decor[item[1]] = item_id
+        return True
 
     @staticmethod
     def daily_quest_pool():
@@ -151,6 +227,8 @@ class Life:
             if before < quest["target"] <= quest["progress"]:
                 completed.append(quest)
         self.record_world_action(action, amount)
+        if action in ("battle", "catch"):
+            self.companion_activity(action, amount)
         return completed
 
     def current_biome(self):
@@ -281,6 +359,12 @@ class Life:
         for name, rate in (("Kenyang", .035), ("Minum", .05), ("Energi", .045 if moving else .014), ("Senang", .012)):
             self.stats[name] = max(0, self.stats[name] - dt * rate)
         self.grow_crops()
+        if moving and self.companion_id:
+            self.companion_walk_seconds += dt
+            while self.companion_walk_seconds >= 10:
+                self.companion_walk_seconds -= 10
+                self.companion_bond = min(100, self.companion_bond + 1)
+            self.companion_activity("walk", dt)
         if self.stats["Kenyang"] <= 0 or self.stats["Minum"] <= 0:
             self.health = max(0, self.health - dt * .5)
 
@@ -514,6 +598,19 @@ class Life:
             state.reserve_space_bosses = sorted({int(index) for index in bosses
                                                  if str(index).lstrip("-").isdigit()
                                                  and 0 <= int(index) < 50})
+            stolen = raw.get("rocket_stolen_pokemon", [])
+            state.rocket_stolen_pokemon = []
+            if isinstance(stolen, list):
+                for record in stolen[:20]:
+                    if not isinstance(record, dict):
+                        continue
+                    try:
+                        ident = max(1, int(record.get("id", 0)))
+                        zone = max(0, min(49, int(record.get("zone", 0))))
+                        level = max(1, min(100, int(record.get("level", 5))))
+                    except (TypeError, ValueError):
+                        continue
+                    state.rocket_stolen_pokemon.append({"id": ident, "zone": zone, "level": level})
             for pokemon_id in set(state.pokemon_caught + state.pokemon_party):
                 key = str(int(pokemon_id))
                 state.pokemon_levels[key] = max(1, min(100, int(state.pokemon_levels.get(key, 5))))

@@ -51,6 +51,7 @@ class World:
                                    trainer_level=max(1,min(100,int(body.get('trainer_level',1)))),unlocked=1)
             self.save()
         u=self.users[key]
+        u.setdefault('wins',0)
         self.leave_match(u['id']);self.cancel_offers(u['id'])
         self.presence[u['id']] = dict(room='gym',x=240.,y=410.,last=time.monotonic(),match=None,ready=False,keys={},chat_at=0,offer_at=0)
         return dict(token=token, **self.snapshot(u))
@@ -72,9 +73,14 @@ class World:
                 other=self.user(uid)
                 people.append(dict(id=uid,name=other['name'],character=other['character'],active=other['active'],roster=other['roster'],x=v['x'],y=v['y'],ready=v['ready'],moving=bool(any(v['keys'].values())),facing=v.get('facing','down')))
         match=self.matches.get(p['match'])
+        ranking=sorted(self.users.values(),key=lambda row:(-int(row.get('wins',0)),
+                        -int(row.get('trainer_level',1)),-int(row.get('trainer_xp',0)),
+                        str(row.get('name','')).casefold()))[:10]
+        leaderboard=[dict(name=str(row.get('name','Trainer'))[:18],wins=int(row.get('wins',0)),
+                          level=int(row.get('trainer_level',1))) for row in ranking]
         return dict(me=u,room=p['room'],players=people,chat=[c for c in self.chat if c['room']==p['room']][-7:],
                     offers=[dict(o,id=k) for k,o in self.offers.items() if u['id'] in (o['from'],o['to'])],
-                    battle=match['battle'].snapshot() if match else None)
+                    battle=match['battle'].snapshot() if match else None,leaderboard=leaderboard)
 
     def cancel_offers(self,uid):
         self.offers={k:o for k,o in self.offers.items() if uid not in (o['from'],o['to'])}
@@ -203,6 +209,7 @@ class World:
                     if f:
                         u.setdefault('health',{}).update({str(c['id']):c['hp']/c['maximum'] for c in f['team']})
                     if f and battle.result['winner']==f['side'] and uid in self.presence and self.presence[uid]['match']==mid:
+                        u['wins']=int(u.get('wins',0))+1
                         u['money']+=30 if not battle.tier else 50*battle.tier
                         gain=25 if not battle.tier else 80*battle.tier
                         xp=u.get('trainer_xp',0)+gain;level=u.get('trainer_level',1)

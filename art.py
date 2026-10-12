@@ -21,7 +21,7 @@ RESERVE_WIDTH, RESERVE_HEIGHT = 1280 * RESERVE_COLUMNS, 1600 * RESERVE_ROWS
 RESERVE_ZONE_W, RESERVE_ZONE_H = 1280, 1600
 RESERVE_LEVEL_REQUIREMENTS = [0, 4, 8, 12, 6, 10, 14, 18, 16, 20, 24, 28, 32, 36, 40, 45]
 RESERVE_LEVEL_REQUIREMENTS += [46 + (index - 16) // 7 for index in range(16, 50)]
-RESERVE_CENTERS = [(160, 690)]
+RESERVE_CENTERS = []
 RESERVE_ZONES = [
     {"name": "Suaka Hijau", "biome": "meadow", "x": 0, "y": 0, "color": (114, 171, 103)},
     {"name": "Hutan Rimba", "biome": "forest", "x": 1280, "y": 0, "color": (64, 130, 76)},
@@ -85,9 +85,12 @@ for index, (name, biome, color) in enumerate(COUNTRY_ZONES, start=16):
     col, row = RESERVE_GRID_POSITIONS[index]
     RESERVE_ZONES.append({"name": name, "biome": biome, "x": col * RESERVE_ZONE_W,
                           "y": row * RESERVE_ZONE_H, "color": color})
-RESERVE_CENTERS += [(zone["x"] + RESERVE_ZONE_W // 2,
-                     zone["y"] + RESERVE_ZONE_H // 2 + 155)
-                    for zone in RESERVE_ZONES]
+RESERVE_CENTERS = []
+for zone_index, zone in enumerate(RESERVE_ZONES):
+    center = next((building for building in reserve_layout(zone_index)["buildings"]
+                   if building[0] == "center"), None)
+    if center:
+        RESERVE_CENTERS.append((zone["x"] + center[1], zone["y"] + center[2]))
 
 
 class RPGArt:
@@ -159,14 +162,12 @@ class RPGArt:
                 count = 0
             for _ in range(count):
                 self.trees["reserve"].append((zone["x"] + rng.randrange(90, 1190), zone["y"] + rng.randrange(190, 1480)))
-        # One road network, shared by art and tree placement. Junctions are unions.
-        self.reserve_paths = [pg.Rect(0, y - 48, RESERVE_WIDTH, 96)
-                              for y in range(800, RESERVE_HEIGHT, RESERVE_ZONE_H // 2)]
-        self.reserve_paths += [pg.Rect(x - 40, 0, 80, RESERVE_HEIGHT)
-                               for x in range(RESERVE_ZONE_W, RESERVE_WIDTH, RESERVE_ZONE_W)]
-        self.reserve_paths += [pg.Rect(x - 28, 0, 56, RESERVE_HEIGHT)
-                               for x in range(RESERVE_ZONE_W // 2, RESERVE_WIDTH, RESERVE_ZONE_W)]
-        self.reserve_paths += [pg.Rect(132, 670, 48, 130), pg.Rect(640, 448, 640, 56)]
+        # Bake the same per-zone streets used by regional rendering and
+        # collision, offset into the shared 50-zone world grid.
+        self.reserve_paths = []
+        for zone_index, zone in enumerate(RESERVE_ZONES):
+            for px, py, pw, ph in reserve_layout(zone_index)["paths"]:
+                self.reserve_paths.append(pg.Rect(zone["x"] + px, zone["y"] + py, pw, ph))
         self.trees["reserve"] = [(x, y) for x, y in self.trees["reserve"]
                                  if not any(r.colliderect(pg.Rect(x-48, y-90, 96, 96))
                                             for r in self.reserve_paths)]

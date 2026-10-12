@@ -354,6 +354,16 @@ class OnlineMixin:
         self.button('Center',(270,135,185,43),lambda:self.set_mode('online_center'))
         self.box((25,530,555,143),retro.PANEL)
         for i,c in enumerate(state.get('chat',[])[-4:]):self.text((c['name']+': '+c['text'])[:67],40,540+i*28,C,self.small)
+        if room=='gym' and not state.get('offers'):
+            self.box((615,515,630,157),retro.PANEL)
+            self.text('🏆 ONLINE LEADERBOARD · VICTORIES',632,528,GOLD,self.small)
+            board=state.get('leaderboard',[])
+            if not board:
+                self.text('Play PvP or a raid to enter the board.',640,563,M,self.small)
+            for index,row in enumerate(board[:5]):
+                marker='★' if row.get('name')==me.get('name') else f'{index+1:02}'
+                self.text(f"{marker}  {row.get('name','Trainer')[:18]}   ·   W {row.get('wins',0)}   ·   Lv.{row.get('level',1)}",
+                          636,554+index*22,G if row.get('name')==me.get('name') else C,self.tiny)
         self.button('T / Chat',(30,680,210,40),lambda:self.online_edit('chat',''))
         self.button('Leave',(1050,680,200,40),self.leave_online)
         self.text('Arrows: move / E: use / T: chat / B: terminal / Tab+Enter',260,690,M,self.small)

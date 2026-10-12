@@ -10,7 +10,7 @@ import retro
 import pokemon_db
 from state import Life, BUY
 from wildlife import Wildlife
-from art import PLAYER_STYLES, RESERVE_CENTERS, RESERVE_ZONES
+from art import PLAYER_STYLES, RESERVE_CENTERS, RESERVE_ZONES, RESERVE_ZONE_W, RESERVE_ZONE_H
 ROOT = Path(__file__).resolve().parent
 STARTERS = (1,4,7,25,37,43,54,58,60,66,74,92,133,152,155,158,179,187,252,255,258,280,387,390,393,403)
 C, G, M, GOLD = retro.CREAM, retro.GREEN, retro.MUTED, retro.GOLD
@@ -71,6 +71,20 @@ class FlowMixin:
         self.profile_return = 'title'
         self.profile_replace_pending = None
         self.asset_loading_ids = []
+        self.starter_reveal = None
+        self.starter_egg_surfaces = {}
+        self.rocket_video_paths = sorted((ROOT / 'assets' / 'team_rocket' / 'cutin').glob('frame_*.jpg'))
+        self.rocket_video_duration = len(self.rocket_video_paths) / 8.0
+        self.rocket_video_index = -1
+        self.rocket_video_surface = None
+        reaction_dir=ROOT/'assets'/'team_rocket'/'reactions'
+        self.rocket_loss_surfaces=[]
+        self.rocket_win_surface=None
+        for filename in ('rocket_dizzy.jpeg','rocket_flying.jpeg','rocket_sweating.jpeg'):
+            try:self.rocket_loss_surfaces.append(pg.image.load(str(reaction_dir/filename)).convert())
+            except (OSError,pg.error):pass
+        try:self.rocket_win_surface=pg.image.load(str(reaction_dir/'rocket_celebrating.jpeg')).convert()
+        except (OSError,pg.error):pass
 
     def words(self, indonesian, english):
         return indonesian if self.life.language == 'id' else english
@@ -131,7 +145,9 @@ class FlowMixin:
         self.activate_profile()
 
     def start_new_profile(self, path):
-        self.wizard={'path':path,'name':'','gender':'male','style':0,'step':0}
+        portraits=getattr(self,'trainer_versus_sprites',())
+        self.wizard={'path':path,'name':'','style':0,'trainer_versus_name':portraits[0]['name'] if portraits else '',
+                     'versus_page':0,'step':0}
         self.profile_replace_pending = None
         self.set_mode('setup')
         pg.key.start_text_input()
@@ -160,6 +176,9 @@ class FlowMixin:
                     lambda: self.confirm_profile_replace(False))
 
     def activate_profile(self):
+        self.life.ensure_companion_quest()
+        if self.life.companion_id:
+            self.pokedex.request_animation(self.life.companion_id)
         if (self.life.player_name or '').strip().casefold() == 'lgab':
             self.enable_godmode_account()
         self.playing=True
@@ -170,6 +189,10 @@ class FlowMixin:
         self.reserve_trainers=[]
         for trainer in self.route_trainers:
             trainer.update(defeated=False,paid=False,cooldown=0)
+            if trainer.get('rival'):
+                loadout = self.rival_loadout()
+                trainer['level'] = loadout['level']
+                trainer['team'] = loadout['team']
         self.battle=None
         self.fishing=None
         self.dead_active=False
@@ -245,6 +268,18 @@ class FlowMixin:
         _, _, _, statuses = self.asset_loading_progress()
         failed = sum(status == 'failed' for status in statuses)
         self.set_mode('game')
+        if self.life.starter_reveal_pending:
+            self.life.starter_reveal_pending = False
+            self.save_current()
+            self.starter_reveal = {'pokemon_id': self.life.pokemon_active[0],
+                                   'pattern': int(self.life.starter_egg_pattern) % 8,
+                                   'timer': 0.0}
+            self.set_mode('starter_reveal')
+            if failed:
+                self.notify(self.words(
+                    f'{failed} sprite belum terunduh. Periksa internet; Pokémon lain akan dimuat saat ditemukan.',
+                    f'{failed} sprites could not be downloaded. Check your connection; other Pokémon load when encountered.'))
+            return
         if self.life.tutorial_active and self.life.tutorial_step == 0:
             self.set_mode('tutorial_intro')
         if failed:
@@ -265,12 +300,8 @@ class FlowMixin:
         if self.life.tutorial_step >= len(TUTORIAL_STEPS):
             self.life.tutorial_active = False
             reward_text = ''
-            if not self.life.tutorial_reward_claimed:
-                self.life.tutorial_reward_claimed = True
-                self.life.money += 100
-                balls = min(3, max(0, 10 - int(self.life.bag.get('Pokeball', 0))))
-                self.life.bag['Pokeball'] = int(self.life.bag.get('Pokeball', 0)) + balls
-                self.award_trainer_xp(50)
+            balls = self.grant_tutorial_reward()
+            if balls is not None:
                 reward_text = self.words(f' Hadiah: 100 koin, {balls} Poké Ball, dan 50 XP pelatih.',
                                          f' Reward: 100 coins, {balls} Poké Balls, and 50 trainer XP.')
             self.notify(self.words('Tutorial selesai! Suaka Pokémon dan petualangan terbuka.',
@@ -281,6 +312,36 @@ class FlowMixin:
                                    'Done! Next: ' + next_step[2] + '.'))
         self.save_current()
         return True
+
+    def grant_tutorial_reward(self):
+        if self.life.tutorial_reward_claimed:
+            return None
+        self.life.tutorial_reward_claimed = True
+        self.life.money += 100
+        balls = min(3, max(0, 10 - int(self.life.bag.get('Pokeball', 0))))
+        self.life.bag['Pokeball'] = int(self.life.bag.get('Pokeball', 0)) + balls
+        self.award_trainer_xp(50)
+        return balls
+
+    def request_skip_tutorial(self):
+        self.set_mode('tutorial_skip_confirm')
+
+    def skip_tutorial(self):
+        self.life.tutorial_active = False
+        self.life.tutorial_step = len(TUTORIAL_STEPS)
+        already_claimed=self.life.tutorial_reward_claimed
+        balls = self.grant_tutorial_reward()
+        self.save_current()
+        balls = 0 if balls is None else balls
+        if already_claimed:
+            message=self.words('Tutorial dilewati. Hadiah awal sebelumnya sudah diklaim.',
+                               'Tutorial skipped. The starting rewards were already claimed.')
+        else:
+            message=self.words(
+                f'Tutorial dilewati. Hadiah awal langsung masuk: 100 koin, {balls} Poké Ball, dan 50 XP pelatih.',
+                f'Tutorial skipped. Starting rewards added: 100 coins, {balls} Poké Balls, and 50 trainer XP.')
+        self.notify(message)
+        self.set_mode('game')
 
     def begin_tutorial(self):
         self.set_mode('game')
@@ -304,9 +365,111 @@ class FlowMixin:
                       x + 48, y, C, self.small)
         self.text(self.words('Petunjuk muncul di layar saat bermain. Progres otomatis tersimpan.',
                              'Objectives appear during play. Your progress is saved automatically.'),
-                  640, 626, M, self.small, True)
+                  640, 642, M, self.small, True)
         self.button(self.words('Mulai tutorial · Enter', 'Start tutorial · Enter'),
-                    (430, 680, 420, 58), self.begin_tutorial, True)
+                    (300, 690, 330, 58), self.begin_tutorial, True)
+        self.button(self.words('Lewati tutorial','Skip tutorial'),
+                    (650, 690, 330, 58), self.request_skip_tutorial)
+
+    def draw_tutorial_skip_confirm(self):
+        self.text(self.words('LEWATI TUTORIAL?','SKIP THE TUTORIAL?'),640,202,GOLD,self.big,True)
+        self.box((190,270,900,245),retro.PANEL,14,retro.EDGE)
+        self.text(self.words('Kegiatan kebun, ternak, memancing, berburu, dan rumah akan dilewati.',
+                             'Garden, animal care, fishing, hunting, and home activities will be skipped.'),
+                  640,328,C,self.small,True)
+        self.text(self.words('Yakin? Hadiah awal akan langsung masuk ke tas dan akunmu.',
+                             'Are you sure? Your starting rewards will be added to your bag and account.'),
+                  640,380,G,self.small,True)
+        self.text(self.words('100 koin  ·  hingga 3 Poké Ball  ·  50 XP pelatih',
+                             '100 coins  ·  up to 3 Poké Balls  ·  50 trainer XP'),
+                  640,436,GOLD,self.small,True)
+        self.button(self.words('Tidak, kembali','No, go back'),(260,590,330,64),
+                    lambda:self.set_mode('tutorial_intro'),True)
+        self.button(self.words('Ya, lewati dan ambil hadiah','Yes, skip and claim rewards'),
+                    (650,590,390,64),self.skip_tutorial)
+
+    def start_starter_reveal(self):
+        return_to_setup=bool((self.starter_reveal or {}).get('return_to_setup'))
+        self.starter_reveal = None
+        if return_to_setup:
+            self.set_mode('setup')
+        else:
+            self.set_mode('tutorial_intro' if self.life.tutorial_active else 'game')
+
+    def draw_starter_reveal(self):
+        reveal=self.starter_reveal or {'pokemon_id':self.life.pokemon_active[0], 'pattern':0, 'timer':0.0}
+        elapsed=reveal['timer']
+        egg_phase=elapsed<2.35
+        self.canvas.fill((11,17,34))
+        for i in range(42):
+            x=(i*173+int(self.frame*(i%3+1)))%1280
+            y=(i*97+int(self.frame*.35))%800
+            pg.draw.circle(self.canvas,(67,87,122) if i%3 else (239,199,104),(x,y),1+(i%2))
+        pg.draw.polygon(self.canvas,(28,44,70),[(0,570),(360,467),(692,570),(1022,453),(1280,556),(1280,800),(0,800)])
+        pg.draw.rect(self.canvas,(44,62,85),(0,570,1280,230))
+        for x in range(18,1280,54):
+            pg.draw.line(self.canvas,(60,79,105),(x,575),(x-80,800),2)
+        pattern=int(reveal['pattern'])%8
+        palettes=(((247,231,187),(224,151,93)),((205,234,246),(86,155,187)),
+                  ((219,242,188),(105,166,107)),((244,208,217),(188,106,140)),
+                  ((230,221,250),(133,108,189)),((252,223,151),(213,145,56)),
+                  ((223,232,238),(106,130,154)),((242,215,182),(142,95,72)))
+        shell,mark=palettes[pattern]
+        if pattern not in self.starter_egg_surfaces:
+            egg=pg.Surface((216,268),pg.SRCALPHA)
+            pg.draw.ellipse(egg,(16,21,30,110),(19,235,178,23))
+            pg.draw.ellipse(egg,(46,40,45),(29,18,158,226))
+            pg.draw.ellipse(egg,shell,(36,24,144,214))
+            pg.draw.ellipse(egg,(255,250,228),(61,43,43,95))
+            for i in range(6):
+                px=53+(i*41+pattern*23)%112
+                py=67+(i*53+pattern*31)%130
+                pg.draw.circle(egg,mark,(px,py),7+(i%3)*3)
+            if pattern%2:
+                for yy in (98,156,203):
+                    pg.draw.arc(egg,mark,(42,yy-17,132,40),.05,3.0,5)
+            else:
+                pg.draw.polygon(egg,mark,[(55,72),(86,62),(99,72),(84,83),(68,82)])
+                pg.draw.polygon(egg,mark,[(120,175),(148,161),(160,174),(144,190),(128,187)])
+            self.starter_egg_surfaces[pattern]=egg
+        egg=self.starter_egg_surfaces[pattern]
+        shake=math.sin(elapsed*27)*11*(1 if egg_phase else 0)
+        if egg_phase:
+            rotated=pg.transform.rotate(egg,shake)
+            self.canvas.blit(rotated,rotated.get_rect(center=(640,431)))
+            if elapsed>1.35:
+                crack_color=(255,250,221)
+                pg.draw.lines(self.canvas,crack_color,False,[(626,352),(638,371),(626,389),(648,405),(637,425)],4)
+            if elapsed>1.85:
+                pg.draw.lines(self.canvas,crack_color,False,[(656,396),(643,413),(660,430),(648,449),(666,465)],3)
+            title=self.words('TELUR BERGUNCANG!','THE EGG IS HATCHING!')
+            subtitle=self.words('Ada sesuatu di dalamnya…','Something is stirring inside…')
+        else:
+            progress=max(0.0,min(1.0,(elapsed-2.35)/.8))
+            for i in range(16):
+                angle=(math.tau*i/16)+(elapsed*.35)
+                inner=115+progress*35;outer=inner+65+int(18*math.sin(elapsed*9+i))
+                a=(round(640+math.cos(angle)*inner),round(421+math.sin(angle)*inner))
+                b=(round(640+math.cos(angle)*outer),round(421+math.sin(angle)*outer))
+                pg.draw.line(self.canvas,(255,235,162) if i%2 else mark,a,b,4 if i%3 else 6)
+                pg.draw.circle(self.canvas,(255,239,177),b,3+(i%3))
+            ident=int(reveal['pokemon_id'])
+            data=self.pokemon_data(ident) or pokemon_db.detail(ident) or {}
+            sprite=self.pokemon_surface(ident,int(55+200*progress))
+            if sprite:
+                self.canvas.blit(sprite,sprite.get_rect(center=(640,413-int(18*math.sin(progress*math.pi)))))
+            else:
+                glow_radius=int(34+62*progress)
+                pg.draw.circle(self.canvas,(255,244,195),(640,413),glow_radius)
+                pg.draw.circle(self.canvas,mark,(640,413),max(12,glow_radius-10),4)
+                self.text('✦',640,410,GOLD,self.big,True)
+            title=self.words('TELURNYA MENETAS!','A NEW PARTNER!')
+            subtitle=data.get('name',f'Pokémon #{ident}').title()
+            self.text(f"Lv. {reveal.get('level',self.pokemon_level(ident))}",640,522,G,self.small,True)
+        self.text(title,640,101,GOLD,self.big,True)
+        self.text(subtitle,640,166,C,self.medium,True)
+        self.text(self.words('Partner pertamamu siap memulai petualangan.',
+                             'Your first partner is ready for the adventure.'),640,686,M,self.small,True)
 
     def draw_asset_loading(self):
         self.canvas.fill((12, 19, 38))
@@ -369,14 +532,20 @@ class FlowMixin:
             # Keep every new profile inside the first sanctuary at the start;
             # the next reserve gate requires a Pokémon at level 4.
             w['level']=random.SystemRandom().randint(1,3)
+            w['egg_pattern']=random.SystemRandom().randrange(8)
             self.pokedex.request(w['starter'])
-            self.play_pokemon_cry(w['starter'])
+            self.starter_reveal={'pokemon_id':w['starter'],'pattern':w['egg_pattern'],'level':w['level'],
+                                 'timer':0.0,'return_to_setup':True}
+            self.set_mode('starter_reveal')
+            return
         elif w['step']>3:
             self.save_current()
             ident=w['starter']; key=str(ident)
-            self.life=Life(player_name=w['name'].strip(),gender=w['gender'],character=w['style'],language=self.life.language,
+            self.life=Life(player_name=w['name'].strip(),gender='unspecified',character=w['style'],
+                           trainer_versus_name=w.get('trainer_versus_name',''),language=self.life.language,
                            music_volume=self.life.music_volume,effects_volume=self.life.effects_volume,cry_volume=self.life.cry_volume,reduced_motion=self.life.reduced_motion,
                            tutorial_active=True,tutorial_step=0,
+                           starter_reveal_pending=False,starter_egg_pattern=w.get('egg_pattern',0),
                            pokemon_party=[ident],pokemon_caught=[ident],pokemon_seen=[ident],pokemon_active=[ident],
                            pokemon_levels={key:w['level']},pokemon_xp={key:0},pokemon_health={key:100})
             self.save_path=w['path']
@@ -422,7 +591,8 @@ class FlowMixin:
     def draw_setup(self):
         w=self.wizard;step=w['step']
         self.text(self.words('PETUALANG BARU','NEW ADVENTURER'),110,80,GOLD,self.big)
-        names=[self.words('Nama','Name'),self.words('Gender','Gender'),self.words('Penampilan','Appearance'),self.words('Partner acak','Random partner')]
+        names=[self.words('Nama','Name'),self.words('Potret pelatih','Trainer portrait'),
+               self.words('Karakter','Character'),self.words('Partner acak','Random partner')]
         for i,name in enumerate(names):
             self.text(f'{i+1:02} {name}',110+i*275,158,G if i<=step else M,self.font)
         if step==0:
@@ -431,18 +601,44 @@ class FlowMixin:
             self.text(w['name']+('|' if int(self.frame/30)%2 else ''),185,369,G,self.medium)
             self.text(self.words('Maksimal 18 karakter','Up to 18 characters'),160,450,M,self.small)
         elif step==1:
-            for i,(value,id_name,en_name) in enumerate((('male','Laki-laki','Male'),('female','Perempuan','Female'))):
-                self.button(self.words(id_name,en_name),(240+i*420,325,360,85),lambda v=value:self.select_gender(v),w['gender']==value)
+            portraits=getattr(self,'trainer_versus_sprites',())
+            page_size=8
+            page_count=max(1,(len(portraits)+page_size-1)//page_size)
+            w['versus_page']=max(0,min(page_count-1,int(w.get('versus_page',0))))
+            first=w['versus_page']*page_size
+            visible=portraits[first:first+page_size]
+            self.text(self.words('Pilih potret trainer untuk cut-in pertarungan',
+                                 'Choose your trainer portrait for battle cut-ins'),640,207,M,self.small,True)
+            for index,entry in enumerate(visible):
+                col=index%4;row=index//4
+                x=46+col*304;y=237+row*174
+                rect=pg.Rect(x,y,276,157)
+                self.button('',rect,lambda name=entry['name']:w.update(trainer_versus_name=name))
+                if entry['name']==w.get('trainer_versus_name'):
+                    pg.draw.rect(self.canvas,G,rect,3)
+                image=self.trainer_versus_surface(entry['name'],(246,112))
+                if image:
+                    self.canvas.blit(image,image.get_rect(center=(x+138,y+65)))
+                label=entry['name'].replace('_',' ').replace('-',' ')
+                self.text(label[:34],x+138,y+136,C,self.tiny,True)
+            self.button(self.words('‹ Sebelumnya','‹ Previous'),(260,600,220,42),
+                        lambda:w.update(versus_page=max(0,w.get('versus_page',0)-1)),w['versus_page']>0)
+            self.text(f'{w["versus_page"]+1} / {page_count}',640,621,M,self.small,True)
+            self.button(self.words('Berikutnya ›','Next ›'),(800,600,220,42),
+                        lambda:w.update(versus_page=min(page_count-1,w.get('versus_page',0)+1)),
+                        w['versus_page']<page_count-1)
         elif step==2:
-            choices=(0,1,3,4,5) if w['gender']=='male' else (2,6,7,8)
-            for i,style in enumerate(choices):
-                x=110+i*215
-                self.button('',(x,295,195,190),lambda st=style:w.update(style=st))
-                if w['style']==style:pg.draw.rect(self.canvas,G,(x+2,297,191,186),2)
-                self.text(PLAYER_STYLES[style],x+97,453,C,self.small,True)
-                self.art.character(self.canvas,x+98,413,style,3,self.frame,True,'down')
-            self.text(self.words('Sprite pelatih · Pixel-Boy + AAA · CC0',
-                                 'Trainer sprites · Pixel-Boy + AAA · CC0'),110,535,M,self.small)
+            self.text(self.words('Pilih tampilan karakter di dunia', 'Choose your in-game character sprite'),640,207,M,self.small,True)
+            for style,name in enumerate(PLAYER_STYLES):
+                col=style%3;row=style//3
+                x=170+col*320;y=236+row*122
+                rect=pg.Rect(x,y,270,108)
+                self.button('',rect,lambda st=style:w.update(style=st))
+                if w['style']==style:pg.draw.rect(self.canvas,G,rect,3)
+                self.art.character(self.canvas,x+66,y+77,style,2.25,self.frame,True,'down')
+                self.text(name,x+151,y+54,C,self.small,True)
+            self.text(self.words('Tampilan ini digunakan saat menjelajah.',
+                                 'This sprite is used while exploring.'),640,630,M,self.small,True)
         else:
             ident=w['starter'];d=self.pokemon_data(ident) or pokemon_db.detail(ident) or {}
             sprite=self.pokemon_surface(ident,180)
@@ -451,11 +647,8 @@ class FlowMixin:
             self.text(f"LEVEL {w['level']}",635,382,G,self.medium)
             self.text(' / '.join(t['type']['name'].upper() for t in d.get('types',[])),635,430,C,self.font)
             self.text(self.words('Partner pertamamu siap menjelajah!','Your first partner is ready to explore!'),635,478,M,self.small)
-        self.button(self.words('Mulai petualangan','Start adventure') if step==3 else self.words('Lanjut','Continue'),(870,655,300,57),self.next_setup,True)
-        self.button(self.words('Batal','Cancel'),(110,655,200,57),lambda:self.set_mode('title'))
-
-    def select_gender(self,value):
-        self.wizard.update(gender=value,style=0 if value=='male' else 2)
+        self.button(self.words('Mulai petualangan','Start adventure') if step==3 else self.words('Lanjut','Continue'),(870,690,300,57),self.next_setup,True)
+        self.button(self.words('Batal','Cancel'),(110,690,200,57),lambda:self.set_mode('title'))
 
     def collection_select(self,index):
         self.center_search=False
@@ -619,6 +812,27 @@ class FlowMixin:
                      'details':list(details or []),'title':title}
         self.save_current();self.play_action_sound('pickup-rare',.4);self.set_mode('reward')
 
+    def start_rocket_video(self):
+        """Start the supplied cut-in's extracted original audio in sync with its frames."""
+        self.rocket_video_index=-1
+        self.rocket_video_surface=None
+        self.rocket_video_started=time.monotonic()
+        if pg.mixer.get_init():
+            audio_path=ROOT/'assets'/'team_rocket'/'team_rocket_video_audio.ogg'
+            if audio_path.is_file():
+                try:
+                    pg.mixer.music.load(str(audio_path))
+                    pg.mixer.music.set_volume(.28*self.life.music_volume)
+                    pg.mixer.music.play()
+                    self._music_key='rocket_video'
+                except pg.error:
+                    pass
+
+    def stop_rocket_video_audio(self,fade_ms=180):
+        if pg.mixer.get_init() and getattr(self,'_music_key',None)=='rocket_video':
+            pg.mixer.music.fadeout(fade_ms)
+            self._music_key=None
+
     def open_gacha(self):
         if self.life.gacha_tickets<1:
             self.notify(self.words('Selesaikan semua daily untuk tiket.','Complete all daily quests to earn a ticket.'));return
@@ -707,6 +921,63 @@ class FlowMixin:
         inv=self.invitation
         self.canvas.fill((12,19,38))
         trainer=inv.get('trainer');pokemon=inv.get('wild')
+        if trainer:
+            elapsed=time.monotonic()-inv.setdefault('cutin_started',time.monotonic())
+            if inv.get('rocket_video') and elapsed < self.rocket_video_duration:
+                frame_index=min(len(self.rocket_video_paths)-1,int(elapsed*8)) if self.rocket_video_paths else -1
+                if frame_index >= 0 and frame_index != self.rocket_video_index:
+                    try:
+                        frame=pg.image.load(str(self.rocket_video_paths[frame_index])).convert()
+                        self.rocket_video_surface=pg.transform.smoothscale(frame,(960,720))
+                        self.rocket_video_index=frame_index
+                    except (pg.error,OSError):
+                        self.rocket_video_surface=None
+                self.canvas.fill((9,14,31))
+                if self.rocket_video_surface:
+                    self.canvas.blit(self.rocket_video_surface,(160,40))
+                self.box((0,0,1280,66),retro.PANEL,0,retro.EDGE)
+                self.text('TEAM ROCKET',640,33,retro.GOLD,self.medium,True)
+                self.box((0,760,1280,40),retro.PANEL,0,retro.EDGE)
+                self.text(self.words('Semboyan Team Rocket!  ·  Enter untuk lewati video',
+                                     'Team Rocket motto!  ·  Enter to skip video'),640,780,retro.CREAM,self.small,True)
+                progress=min(1.0,elapsed/max(.1,self.rocket_video_duration))
+                pg.draw.rect(self.canvas,retro.INK,(180,738,920,7))
+                pg.draw.rect(self.canvas,retro.GOLD,(180,738,int(920*progress),7))
+                return
+            if elapsed < 1.55:
+                progress=min(1.0,elapsed/.48)
+                eased=1-(1-progress)**3
+                self.canvas.fill((9,14,31))
+                pg.draw.polygon(self.canvas,(30,49,83),[(0,0),(760,0),(390,800),(0,800)])
+                pg.draw.polygon(self.canvas,(245,190,90),[(0,0),(12,0),(402,800),(390,800)])
+                pg.draw.polygon(self.canvas,(24,37,67),[(1280,0),(1280,800),(520,800),(900,0)])
+                pg.draw.polygon(self.canvas,(245,190,90),[(1268,0),(1280,0),(532,800),(520,800)])
+                name=trainer.get('name',self.words('Pelatih','Trainer'))
+                self.text(self.words('PENANTANG BARU','NEW CHALLENGER'),640,78,retro.GOLD,self.big,True)
+                if 'versus_sprite' not in inv:
+                    portraits=getattr(self,'trainer_versus_sprites',())
+                    player_name=getattr(self.life,'trainer_versus_name','')
+                    named_portrait=trainer.get('trainer_versus_name')
+                    matched=next((portrait for portrait in portraits
+                                  if portrait['name']==named_portrait),None)
+                    choices=[portrait for portrait in portraits if portrait['name']!=player_name] or list(portraits)
+                    inv['player_versus_name']=player_name
+                    inv['versus_sprite']=(matched or (self.pokemon_rng.choice(choices) if choices else None))
+                    inv['versus_name']=(inv['versus_sprite']['name'] if inv['versus_sprite']
+                                        else self.words('Pelatih','Trainer'))
+                player_portrait=self.trainer_versus_surface(inv.get('player_versus_name'),(440,330))
+                rival_portrait=self.trainer_versus_surface(inv['versus_name'],(440,330))
+                left_x=int(-230+500*eased);right_x=int(1510-500*eased)
+                if player_portrait:self.canvas.blit(player_portrait,player_portrait.get_rect(center=(left_x,390)))
+                if rival_portrait:self.canvas.blit(rival_portrait,rival_portrait.get_rect(center=(right_x,390)))
+                self.text(getattr(self.life,'player_name','Trainer'),left_x,587,C,self.medium,True)
+                self.text(inv['versus_name'],right_x,587,C,self.medium,True)
+                self.text('VS',640,390,retro.GOLD,self.logo_font,True)
+                self.text(name,640,143,M,self.small,True)
+                self.text(self.words('Bersiap untuk bertarung!','Get ready to battle!'),640,650,M,self.small,True)
+                self.text(self.words('Enter / Spasi untuk lanjut · Esc untuk menolak',
+                                     'Enter / Space to continue · Esc to decline'),640,700,M,self.tiny,True)
+                return
         opponent_id=int(pokemon['id']) if pokemon else int((trainer or {}).get('team',[1])[0])
         opponent_detail=self.pokemon_data(opponent_id) or pokemon_db.detail(opponent_id) or {}
         opponent_name=opponent_detail.get('name',f'Pokémon #{opponent_id}').title()
@@ -765,6 +1036,7 @@ class FlowMixin:
 
     def accept_invitation(self):
         inv=self.invitation;self.encounter_grace=25
+        self.stop_rocket_video_audio()
         if inv.get('trainer'):
             self.begin_pokemon_battle(inv['trainer']['team'][0],trainer=inv['trainer'])
         else:
@@ -781,6 +1053,12 @@ class FlowMixin:
         self.invitation=None
 
     def decline_invitation(self):
+        self.stop_rocket_video_audio()
+        trainer=(self.invitation or {}).get('trainer')
+        if trainer and trainer.get('rocket_event'):
+            trainer['rocket_triggered']=False
+            trainer['approaching']=False
+            trainer['cooldown']=max(20,int(trainer.get('cooldown',0)))
         self.invitation=None;self.encounter_grace=25;self.set_mode('game')
 
     def update_challenges(self,dt):
@@ -789,6 +1067,79 @@ class FlowMixin:
         actors=[(t,'trainer') for t in self.route_trainers+self.reserve_trainers if (t.get('scene','reserve')==self.life.scene)]
         if self.life.scene=='reserve':actors += [(p,'wild') for p in self.wild_pokemon]
         for actor,kind in actors:
+            if kind == 'trainer' and actor.get('rocket_event'):
+                behavior = actor.get('rocket_behavior', 'challenge')
+                distance = math.hypot(actor['x']-self.life.x, actor['y']-self.life.y)
+                if actor.get('cooldown', 0) > 0 or actor.get('rocket_triggered'):
+                    continue
+                if behavior == 'challenge':
+                    # This Rocket waits for the player to press E, as before.
+                    continue
+                if behavior == 'ambush':
+                    # The hidden sprite and label are revealed only when the
+                    # player gets close enough to discover the ambush.
+                    if distance <= 220:
+                        actor['rocket_revealed'] = True
+                        actor['rocket_triggered'] = True
+                        actor['cooldown'] = 45
+                        self.invitation = {'trainer': actor, 'cutin_started': time.monotonic(),
+                                           'auto_accept': True}
+                        self.set_mode('invitation')
+                        return
+                    continue
+                if behavior == 'appear':
+                    if distance <= 300:
+                        offsets = {'left': (-128, 0), 'right': (128, 0),
+                                   'up': (0, -118), 'down': (0, 118)}
+                        dx, dy = offsets.get(self.facing, (0, 118))
+                        zone = self.reserve_zone_at(self.life.x, self.life.y)
+                        px = max(zone['x'] + 48, min(zone['x'] + RESERVE_ZONE_W - 48, self.life.x + dx))
+                        py = max(zone['y'] + 48, min(zone['y'] + RESERVE_ZONE_H - 48, self.life.y + dy))
+                        blockers = self.obstacles('reserve')
+                        if any(rect.collidepoint(px, py) for rect in blockers):
+                            px = max(zone['x'] + 48, min(zone['x'] + RESERVE_ZONE_W - 48, self.life.x - dx))
+                            py = max(zone['y'] + 48, min(zone['y'] + RESERVE_ZONE_H - 48, self.life.y - dy))
+                        actor['x'], actor['y'] = float(px), float(py)
+                        actor['rocket_revealed'] = True
+                        actor['rocket_triggered'] = True
+                        actor['cooldown'] = 45
+                        self.invitation = {'trainer': actor, 'cutin_started': time.monotonic(),
+                                           'auto_accept': False}
+                        self.set_mode('invitation')
+                        return
+                    continue
+                if behavior == 'chase':
+                    if distance > 440:
+                        actor.pop('approaching', None)
+                        continue
+                    actor['rocket_revealed'] = True
+                    actor['approaching'] = True
+                    if distance > 82:
+                        step = min(distance - 72, 255 * dt)
+                        dx = (self.life.x-actor['x'])/max(1,distance)*step
+                        dy = (self.life.y-actor['y'])/max(1,distance)*step
+                        obstacles = self.obstacles('reserve')
+                        nx, ny = actor['x']+dx, actor['y']+dy
+                        if not any(rect.collidepoint(nx, ny) for rect in obstacles):
+                            actor['x'], actor['y'] = nx, ny
+                        elif not any(rect.collidepoint(nx, actor['y']) for rect in obstacles):
+                            actor['x'] = nx
+                        elif not any(rect.collidepoint(actor['x'], ny) for rect in obstacles):
+                            actor['y'] = ny
+                        else:
+                            actor['approaching'] = False
+                            actor['cooldown'] = 8
+                            continue
+                        if math.hypot(actor['x']-self.life.x, actor['y']-self.life.y) > 82:
+                            continue
+                    actor['approaching'] = False
+                    actor['rocket_triggered'] = True
+                    actor['cooldown'] = 45
+                    self.invitation = {'trainer': actor, 'cutin_started': time.monotonic(),
+                                       'auto_accept': True}
+                    self.set_mode('invitation')
+                    return
+                continue
             if kind=='wild':actor['cooldown']=max(0,actor.get('cooldown',0)-dt)
             distance=math.hypot(actor['x']-self.life.x,actor['y']-self.life.y)
             if distance>360:
@@ -807,13 +1158,21 @@ class FlowMixin:
                         actor['approaching']=False;actor['cooldown']=30
                 else:
                     actor['approaching']=False;actor['cooldown']=45
-                    self.invitation={kind:actor};self.set_mode('invitation');return
+                    self.invitation={kind:actor}
+                    if kind=='trainer':
+                        self.invitation['cutin_started']=time.monotonic()
+                        if actor.get('rocket_event'):
+                            self.invitation['rocket_video'] = True
+                            self.start_rocket_video()
+                    self.set_mode('invitation');return
 
     def overlay(self):
         custom={'profiles':self.draw_profiles,'profile_replace':self.draw_profile_replace,
                 'setup':self.draw_setup,'reward':self.draw_reward,
                 'invitation':self.draw_invitation,'asset_loading':self.draw_asset_loading,
-                'tutorial_intro':self.draw_tutorial_intro}
+                'tutorial_intro':self.draw_tutorial_intro,
+                'tutorial_skip_confirm':self.draw_tutorial_skip_confirm,
+                'starter_reveal':self.draw_starter_reveal}
         if self.mode in custom:
             self.buttons=[];self.canvas.fill((12,19,38));custom[self.mode]()
         else:super().overlay()
@@ -850,14 +1209,30 @@ class FlowMixin:
                 # Consume every key while editing the name so letters that are
                 # also game shortcuts cannot activate menus or leave setup.
                 return
-        if self.mode=='battle' and event.type==pg.KEYDOWN and self.battle and any(self.battle.get(k) for k in ('ultimate_cutin','capture','boss_intro','boss_evolution')) and event.key!=pg.K_ESCAPE:
+        if self.mode=='battle' and event.type==pg.KEYDOWN and self.battle and any(self.battle.get(k) for k in ('rocket_defeat_cutin','rocket_win_cutin')):
             return
-        if self.mode=='tutorial_intro' and event.type==pg.KEYDOWN and event.key in (pg.K_RETURN,pg.K_KP_ENTER):
-            self.begin_tutorial();return
+        if self.mode=='battle' and event.type==pg.KEYDOWN and self.battle and any(self.battle.get(k) for k in ('ultimate_cutin','capture','boss_intro','boss_evolution','victory_cutin')) and event.key!=pg.K_ESCAPE:
+            return
+        if self.mode=='tutorial_skip_confirm' and event.type==pg.KEYDOWN and event.key==pg.K_ESCAPE:
+            self.set_mode('tutorial_intro');return
         if self.mode=='battle' and event.type==pg.KEYDOWN and event.key==pg.K_UP and self.battle:
             self.battle['jump_buffer']=.14
         if self.mode=='invitation' and event.type==pg.KEYDOWN and event.key==pg.K_ESCAPE:
             self.decline_invitation();return
+        if self.mode=='invitation' and self.invitation and self.invitation.get('trainer'):
+            elapsed=time.monotonic()-self.invitation.setdefault('cutin_started',time.monotonic())
+            if (self.invitation.get('rocket_video')
+                    and elapsed<self.rocket_video_duration):
+                if event.type==pg.KEYDOWN and event.key in (pg.K_RETURN,pg.K_KP_ENTER,pg.K_SPACE):
+                    self.invitation['cutin_started']=time.monotonic()-self.rocket_video_duration
+                    self.stop_rocket_video_audio()
+                return
+            if elapsed<1.55:
+                if event.type==pg.MOUSEBUTTONDOWN or (event.type==pg.KEYDOWN and event.key in
+                        (pg.K_RETURN,pg.K_KP_ENTER,pg.K_SPACE)):
+                    self.invitation['cutin_started']=time.monotonic()-1.55
+                    self.nav_index=0
+                return
         menus=self.mode not in ('terminal','phone','game','battle','dead','evolution')
         if event.type==pg.KEYDOWN and menus:
             if self.mode in ('dex','map') and event.key==pg.K_TAB:
@@ -907,6 +1282,20 @@ class FlowMixin:
             self.life.record_daily_quest('explore',unique=str(after))
             self.life.discover_biome()
         self.last_location=after
+        if self.mode=='starter_reveal' and self.starter_reveal:
+            reveal=self.starter_reveal
+            previous=reveal['timer']
+            reveal['timer']+=dt
+            if previous<2.35<=reveal['timer'] and not reveal.get('cry_played'):
+                reveal['cry_played']=self.play_pokemon_cry(reveal['pokemon_id'])
+            if reveal['timer']>=5.25:
+                self.start_starter_reveal()
+            return
+        if (self.mode == 'invitation' and self.invitation
+                and self.invitation.get('auto_accept')
+                and time.monotonic() - self.invitation.get('cutin_started', time.monotonic()) >= 1.55):
+            self.accept_invitation()
+            return
         self.update_challenges(dt)
 
     def quit(self):

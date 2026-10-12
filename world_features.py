@@ -82,6 +82,22 @@ COLLECTION_COSMETICS = (
     (100, "legend-aura", "Legend Aura", "Aura Legenda"),
 )
 
+# Furnishings can be collected and equipped in the player's home.  The slot
+# keeps placements from piling on top of each other, while costs give farm
+# materials another useful sink.
+HOME_DECOR = (
+    ("wall_photo", "wall", "Sunset Photo", "Foto Senja", "🌅", 0, 0),
+    ("route_map", "wall", "Explorer Map", "Peta Penjelajah", "🗺️", 80, 2),
+    ("badge_wall", "wall", "Collection Board", "Papan Koleksi", "🏅", 120, 3),
+    ("fern", "plant", "Little Fern", "Pakis Mini", "🪴", 0, 0),
+    ("flower_pot", "plant", "Blooming Pot", "Pot Berbunga", "🌷", 55, 1),
+    ("crystal_lamp", "plant", "Crystal Lamp", "Lampu Kristal", "🔮", 130, 2),
+    ("trophy_shelf", "trophy", "Trophy Shelf", "Rak Trofi", "🏆", 150, 3),
+    ("pokeball_case", "trophy", "Poké Ball Case", "Kotak Poké Ball", "🔴", 90, 2),
+    ("berry_rug", "rug", "Berry Rug", "Karpet Beri", "🫐", 65, 1),
+    ("star_rug", "rug", "Star Rug", "Karpet Bintang", "⭐", 100, 2),
+)
+
 # A small, retryable field riddle protects each hidden cache.
 PUZZLES = {
     "meadow": (("Which type thrives among wildflowers?", "Tipe apa yang tumbuh subur di antara bunga liar?"), ("Grass", "Water", "Steel"), 0),

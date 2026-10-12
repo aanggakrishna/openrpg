@@ -28,6 +28,10 @@ class FighterMixin:
                 b.pop('ko_anim',None)
                 if ko.get('next_pokemon') is not None and not b.get('result'):
                     self.switch_battle_pokemon(ko['next_pokemon'],True)
+                elif (ko.get('owner')=='player' and b.get('result')
+                      and (b.get('trainer') or {}).get('rocket_event')
+                      and b.get('player_hp',0)<=0 and not b.get('rocket_win_cutin')):
+                    b['rocket_win_cutin']={'timer':2.35,'duration':2.35}
             return
         super().update_battle(dt)
         if self.battle:

@@ -1,4 +1,5 @@
 """Cached pixel-art scenery using complete bundled sprites and shared map geometry."""
+import math
 import random
 import pygame as pg
 from world_regions import (BIOMES, PALETTES, reserve_layout, scene_layout,
@@ -242,14 +243,24 @@ class Scenery:
             # A small recognizable archaeological structure for remaining sites.
             rect(stone,(x-66,y-62,132,56));roof([(x-74,y-64),(x,y-125),(x+74,y-64)],light)
 
-    def building(self,surface,kind,x,y):
+    def building(self,surface,kind,x,y,biome='meadow'):
         self.art.grid(surface,'tiny-town',[[52,53,53,55,53,53,54],[64,65,65,65,65,65,66],
             [72,73,73,73,73,73,75],[84,73,84,85,73,84,73]],x-98,y-138,28)
+        biome_accent={
+            'meadow':(194,66,73),'forest':(114,151,77),'desert':(50,137,167),
+            'coast':(45,139,178),'swamp':(74,139,124),'cave':(133,102,166),
+            'badlands':(168,103,72),'mountain':(107,145,168),'volcano':(207,92,49),
+            'snow':(82,151,183),'sky':(78,150,191),'crystal':(142,101,190),
+            'ancient_forest':(82,125,73),'deepsea':(46,132,166),
+            'dragon_valley':(159,87,91),'legendary_ruins':(153,118,73),
+        }.get(biome,(194,66,73))
         if kind!='center':
             roof=pg.Surface((196,48),pg.SRCALPHA)
-            roof.fill((58,105,180,110) if kind=='hotel' else (213,170,57,85))
+            roof_color=PALETTES[biome][4] if kind=='hotel' else PALETTES[biome][1]
+            roof.fill((*roof_color,112))
             surface.blit(roof,(x-98,y-138))
-        color={'center':(212,78,83),'restaurant':(222,163,83),'hotel':(94,151,192)}[kind]
+        color={'center':biome_accent,'restaurant':PALETTES[biome][1],
+               'hotel':PALETTES[biome][4]}[kind]
         pg.draw.rect(surface,(34,47,57),(x-30,y-149,60,22));pg.draw.rect(surface,color,(x-27,y-146,54,16))
         if kind=='center':
             pg.draw.circle(surface,(247,239,211),(x,y-138),7);pg.draw.line(surface,color,(x-7,y-138),(x+7,y-138),3)
@@ -286,7 +297,7 @@ class Scenery:
                 else:
                     self.art.tile(surface,'tiny-town',2,x,y,18)
             elif biome=='snow':pg.draw.rect(surface,(242,247,238),(x,y,5,3))
-        for kind,x,y in layout['buildings']:self.building(surface,kind,x,y)
+        for kind,x,y in layout['buildings']:self.building(surface,kind,x,y,biome)
         for side,x,y in layout['gates']:self.gate(surface,x,y,side,biome)
         return surface
 
