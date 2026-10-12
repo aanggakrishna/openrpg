@@ -556,6 +556,8 @@ class LegacyGame:
         """Return neighboring biome gates around the player's current region."""
         zone_index = reserve_index_at(self.life.x, self.life.y)
         zone = RESERVE_ZONES[zone_index]
+        cleared_bosses = {int(value) for value in self.life.reserve_space_bosses
+                          if str(value).lstrip("-").isdigit()}
         col, row = RESERVE_GRID_POSITIONS[zone_index]
         grid_to_index = {position: index for index, position in enumerate(RESERVE_GRID_POSITIONS)}
         gates = []
@@ -577,7 +579,11 @@ class LegacyGame:
             gates.append({"direction": direction, "x": x, "y": y, "target": target,
                           "col": nc, "row": nr,
                           "required_level": RESERVE_LEVEL_REQUIREMENTS[target_index],
-                          "boss_defeated": zone_index in self.life.reserve_space_bosses})
+                          "boss_defeated": zone_index in cleared_bosses,
+                          # A cleared neighboring sanctuary stays reachable as
+                          # a return route, even if the current team's level
+                          # later drops after a Team Rocket theft.
+                          "return_route_open": target_index in cleared_bosses})
         return gates
 
     def reserve_boss_threshold(self, zone_index):
@@ -589,7 +595,12 @@ class LegacyGame:
         return max(1, min(5, int(thresholds[key])))
 
     def player_progress_level(self):
+        # Space access is permanent progression. Rocket can temporarily steal
+        # a Pokémon from the party, but its saved level remains in this map.
         levels = [self.pokemon_level(ident) for ident in self.life.pokemon_party]
+        levels.extend(max(1, min(100, int(level)))
+                      for level in self.life.pokemon_levels.values()
+                      if str(level).lstrip("-").isdigit())
         return max(levels, default=1)
 
     def missing_sanctuary_guardians(self):
@@ -709,7 +720,7 @@ class LegacyGame:
         gate = next((item for item in self.reserve_gates() if item["direction"] == direction), None)
         if not gate:
             return
-        if not gate["boss_defeated"]:
+        if not gate["boss_defeated"] and not gate["return_route_open"]:
             zone = RESERVE_ZONES[reserve_index_at(self.life.x, self.life.y)]
             required_boss = min(100, max(10, RESERVE_LEVEL_REQUIREMENTS[RESERVE_ZONES.index(zone)] + 5))
             self.notify(f"Gerbang terkunci. Kalahkan Pokémon penjaga Lv.{required_boss} di {zone['name']} dulu.")
@@ -4213,7 +4224,7 @@ class LegacyGame:
             gx, gy = sx(gate["x"]), sy(gate["y"])
             if -80 < gx < W + 80 and 190 < gy < 592 + 135:
                 required = gate["required_level"]
-                if zone_index not in self.life.reserve_space_bosses:
+                if not gate["boss_defeated"] and not gate["return_route_open"]:
                     gate_label = "TERKUNCI · KALAHKAN BOSS"
                 elif gate["boss_defeated"]:
                     gate_label = "GERBANG · " + gate["target"]["name"]
@@ -4224,8 +4235,15 @@ class LegacyGame:
             if -130 < sx(cx) < W + 130 and 180 < sy(cy) < H + 100:
                 self.label("POKÉMON CENTER · E", sx(cx), sy(cy) - 114)
         zone = self.reserve_zone_at(self.life.x, self.life.y)
-        self.label("RESTORAN · E", sx(zone["x"] + 250), sy(zone["y"] + 1070) - 59)
-        self.label("HOTEL · E", sx(zone["x"] + 1030), sy(zone["y"] + 1070) - 59)
+        zone_index = RESERVE_ZONES.index(zone)
+        hospitality_buildings = {
+            kind: (zone["x"] + x, zone["y"] + y)
+            for kind, x, y in reserve_layout(zone_index)["buildings"]
+            if kind in ("restaurant", "hotel")
+        }
+        for kind, (building_x, building_y) in hospitality_buildings.items():
+            label = "RESTORAN · E" if kind == "restaurant" else "HOTEL · E"
+            self.label(label, sx(building_x), sy(building_y) - 59)
         if not any(zone["x"] <= cx < zone["x"] + RESERVE_ZONE_W
                    and zone["y"] <= cy < zone["y"] + RESERVE_ZONE_H for cx, cy in RESERVE_CENTERS):
             self.label("POKÉMON CENTER · E", sx(zone["x"] + RESERVE_ZONE_W // 2),
