@@ -5,6 +5,36 @@ VARIANTS={'wood':'🪵','branch':'🪵','leaf':'🍃','seed':'🌱','vine':'🌿
           'storm':'⛈️','thunder':'⚡','blizzard':'🌨️','snow':'❄️','bubble':'🫧','surf':'🌊','wave':'🌊',
           'swift':'⭐','meteor':'☄️','moon':'🌙','web':'🕸️','wind':'🌪️','sand':'🏜️','mud':'🟤','petal':'🌸'}
 
+# A type is still the authority for damage and effectiveness.  These visual
+# variants only make two moves of the same type read differently in battle.
+MOVE_EMOJI = {
+    'fire': (('blast', '💥'), ('flare', '☀️'), ('meteor', '☄️'), ('burn', '🔥')),
+    'water': (('surf', '🌊'), ('wave', '🌊'), ('bubble', '🫧'), ('aqua', '💧'), ('hydro', '💦')),
+    'electric': (('thunder', '⚡'), ('volt', '🔋'), ('charge', '⚡'), ('shock', '⚡')),
+    'grass': (('seed', '🌱'), ('leaf', '🍃'), ('petal', '🌸'), ('vine', '🌿'), ('solar', '☀️')),
+    'ice': (('blizzard', '🌨️'), ('snow', '🌨️'), ('freeze', '🧊'), ('ice', '❄️')),
+    'ground': (('sand', '🏜️'), ('mud', '🟤'), ('quake', '🌎'), ('earth', '🪨')),
+    'rock': (('slide', '🪨'), ('stone', '🪨'), ('rock', '🪨')),
+    'flying': (('wind', '🌪️'), ('gust', '💨'), ('hurricane', '🌪️'), ('air', '💨')),
+    'poison': (('smog', '🟣'), ('sludge', '🟣'), ('toxic', '☠️')),
+    'psychic': (('psy', '🔮'), ('mind', '🧠'), ('dream', '💫')),
+    'bug': (('web', '🕸️'), ('swarm', '🐝'), ('bug', '🐛')),
+    'ghost': (('shadow', '👻'), ('night', '🌑'), ('phantom', '👻')),
+    'dragon': (('draco', '🐉'), ('dragon', '🐉'), ('rage', '🐲')),
+    'steel': (('iron', '⚙️'), ('metal', '🛡️'), ('steel', '⚙️')),
+    'fairy': (('moon', '🌙'), ('dazzl', '🌟'), ('charm', '💖')),
+    'fighting': (('kick', '🦵'), ('punch', '🥊'), ('palm', '✋')),
+    'dark': (('dark', '🌑'), ('night', '🌙'), ('snarl', '🐺')),
+    'normal': (('swift', '⭐'), ('head', '💫'), ('slam', '💥')),
+}
+
+def move_emoji(typ, name):
+    lowered = (name or '').lower()
+    for token, emoji in MOVE_EMOJI.get(typ, ()):
+        if token in lowered:
+            return emoji
+    return EMOJI.get(typ, '💥')
+
 def skill(move,ultimate=False):
     typ=move['type']['name']; name=move['name'];power=move.get('power') or 50
     status=move.get('damage_class',{}).get('name')=='status'
@@ -13,7 +43,7 @@ def skill(move,ultimate=False):
     beam=any(w in name for w in ('beam','flame','breath','pump'))
     # Skill icon follows the move's actual type. This also keeps coverage moves
     # on dual-type Pokémon honest: a secondary-type move carries its own icon.
-    emoji=EMOJI.get(typ,'💥')
+    emoji=move_emoji(typ,name)
     return {'name':name.replace('-',' ').title(),'type':typ,'power':min(140,power),'accuracy':move.get('accuracy') or 100,
             'emoji':emoji,'damage_class':move.get('damage_class',{}).get('name','special'),
             'style':'status' if status else 'area' if area else 'beam' if beam else 'melee' if melee else 'projectile',

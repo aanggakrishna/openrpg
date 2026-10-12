@@ -15,6 +15,20 @@ WEATHER_TYPES={'Cerah':({'fire','flying'},{'water'}),'Berawan':({'normal','bug',
 WEATHER_EMOJI={'Cerah':'☀','Berawan':'☁','Hujan':'🌧','Salju':'❄','Badai':'⛈'}
 from combat_rules import EMOJI, VARIANTS, skill, fighter_loadout
 
+# Skills leave a short-lived tactical mark on the stage.  The marks are
+# deliberately local and expire after seven seconds, so real-time movement
+# remains important instead of turning every battle into a permanent hazard.
+ARENA_MARKS={
+    'fire': ('🔥', 'RUMPUT TERBAKAR', 'burn'),
+    'water': ('💧', 'GENANGAN AIR', 'water'),
+    'electric': ('⚡', 'AIR TERSETRUM', 'charged'),
+    'ground': ('🪨', 'DINDING BATU', 'wall'),
+    'rock': ('🪨', 'DINDING BATU', 'wall'),
+    'grass': ('🌿', 'SEMAK PERLINDUNGAN', 'bush'),
+    'ice': ('❄️', 'LANTAI ES', 'ice'),
+    'flying': ('🌪️', 'ARUS ANGIN', 'gust'),
+}
+
 class FighterMixin:
     def update_battle(self,dt):
         b=self.battle
@@ -49,7 +63,11 @@ class FighterMixin:
         super().prepare_battle()
         b=self.battle
         if not b:return
-        b.setdefault('shots',[]);b.setdefault('impacts',[]);b.setdefault('cooldowns',{})
+        b.setdefault('shots',[]);b.setdefault('impacts',[]);b.setdefault('cooldowns',[])
+        # Old saves and interrupted battles can carry a list or a dict.  The
+        # cooldown table must be a dict before combat starts.
+        if not isinstance(b['cooldowns'],dict): b['cooldowns']={}
+        b.setdefault('arena_effects',[]);b.setdefault('arena_combo','')
         b.setdefault('guard',100.0);b.setdefault('player_vx',0.0);b.setdefault('enemy_vy',0.0)
         b.setdefault('guard_break',0.0);b.setdefault('enemy_decision',.6)
         b.setdefault('player_stun_timer',0.0);b.setdefault('enemy_stun_timer',0.0)
@@ -201,6 +219,122 @@ class FighterMixin:
         height_dm=(self.pokemon_data(ident) or {}).get('height',10)
         height_m=max(.1,float(height_dm)/10)
         return int(round(max(44,min(112,68*height_m**.42))))
+
+    def activate_arena_effect(self, shot, target):
+        """Create a 7 second stage effect after an elemental skill connects."""
+        b=self.battle
+        if not b or shot.get('type') not in ARENA_MARKS or shot.get('arena_marked'):
+            return
+        shot['arena_marked']=True
+        move_type=shot['type']; emoji,label,kind=ARENA_MARKS[move_type]
+        owner=shot['owner']
+        # Grass is placed around its caster to make a usable hiding spot;
+        # every other mark forms where the hit landed.
+        if kind=='bush':
+            x=b[owner+'_x']; y=b.get(owner+'_y',0)
+        else:
+            x=b[target+'_x']; y=b.get(target+'_y',0)
+        effects=b.setdefault('arena_effects',[])
+        combo=''
+        water=next((effect for effect in effects if effect.get('kind') in ('water','charged') and effect.get('timer',0)>0),None)
+        fire=next((effect for effect in effects if effect.get('kind')=='burn' and effect.get('timer',0)>0),None)
+        if move_type=='electric' and water:
+            kind,label,emoji='charged','AIR TERSETRUM','⚡'
+            x,y=water['x'],water['y']; combo='💧 + ⚡  AIR TERSETRUM!'
+            water['timer']=0
+        elif move_type=='ice' and water:
+            kind,label,emoji='ice','AIR MEMBEKU','🧊'
+            x,y=water['x'],water['y']; combo='💧 + ❄️  LANTAI ES!'
+            water['timer']=0
+        elif move_type=='flying' and fire:
+            kind,label,emoji='wildfire','API MENYEBAR','🔥'
+            x,y=fire['x'],fire['y']; combo='🔥 + 🌪️  API MENYEBAR!'
+            fire['timer']=0
+        elif move_type=='fire' and any(effect.get('kind')=='bush' and effect.get('timer',0)>0 for effect in effects):
+            kind,label,emoji='wildfire','SEMAK TERBAKAR','🔥'
+            combo='🌿 + 🔥  SEMAK TERBAKAR!'
+        effect={'type':move_type,'kind':kind,'label':label,'emoji':emoji,'owner':owner,
+                'x':float(x),'y':float(y),'timer':7.0,'duration':7.0,'tick':1.0,
+                'radius':165 if kind in ('burn','wildfire','charged') else 128}
+        effects[:] = [entry for entry in effects if entry.get('timer',0)>0 and entry.get('kind')!=kind]
+        effects.append(effect)
+        # Keep the scene legible on small displays: at most three marks can
+        # coexist.  The newest effect always wins if the stage is crowded.
+        if len(effects)>3: del effects[:-3]
+        b['arena_combo']=combo
+        b['arena_combo_timer']=2.4 if combo else 0
+        b['phase']=combo or f'{emoji} {label} · 7 dtk'
+        if kind=='gust':
+            direction=1 if owner=='player' else -1
+            b[target+'_x']=max(55,min(1225,b[target+'_x']+direction*105))
+
+    def update_arena_effects(self,dt):
+        b=self.battle
+        if not b:return
+        b['arena_combo_timer']=max(0.0,b.get('arena_combo_timer',0)-dt)
+        active=[]
+        for effect in b.get('arena_effects',[]):
+            effect['timer']-=dt; effect['tick']-=dt
+            if effect['timer']<=0: continue
+            if effect['kind'] in ('burn','wildfire','charged') and effect['tick']<=0:
+                effect['tick']+=1.0
+                for target in ('player','enemy'):
+                    distance=math.hypot(b[target+'_x']-effect['x'],b.get(target+'_y',0)-effect['y'])
+                    if distance>effect['radius']: continue
+                    # The caster is also endangered by their own fire and
+                    # electric water, so positioning has real consequences.
+                    damage=3 if effect['kind']=='charged' else 2
+                    hpkey='player_hp' if target=='player' else 'wild_hp'
+                    b[hpkey]=max(0,b[hpkey]-damage)
+                    b['hit_flash' if target=='player' else 'enemy_flash']=.14
+                    if target=='player': self.save_battle_player_hp()
+                    if b[hpkey]<=0 and not b.get('ko_anim'):
+                        ident=b['player_id'] if target=='player' else b['wild_id']
+                        b['ko_anim']={'owner':target,'pokemon_id':ident,'timer':.82 if target=='player' else 1.0,
+                                      'duration':.82 if target=='player' else 1.0,'next_pokemon':None}
+                        b['shots']=[]
+                        if target=='enemy': self._win_battle()
+                        else: b['result']=self.words('Tim KO / Esc kembali','Team KO / Esc to return')
+            active.append(effect)
+        b['arena_effects']=active
+
+    def draw_arena_effects(self,b,ground=606):
+        """Render stage marks behind fighters, with a timer and clear icon."""
+        for effect in b.get('arena_effects',[]):
+            x=int(effect['x']); y=int(ground+effect.get('y',0))
+            radius=int(effect.get('radius',128)*(0.76+0.24*min(1,effect['timer'])))
+            kind=effect['kind']; color=COLORS.get(effect.get('type'),retro.GOLD)
+            overlay=pg.Surface((radius*2+12,72),pg.SRCALPHA)
+            if kind in ('water','charged','ice'):
+                fill=(70,163,231,105) if kind!='ice' else (197,239,255,120)
+                pg.draw.ellipse(overlay,fill,(6,19,radius*2,43))
+                for index in range(4):
+                    yy=30+index*8
+                    pg.draw.arc(overlay,(224,250,255,185),(18+index*13,yy,radius*2-36,16),.2,2.7,2)
+                if kind=='charged':
+                    for index in range(5):
+                        px=24+index*(radius*2-44)//4
+                        pg.draw.line(overlay,(255,234,90,225),(px,24),(px-8,54),3)
+            elif kind in ('burn','wildfire'):
+                pg.draw.ellipse(overlay,(229,78,43,72),(6,24,radius*2,36))
+                for index in range(7):
+                    px=18+index*(radius*2-28)//6; height=18+(index%3)*9
+                    pg.draw.polygon(overlay,(255,161,56,210),[(px,57),(px+8,57),(px+4,57-height)])
+            elif kind=='wall':
+                pg.draw.rect(overlay,(112,105,100,240),(radius-22,5,44,62))
+                for yy in range(11,64,16): pg.draw.line(overlay,(177,167,148,220),(radius-19,yy),(radius+19,yy),3)
+            elif kind=='bush':
+                for index in range(6):
+                    px=18+index*(radius*2-36)//5
+                    pg.draw.circle(overlay,(74,152+(index%2)*22,78,225),(px,48-(index%3)*8),20)
+            elif kind=='gust':
+                for index in range(4):
+                    yy=20+index*13
+                    pg.draw.arc(overlay,(206,242,255,190),(16,yy,radius*2-30,18),.2,2.8,3)
+            self.canvas.blit(overlay,(x-radius-6,y-64))
+            if effect['timer']>0:
+                self.emoji(effect['emoji'],(x,y-82),26)
+                self.text(f"{effect['timer']:.0f}s",x,y-108,retro.CREAM,self.tiny,True)
 
     def fighter_speed(self,ident,who='player'):
         detail=self.pokemon_data(ident) or {}
@@ -396,8 +530,20 @@ class FighterMixin:
         target_speed=axis*self.fighter_speed(ident,who)
         vx=b.get(who+'_vx',0)
         acceleration=1600 if axis else 1900
+        for effect in b.get('arena_effects',[]):
+            if math.hypot(x-effect['x'],y-effect.get('y',0)) > effect.get('radius',128):
+                continue
+            if effect['kind'] in ('water','charged'):
+                target_speed*=.62
+            elif effect['kind']=='ice':
+                # Ice keeps momentum, so changing direction takes longer.
+                acceleration=min(acceleration,430)
         vx+=max(-acceleration*dt,min(acceleration*dt,target_speed-vx))
         x=max(55,min(1225,x+vx*dt))
+        for effect in b.get('arena_effects',[]):
+            if effect['kind']=='wall' and effect.get('owner')!=who and abs(x-effect['x'])<34:
+                x=b[who+'_x'];vx=0
+                break
         types={t['type']['name'] for t in (self.pokemon_data(ident) or {}).get('types',[])}
         can_dive='ground' in types or ('water' in types and b.get('arena_style')=='water')
         if who=='player' and y>=0 and (down and can_dive or y>0):
@@ -443,6 +589,9 @@ class FighterMixin:
             puff['vy']+=125*dt
             if puff['ttl']>0:dust.append(puff)
         b['dust_particles']=dust
+        self.update_arena_effects(dt)
+        if b.get('ko_anim') or b.get('result'):
+            return
         for key in b['cooldowns']:b['cooldowns'][key]=max(0,b['cooldowns'][key]-dt)
         b['jump_buffer']=max(0,b.get('jump_buffer',0)-dt)
         guarding=keys[pg.K_s] and b['guard']>0 and not b['guard_break'] and b['player_stun_timer']<=0
@@ -554,6 +703,11 @@ class FighterMixin:
             b['block_flash']=.28
             return True
         if shot['ultimate']:damage=int(damage*1.9)
+        # A grass-created bush hides its owner while they stay within it.
+        sheltered=any(effect.get('kind')=='bush' and effect.get('owner')==target
+                      and math.hypot(b[target+'_x']-effect['x'],b.get(target+'_y',0)-effect.get('y',0))<=effect.get('radius',128)
+                      for effect in b.get('arena_effects',[]))
+        if sheltered: damage=max(1,int(damage*.72))
         if defending:
             damage=max(1,int(damage*(.40 if shot.get('ultimate') else .15)));b['block_flash']=.22
             if target=='player':b['guard']=max(0,b['guard']-12)
@@ -567,6 +721,7 @@ class FighterMixin:
             stunned=True
         self.play_hit_cry(ident)
         b['phase']=('STUN! ' if stunned else 'BLOCK ' if defending else '')+f'-{damage} HP'
+        self.activate_arena_effect(shot,target)
         if target=='player':
             self.save_battle_player_hp()
             if b['player_hp']<=0:
@@ -592,7 +747,12 @@ class FighterMixin:
                 radius=int(10+shot['age']/shot['windup']*18)
                 pg.draw.circle(self.canvas,color,(int(shot['sx']),int(shot['sy'])),radius,2)
                 continue
-            size=74 if shot['ultimate'] else 25
+            # Large moves look physically large: move power and ultimate
+            # status both scale the emoji/projectile rather than using one
+            # fixed icon size for every attack.
+            power=max(20,int(shot.get('power',50)))
+            size=int(26+min(46,power*.32))
+            if shot['ultimate']: size=max(92,int(size*1.65))
             if shot['style']=='beam':
                 pg.draw.line(self.canvas,(255,248,220),(shot['sx'],shot['sy']),(shot['x'],shot['y']),20 if shot['ultimate'] else 4)
                 pg.draw.line(self.canvas,color,(shot['sx'],shot['sy']),(shot['x'],shot['y']),12 if shot['ultimate'] else 4)

@@ -5826,6 +5826,14 @@ class LegacyGame:
         if active_buffs:
             self.text("  ·  ".join(active_buffs), W // 2, 105 if opponent_count > 1 else 89,
                       (255, 218, 100), self.tiny, True)
+        arena_marks = [f"{effect['emoji']} {effect['label']} {effect['timer']:.0f}s"
+                       for effect in b.get("arena_effects", []) if effect.get("timer", 0) > 0]
+        if arena_marks:
+            self.box((440, 134, 400, 27), (28, 46, 57), 7)
+            self.text(" · ".join(arena_marks)[:56], W // 2, 148, (154, 229, 195), self.tiny, True)
+        if b.get("arena_combo_timer", 0) > 0 and b.get("arena_combo"):
+            self.box((394, 166, 492, 29), (76, 48, 42), 7, retro.GOLD)
+            self.text(b["arena_combo"], W // 2, 180, (255, 224, 132), self.tiny, True)
         if b.get("dungeon_round_label"):
             self.text(b["dungeon_round_label"], W // 2, 87, CREAM, self.tiny, True)
         elif opponent_count > 1:
@@ -5849,6 +5857,10 @@ class LegacyGame:
             for rung_y in range(py + 22, ground - 5, 22):
                 pg.draw.line(self.canvas, (197, 166, 119), (wall_x + 3, rung_y),
                              (wall_x + wall_width - 3, rung_y), 3)
+        # Seven-second elemental marks live on the arena itself.  They render
+        # before fighters, so water, flame, bushes and stone walls feel like
+        # part of the stage rather than an icon glued over a Pokémon.
+        self.draw_arena_effects(b, ground)
         for fruit in b.get("fruits", []):
             fx, fy = int(fruit["x"]), ground + int(fruit.get("y", 0)) - 20
             pg.draw.circle(self.canvas, (255, 238, 165), (fx, fy), 14, 2)
