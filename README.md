@@ -18,6 +18,18 @@ python3 -m venv .venv
 .venv/bin/python main.py
 ```
 
+### Build the macOS app
+
+On a Mac, build a standalone `.app` with PyInstaller. The build includes the project's `assets/` folder and does not require Python or pip on the machine that runs the finished app.
+
+```sh
+.venv/bin/python -m pip install pyinstaller
+.venv/bin/python -m PyInstaller --noconfirm build/pyinstaller/OpenRPG.spec
+ditto -c -k --sequesterRsrc --keepParent dist/OpenRPG.app dist/OpenRPG-macOS.zip
+```
+
+The app is created at `dist/OpenRPG.app`; the shareable archive is `dist/OpenRPG-macOS.zip`. Build it on the target Mac architecture (Apple Silicon or Intel). These generated files are kept out of Git because the packaged app is larger than GitHub's per-file upload limit.
+
 After pulling updates, run the `pip install -r requirements.txt` command again so Python installs the bundled CA certificates used for secure PokéAPI downloads.
 
 Select **New Game**, choose an empty profile, enter a name, and finish character setup. The game gives you a random low-level starter Pokémon. Progress is saved automatically; existing saves remain supported.
