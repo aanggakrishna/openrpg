@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 import queue
+import time
 import pygame as pg
 import retro
 import pokemon_db
@@ -23,6 +24,7 @@ class OnlineMixin:
         self.net=None;self.online_state={};self.online_error='';self.online_input=None;self.online_input_text=''
         self.online_url='http://127.0.0.1:8765';self.online_code='';self.online_target=0;self.trade_give=0;self.trade_want=0;self.trade_price=0
         self.online_images={};self.online_scaled_images={};self.online_team_page=0;self.media_prune_timer=0.;self.online_terminal=False;self.online_last_hp={};self.online_audio_id=None;self.online_audio_seq=0;self.online_audio_result=False;self.online_visual_positions={}
+        self.online_battle_help_id=None;self.online_battle_help_until=0.
         self.online_room_background=None;self.online_room_background_key=None
         super().__init__(*args,**kwargs)
         try:self.online_url=json.loads((ROOT/'.openrpg/online/preferences.json').read_text()).get('url',self.online_url)
@@ -428,6 +430,8 @@ class OnlineMixin:
 
     def draw_online_battle(self):
         b=self.online_state['battle'];me=self.online_state.get('me',{});own=b['fighters'].get(me.get('id'))
+        if self.online_battle_help_id!=b['id']:
+            self.online_battle_help_id=b['id'];self.online_battle_help_until=time.monotonic()+20.
         self.canvas.fill((22,31,55));pg.draw.rect(self.canvas,(55,71,87),(0,570,1280,200))
         for i in range(7):
             x=i*210-80;y=300+(i%3)*32
@@ -465,8 +469,36 @@ class OnlineMixin:
             glyph=self.emoji_font.render(effect['emoji'],False,C);glyph=pg.transform.scale(glyph,(25,25))
             self.canvas.blit(glyph,glyph.get_rect(center=(x,y-84)))
             self.text(f"{effect['label']} {effect['timer']:.0f}s",x,y-109,C,self.tiny,True)
-        self.text(f"{max(0,math.ceil(b['remaining'])):02d}",640,40,GOLD,self.big,True)
-        self.text(f"{b['weather'].upper()} / {b['arena'].upper()} / "+(f"STAGE {b['stage']+1}/4" if b['tier'] else 'PVP'),640,85,G,self.small,True)
+        # Mirror the local fight HUD: equal-height framed HP panels, charge
+        # meters below the player's HP, a centered top timer, and a clear
+        # arena/status strip underneath the panels.
+        foe=next((fighter for uid,fighter in b['fighters'].items()
+                  if own and uid!=me.get('id') and fighter['side']!=own['side']),None)
+        self.box((50,24,490,148),(32,51,48),14)
+        self.box((740,24,490,148),(32,51,48),14)
+        if own:
+            player=own['team'][own['slot']]
+            self.text(player['name'][:22],76,36,C,self.medium)
+            self.text(f"ONLINE · Lv.{player.get('level',1)}",443,52,M,self.tiny,True)
+            self._fight_bar(76,77,440,player['hp'],player['maximum'],left=True)
+            self.text('ULTIMATE',76,120,GOLD,self.tiny)
+            pg.draw.rect(self.canvas,(18,27,44),(151,123,365,8))
+            pg.draw.rect(self.canvas,GOLD,(151,123,int(365*max(0,min(100,own.get('energy',0)))/100),8))
+            self.text('S · GUARD',76,140,(158,204,233),self.tiny)
+            pg.draw.rect(self.canvas,(55,71,87),(151,143,170,8))
+            if own.get('guard'):
+                pg.draw.rect(self.canvas,(108,194,246),(151,143,170,8))
+        if foe:
+            enemy=foe['team'][foe['slot']]
+            self.text(enemy['name'][:22],764,36,C,self.medium)
+            self.text(f"Lv.{enemy.get('level',1)}",1158,52,M,self.tiny,True)
+            self._fight_bar(764,77,440,enemy['hp'],enemy['maximum'],left=False)
+        self.box((558,24,164,42),(32,51,48),12)
+        seconds=max(0,math.ceil(b['remaining']))
+        self.text(f"{seconds//60:02}:{seconds%60:02}",640,45,GOLD,self.medium,True)
+        self.box((400,174,480,52),(25,38,58),10,retro.EDGE)
+        self.text(f"{b['weather'].upper()} · {b['arena'].upper()} ARENA",640,188,G,self.tiny,True)
+        self.text((f"STAGE {b['stage']+1}/4" if b['tier'] else 'PLAYER VS PLAYER'),640,209,C,self.tiny,True)
         for uid,f in b['fighters'].items():
             f=dict(f);f['x'],f['y']=self.online_position(b['id']+uid,f['x'],f['y'])
             p=f['team'][f['slot']];size=105 if p.get('boss') else 70
@@ -532,13 +564,45 @@ class OnlineMixin:
             else:self.text(e['text'],e['x'],e['y'],GOLD,self.small,True)
         if own:
             p=own['team'][own['slot']]
-            self.text(f"{p['name']} / HP {p['hp']}/{p['maximum']} / ULT {int(own['energy'])}%",35,35,C,self.font)
-            for i,move in enumerate(p['moves']):
-                prefix=(move.get('effect_label','')+' · ') if i==0 and move.get('effect_label') else ''
-                self.text(f"{'QWE'[i]} {move['emoji']} {prefix}{move['name']} {own['cooldowns'][i+1]:.1f}s",35,660+i*25,G,self.small)
-            ultimate=p.get('ultimate') or {}
-            self.text(f"R {ultimate.get('emoji','✨')} {ultimate.get('name','Ultimate')} / {own['cooldowns'][4]:.1f}s",700,660,GOLD,self.small)
-        self.text('Arrows / A close / S guard / Q control / W close / E ranged / R ultimate / 1-3 team',35,615,M,self.small)
+            self.text(f"{p['name']} / HP {p['hp']}/{p['maximum']}",35,35,C,self.font)
+            self.text('S · GUARD',35,65,(158,204,233),self.tiny)
+            pg.draw.rect(self.canvas,(55,71,87),(112,67,180,8))
+            if own.get('guard'):
+                pg.draw.rect(self.canvas,(108,194,246),(112,67,180,8))
+            actions=[(key,move,own['cooldowns'][i+1]) for i,(key,move) in enumerate(zip('QWE',p['moves']))]
+            actions.append(('R',p.get('ultimate') or {},own['cooldowns'][4]))
+            for i,(key,move,cooldown) in enumerate(actions):
+                x=25+i*307;y=614
+                self.box((x,y,294,62),retro.PANEL)
+                self.text(key,x+13,y+8,GOLD if cooldown<=0 else M,self.font,True)
+                glyph=move.get('emoji','✨');self.text(glyph,x+48,y+7,C,self.font)
+                label=move.get('name','Ultimate')
+                if i==0 and move.get('effect_label'):label=move['effect_label']+' · '+label
+                if len(label)>25:label=label[:23]+'…'
+                suffix=(f'{cooldown:.1f}s' if cooldown>0 else
+                        ('READY' if i<3 or own.get('energy',0)>=100 else 'CHARGING'))
+                self.text(f'{label}  {suffix}',x+79,y+10,G if cooldown<=0 else M,self.small)
+            # The same team-switch keys as local combat, shown as compact
+            # square portraits with a per-Pokémon health bar.
+            for row,member in enumerate(own.get('team',[])[:3]):
+                x=25+row*82;y=690
+                active=row==own.get('slot',0)
+                self.box((x,y,58,54),retro.PANEL,5,GOLD if active else retro.EDGE)
+                self.online_sprite(member['id'],x+29,y+27,43,False)
+                self.text(str(row+1),x+7,y+4,GOLD,self.tiny,True)
+                pg.draw.rect(self.canvas,(55,71,87),(x-2,y+57,62,8))
+                ratio=max(0,min(1,member.get('hp',0)/max(1,member.get('maximum',1))))
+                pg.draw.rect(self.canvas,G if ratio>.35 else (242,105,110),(x-2,y+57,int(62*ratio),8))
+                self.text(f"{member.get('hp',0)}/{member.get('maximum',1)}",x+29,y+75,M,self.tiny,True)
+        if time.monotonic()<self.online_battle_help_until:
+            self.box((300,715,630,72),retro.PANEL,10,retro.EDGE)
+            self.text(self.words('← → gerak · ↑ lompat/panjat · S tahan',
+                                 '← → move · ↑ jump/climb · S guard'),640,727,C,self.tiny,True)
+            self.text(self.words('A dekat · Q stun · W dekat · E jauh · R ultimate · 1–3 ganti Pokémon',
+                                 'A close · Q stun · W close · E ranged · R ultimate · 1–3 switch Pokémon'),
+                      640,747,G,self.tiny,True)
+            self.text(self.words('Escape · keluar dari pertarungan',
+                                 'Escape · leave the battle'),640,767,M,self.tiny,True)
         if b['intro']>0:self.text(str(math.ceil(b['intro'])),640,300,GOLD,self.big,True)
         if b['result']:
             self.box((400,300,480,135),retro.PANEL)
@@ -547,7 +611,7 @@ class OnlineMixin:
             drops=result.get('drops',[])
             if drops:self.text('DROP: '+', '.join(f'{name} x{count}' for name,count in drops),640,355,G,self.small,True)
             self.button('Return to room',(440,370,400,48),lambda:self.online_send('leave_battle'))
-        else:self.button('Forfeit',(1010,690,235,40),lambda:self.online_send('leave_battle'))
+        else:self.button('Forfeit',(1010,744,235,38),lambda:self.online_send('leave_battle'))
         cutin=next((e for e in reversed(b['effects']) if e.get('cutin')),None)
         if cutin:
             progress=max(0,min(1,1-cutin['ttl']/.82));accent=ONLINE_ELEMENT_COLORS.get(cutin.get('type'),GOLD)

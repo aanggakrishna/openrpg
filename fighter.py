@@ -34,6 +34,8 @@ class FighterMixin:
         b=self.battle
         if b and b.get('matchup_tip_timer',0)>0:
             b['matchup_tip_timer']=max(0,b['matchup_tip_timer']-dt)
+        if b and b.get('controls_tip_timer',0)>0:
+            b['controls_tip_timer']=max(0,b['controls_tip_timer']-dt)
         if b and b.get('ko_anim'):
             ko=b['ko_anim'];ko['timer']=max(0,ko['timer']-dt)
             for impact in b.get('impacts',[]):impact['timer']=max(0,impact['timer']-dt)
@@ -75,7 +77,8 @@ class FighterMixin:
         b.setdefault('player_stun_timer',0.0);b.setdefault('enemy_stun_timer',0.0)
         b['api_moves']=[m['name'] for m in pokemon_db.loadout(b['player_id'])[:3]]
         b['matchup_tip']=self.matchup_tips(b['player_id'],b['wild_id'])
-        b['matchup_tip_timer']=5.8 if b['matchup_tip'] else 0.0
+        b['matchup_tip_timer']=20.0 if b['matchup_tip'] else 0.0
+        b.setdefault('controls_tip_timer',20.0)
         self.refresh_battle_difficulty()
         if b.get('player_max'):
             b['environment_mods']={
@@ -178,7 +181,9 @@ class FighterMixin:
             moves=[self.pokedex.moves[e['move']['name']] for e in d.get('moves',[]) if e['move']['name'] in self.pokedex.moves and self.pokedex.moves[e['move']['name']].get('power')]
         if not moves:
             return []
-        return fighter_loadout(moves)[0]
+        detail=self.pokemon_data(ident) or {}
+        native_types=[row.get('type',{}).get('name') for row in detail.get('types',[])]
+        return fighter_loadout(moves, ident, native_types)[0]
 
     def ultimate_for(self,ident):
         moves=pokemon_db.loadout(ident)
@@ -189,16 +194,16 @@ class FighterMixin:
             # Normal), which made many unrelated Pokémon show the same star
             # ultimate. Use the strongest real STAB move for the Pokémon's
             # own type(s), favoring its primary type when powers are close.
-            move_options, generated_ultimate=fighter_loadout(moves)
+            move_options, generated_ultimate=fighter_loadout(moves, ident, native_types)
             candidates=[move for move in move_options if move.get('type') in native_types]
             if candidates:
                 primary=native_types[0] if native_types else None
                 move=max(candidates,key=lambda item:(item.get('power',0)+(8 if item.get('type')==primary else 0)))
             else:
                 move=generated_ultimate
-            return decorate_ultimate(move)
+            return decorate_ultimate(move, ident)
         skills=self.skills_for(ident)
-        return decorate_ultimate(skills[-1]) if skills else None
+        return decorate_ultimate(skills[-1], ident) if skills else None
 
     def random_battle_platforms(self):
         # A connected route: each ledge is within one regular jump of its neighbor.
@@ -589,7 +594,9 @@ class FighterMixin:
         if name in ('transform','sketch'):
             copied=pokemon_db.loadout(target_id)
             if copied:
-                b.setdefault('copied_skills',{})[source_id]=fighter_loadout(copied)[0]
+                copied_detail=self.pokemon_data(source_id) or {}
+                native_types=[row.get('type',{}).get('name') for row in copied_detail.get('types',[])]
+                b.setdefault('copied_skills',{})[source_id]=fighter_loadout(copied, source_id, native_types)[0]
                 if name=='transform':b[owner+'_appearance']=target_id
         elif name=='teleport':
             b[owner+'_x']=max(65,min(1215,b[owner+'_x']+(-230 if b[owner+'_x']<640 else 230)))
@@ -875,20 +882,46 @@ class FighterMixin:
             return
         if b.get('intro') or b.get('ultimate_cutin') or b.get('boss_intro'):return
         for i,m in enumerate(self.skills_for(b['player_id'])):
-            x=56+i*163;y=154
-            self.box((x,y,153,77),retro.PANEL)
-            self.emoji(m['emoji'],(x+23,y+23),23)
+            x=56+i*163;y=624
+            self.box((x,y,153,54),retro.PANEL)
+            self.emoji(m['emoji'],(x+20,y+18),20)
             cooldown=b.get('cooldowns',{}).get(self.skill_key(b['player_id'],i),0)
-            self.text(('Q','W','E')[i]+' / '+(f'{cooldown:.1f}s' if cooldown else 'READY'),x+44,y+13,retro.GOLD if not cooldown else retro.MUTED,self.tiny)
+            self.text(('Q','W','E')[i]+' / '+(f'{cooldown:.1f}s' if cooldown else 'READY'),x+39,y+7,retro.GOLD if not cooldown else retro.MUTED,self.tiny)
             label=(m.get('effect_label','')+' · '+m['name']) if i==0 and m.get('effect_label') else m['name']
             if self.tiny.size(label)[0]>143:label=label[:19]
-            self.text(label,x+7,y+44,retro.CREAM,self.tiny)
+            self.text(label,x+7,y+33,retro.CREAM,self.tiny)
         ult_cooldown=b.get('cooldowns',{}).get(self.skill_key(b['player_id'],'ultimate'),0)
-        self.text('R / '+(f'{ult_cooldown:.1f}s' if ult_cooldown else f"ULT {int(b.get('super_meter',0))}%"),544,244,retro.GOLD if not ult_cooldown and b.get('super_meter',0)>=100 else retro.MUTED,self.tiny)
-        self.text('S GUARD',57,244,retro.MUTED,self.tiny)
-        retro.meter(self.canvas,(113,246,180,9),b.get('guard',100),100,(108,194,246))
-        for row,ident in enumerate(self.active_pokemon_team()):
-            self.text(f"{row+1} / {(self.pokemon_data(ident) or {}).get('name',str(ident)).title()}  HP {self.life.pokemon_health.get(str(ident),0)}",57,685+row*23,retro.GREEN,self.small)
+        ultimate=self.ultimate_for(b['player_id']) or {}
+        x,y=545,624
+        self.box((x,y,153,54),retro.PANEL)
+        self.emoji(ultimate.get('emoji','✨'),(x+20,y+18),20)
+        ready=not ult_cooldown and b.get('super_meter',0)>=100
+        state=f'{ult_cooldown:.1f}s' if ult_cooldown else ('READY' if b.get('super_meter',0)>=100 else 'CHARGING')
+        self.text('R / '+state,x+39,y+7,retro.GOLD if ready else retro.MUTED,self.tiny)
+        label=ultimate.get('name','Ultimate')
+        if self.tiny.size(label)[0]>143:label=label[:19]
+        self.text(label,x+7,y+33,retro.CREAM,self.tiny)
+        # Compact team portraits replace the old text-only 1/2/3 roster.
+        # Their health bars let players judge a switch before pressing its key.
+        for row,ident in enumerate(self.active_pokemon_team()[:3]):
+            x=57+row*83;y=694
+            self.box((x,y,58,55),retro.PANEL,5,
+                     retro.GOLD if int(ident)==int(b.get('player_id',-1)) else retro.EDGE)
+            portrait=self.pokemon_surface(ident,46)
+            if portrait:
+                self.canvas.blit(portrait,portrait.get_rect(center=(x+29,y+29)))
+            self.text(str(row+1),x+7,y+5,retro.GOLD,self.tiny,True)
+            detail=self.pokemon_data(ident) or {}
+            maximum=max(1,self.base_stat(detail,'hp',45)+self.pokemon_level(ident)*2)
+            current=self.life.pokemon_health.get(str(ident),maximum)
+            if int(ident)==int(b.get('player_id',-1)):
+                maximum=max(1,int(b.get('player_max',maximum)))
+                current=max(0,int(b.get('player_hp',current)))
+            retro.meter(self.canvas,(x-2,y+58,62,8),current,maximum,
+                        retro.GREEN if current/maximum>.35 else retro.RED)
+        self.box((920,672,310,38),retro.PANEL,7)
+        self.text(f"TRAINER CONDITION ×{round(b.get('trainer_condition',1.0)*100)}%",
+                  1075,691,retro.GREEN,self.tiny,True)
 
     def draw_boss_evolution(self,b,animation):
         """Cinematic mid-fight evolution with a clean full-health phase reset."""

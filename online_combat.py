@@ -19,7 +19,8 @@ def creature(ident, level, boss=False):
     stats = {s['stat']['name']: s['base_stat'] for s in data.get('stats', [])}
     hp = int((40 + stats.get('hp', 50) * .65 + level * 3) * (2.5 if boss else 1))
     moves = pokemon_db.loadout(ident)
-    skills,ultimate=fighter_loadout(moves)
+    native_types=[row.get('type',{}).get('name') for row in data.get('types',[])]
+    skills,ultimate=fighter_loadout(moves, ident, native_types)
     return dict(id=ident, name=data.get('name', str(ident)).title(), level=level, hp=hp, maximum=hp,
                 attack=stats.get('attack', 50) + level * 2, defense=stats.get('defense', 50) + level,
                 moves=skills, ultimate=ultimate, boss=boss)

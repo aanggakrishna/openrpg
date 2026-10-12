@@ -60,15 +60,26 @@ CONTROL_BY_TYPE = {
 }
 
 ULTIMATE_VARIANTS = {
-    'normal': ('Meteor Impact', '☄️', 'area'), 'fire': ('Inferno Nova', '🌋', 'area'),
-    'water': ('Tidal Cataclysm', '🌊', 'wave'), 'electric': ('Thunder Dominion', '⚡', 'beam'),
-    'grass': ('Verdant Tempest', '🌳', 'area'), 'ice': ('Absolute Zero', '🧊', 'area'),
-    'fighting': ('Meteor Barrage', '🥊', 'rush'), 'poison': ('Venom Eclipse', '🟣', 'area'),
-    'ground': ('Continental Break', '🌎', 'area'), 'flying': ('Skybreaker', '🌪️', 'rush'),
-    'psychic': ('Mind Collapse', '🧠', 'beam'), 'bug': ('Swarm Eclipse', '🐝', 'barrage'),
-    'rock': ('Mountain Fall', '⛰️', 'area'), 'ghost': ('Phantom Rift', '👻', 'beam'),
-    'dragon': ('Draco Catastrophe', '🐉', 'beam'), 'dark': ('Nightfall Ruin', '🌑', 'area'),
-    'steel': ('Iron Citadel', '⚙️', 'barrage'), 'fairy': ('Starlight Verdict', '🌟', 'beam'),
+    # Three species-stable attack identities per type. The species id chooses
+    # a variant so same-type Pokémon no longer all show one generic ultimate.
+    'normal': (('Meteor Impact', '☄️', 'area'), ('Starfall Crash', '⭐', 'rush'), ('Comet Breaker', '💫', 'beam')),
+    'fire': (('Inferno Nova', '🌋', 'area'), ('Solar Flare', '☀️', 'beam'), ('Blazing Meteor', '☄️', 'rush')),
+    'water': (('Tidal Cataclysm', '🌊', 'wave'), ('Abyssal Torrent', '💦', 'beam'), ('Maelstrom Surge', '🌀', 'area')),
+    'electric': (('Thunder Dominion', '⚡', 'beam'), ('Volt Storm', '🌩️', 'barrage'), ('Plasma Rush', '🔋', 'rush')),
+    'grass': (('Verdant Tempest', '🌳', 'area'), ('Worldroot Bloom', '🌿', 'wave'), ('Solar Petal Burst', '🌸', 'barrage')),
+    'ice': (('Absolute Zero', '🧊', 'area'), ('Glacier Lance', '❄️', 'beam'), ('Blizzard Rush', '🌨️', 'rush')),
+    'fighting': (('Meteor Barrage', '🥊', 'rush'), ('Comet Fist', '👊', 'beam'), ('Impact Cyclone', '💥', 'barrage')),
+    'poison': (('Venom Eclipse', '🟣', 'area'), ('Toxic Downpour', '☠️', 'barrage'), ('Sludge Vortex', '🧪', 'wave')),
+    'ground': (('Continental Break', '🌎', 'area'), ('Faultline Surge', '🌋', 'wave'), ('Sandstorm Catapult', '🏜️', 'rush')),
+    'flying': (('Skybreaker', '🌪️', 'rush'), ('Jetstream Dive', '💨', 'beam'), ('Cyclone Wingbeat', '🌀', 'barrage')),
+    'psychic': (('Mind Collapse', '🧠', 'beam'), ('Astral Singularity', '🔮', 'area'), ('Dreamwave Nova', '💫', 'wave')),
+    'bug': (('Swarm Eclipse', '🐝', 'barrage'), ('Silkstorm Snare', '🕸️', 'wave'), ('Primal Megahorn', '🐛', 'rush')),
+    'rock': (('Mountain Fall', '⛰️', 'area'), ('Obsidian Breaker', '🪨', 'rush'), ('Meteorite Barrage', '☄️', 'barrage')),
+    'ghost': (('Phantom Rift', '👻', 'beam'), ('Haunted Eclipse', '🌑', 'area'), ('Spectral Rush', '💀', 'rush')),
+    'dragon': (('Draco Catastrophe', '🐉', 'beam'), ('Elder Dragon Nova', '🐲', 'area'), ('Dragonfire Tempest', '🔥', 'wave')),
+    'dark': (('Nightfall Ruin', '🌑', 'area'), ('Shadow Fang Rush', '🐺', 'rush'), ('Eclipse Barrage', '🌘', 'barrage')),
+    'steel': (('Iron Citadel', '⚙️', 'barrage'), ('Chrome Meteor', '🛡️', 'rush'), ('Titanium Beam', '🔩', 'beam')),
+    'fairy': (('Starlight Verdict', '🌟', 'beam'), ('Moonlit Wish', '🌙', 'wave'), ('Prism Waltz', '💖', 'barrage')),
 }
 
 def control_for(move):
@@ -77,10 +88,13 @@ def control_for(move):
     return {'effect': effect, 'effect_emoji': emoji, 'effect_label': label,
             'effect_duration': duration, 'effect_chance': .72 if effect not in ('knockback',) else 1.0}
 
-def decorate_ultimate(move):
-    """Give R a type-specific name, icon and animation lane."""
+def decorate_ultimate(move, species_id=None):
+    """Give R a type- and species-specific name, icon and animation lane."""
     result=dict(move)
-    title, emoji, style = ULTIMATE_VARIANTS.get(result.get('type', 'normal'), ULTIMATE_VARIANTS['normal'])
+    variants=ULTIMATE_VARIANTS.get(result.get('type', 'normal'), ULTIMATE_VARIANTS['normal'])
+    # Fallback callers without an id retain the first canonical variant.
+    index=int(species_id)%len(variants) if species_id is not None else 0
+    title, emoji, style = variants[index]
     result.update(name=title, emoji=emoji, ultimate_style=style,
                   style='area' if style in ('area','barrage') else 'beam' if style=='beam' else 'projectile',
                   range=1100, cooldown=12.0, ultimate=True,
@@ -102,7 +116,7 @@ def skill(move,ultimate=False):
             'range':150 if melee else 410 if area else 610 if beam else 750,
             'cooldown':12 if ultimate else round(1.4+power/65+(0.7 if area else 0),1),'ultimate':ultimate}
 
-def fighter_loadout(moves):
+def fighter_loadout(moves, species_id=None, native_types=None):
     """Build the same Q/W/E/R controls for offline, online, and bot fighters."""
     if not moves:
         return [], None
@@ -116,5 +130,15 @@ def fighter_loadout(moves):
     w.update(style='melee',range=116,cooldown=max(1.7,min(3.2,w['cooldown'])))
     if e['style'] in ('melee','status'):e['style']='projectile'
     e.update(range=max(650,e['range']),cooldown=max(3.5,min(5.5,e['cooldown'])))
-    ultimate=decorate_ultimate(e)
+    # A few species have only one or two legal attacks, so their loadout must
+    # reuse a move. Keep those role variants readable in the HUD.
+    roles=('Control','Close Strike','Ranged Burst')
+    names=[q['name'],w['name'],e['name']]
+    for index,move in enumerate((q,w,e)):
+        if names.count(move['name'])>1:
+            move['name']=f"{move['name']} · {roles[index]}"
+    native_types=set(native_types or ())
+    ultimate_base=max((move for move in (q,w,e) if move['type'] in native_types),
+                      key=lambda move:move['power'],default=e)
+    ultimate=decorate_ultimate(ultimate_base,species_id)
     return [q,w,e],ultimate

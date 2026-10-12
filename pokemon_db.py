@@ -94,10 +94,20 @@ def loadout(ident):
                       key=quality,default=None)
         if candidate:
             selected.append(candidate);used.add(candidate['name'])
-    # Fill the last role with a strong coverage move; if none exists, add a
-    # second native move. This keeps both STAB types represented fairly.
-    coverage=max((m for m in moves if m['name'] not in used and m['type']['name'] not in own),
-                 key=quality,default=None)
+    # Fill the last role with coverage. The previous strict max selected the
+    # same high-power Normal move (usually Double-Edge) for many unrelated
+    # Pokémon. Prefer an elemental/physical coverage move where available, and
+    # rotate deterministically through its strongest candidates by species id.
+    # This gives each species a stable loadout while preserving legal moves.
+    coverage_pool=[m for m in moves if m['name'] not in used and m['type']['name'] not in own]
+    non_normal=[m for m in coverage_pool if m['type']['name']!='normal']
+    if non_normal:
+        coverage_pool=non_normal
+    ranked_coverage=sorted(coverage_pool,key=quality,reverse=True)
+    coverage=None
+    if ranked_coverage:
+        shortlist=ranked_coverage[:min(4,len(ranked_coverage))]
+        coverage=shortlist[int(ident)*7 % len(shortlist)]
     while len(selected)<2 and len(selected)<len(moves):
         candidate=max((m for m in moves if m['name'] not in used and m['type']['name'] in own),
                       key=quality,default=None)

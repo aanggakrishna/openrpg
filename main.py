@@ -190,6 +190,8 @@ class LegacyGame:
         self.dex_selected = 1
         self.dex_type_filter = "all"
         self.dex_sprite = None
+        self.cosmetic_collection_selected = 0
+        self.companion_picker_selected = 0
         self.pokemon_rng = random.Random()
         self.ensure_farm_drops()
         self.pokemon_encounter_clock = 0.0
@@ -4074,6 +4076,71 @@ class LegacyGame:
         self.pokedex.request_animation(self.life.companion_id)
         self.save_current()
 
+    def open_companion_picker(self):
+        active = self.life.pokemon_active[:3]
+        if not active:
+            self.notify(self.words("Aktifkan Pokémon di Pokémon Center terlebih dahulu.",
+                                   "Activate a Pokémon at the Pokémon Center first."))
+            return
+        try:
+            self.companion_picker_selected = active.index(self.life.companion_id)
+        except ValueError:
+            self.companion_picker_selected = 0
+        for ident in active:
+            self.pokedex.request(ident)
+            self.pokedex.request_animation(ident)
+        self.play_action_sound("menu-open", .24)
+        self.mode = "companion_picker"
+
+    def select_companion(self, pokemon_id):
+        if pokemon_id not in self.life.pokemon_active[:3] or pokemon_id not in self.life.pokemon_party:
+            return
+        self.life.companion_id = int(pokemon_id)
+        self.life.ensure_companion_quest()
+        self.pokedex.request(pokemon_id)
+        self.pokedex.request_animation(pokemon_id)
+        self.save_current()
+        self.play_action_sound("ui-confirm", .2)
+        self.mode = "game"
+
+    def draw_companion_picker(self):
+        active = self.life.pokemon_active[:3]
+        self.text(self.words("PILIH POKÉMON PENDAMPING", "CHOOSE YOUR PARTNER"),
+                  242, 183, CREAM, self.medium)
+        self.text(self.words("Pilih satu dari tim aktif. Pokémon ini akan berjalan di sampingmu.",
+                             "Choose one from your active team to walk beside you."),
+                  245, 224, GREEN, self.small)
+        if not active:
+            self.text(self.words("Belum ada Pokémon aktif. Atur tim di Pokémon Center.",
+                                 "No active Pokémon. Set up your team at the Pokémon Center."),
+                      640, 370, MUTED, self.small, True)
+            self.button(self.words("Tutup · Esc", "Close · Esc"), (245, 592, 788, 42), self.back, True)
+            return
+        card_width, gap = 244, 22
+        start_x = (W - (len(active) * card_width + (len(active) - 1) * gap)) // 2
+        for index, ident in enumerate(active):
+            x, y = start_x + index * (card_width + gap), 280
+            rect = (x, y, card_width, 255)
+            detail = self.pokemon_data(ident) or pokemon_db.detail(ident) or {}
+            name = detail.get("name", f"Pokémon #{ident}").title()
+            is_companion = int(ident) == int(self.life.companion_id)
+            selected = index == self.companion_picker_selected
+            self.box(rect, retro.GOLD if is_companion or selected else retro.PANEL, 10,
+                     GREEN if is_companion else retro.EDGE)
+            sprite = self.pokemon_surface(ident, 112)
+            if sprite:
+                self.canvas.blit(sprite, sprite.get_rect(center=(x + card_width // 2, y + 88)))
+            text_color = INK if is_companion or selected else CREAM
+            self.text(name, x + card_width // 2, y + 163, text_color, self.small, True)
+            self.text(self.words(f"Level {self.pokemon_level(ident)}",
+                                 f"Level {self.pokemon_level(ident)}"),
+                      x + card_width // 2, y + 193, text_color, self.tiny, True)
+            label = (self.words("SEDANG MENEMANI", "CURRENT PARTNER") if is_companion
+                     else self.words("Pilih pendamping", "Choose partner"))
+            self.button(label, (x + 15, y + 210, card_width - 30, 34),
+                        lambda pokemon_id=int(ident): self.select_companion(pokemon_id), is_companion)
+        self.button(self.words("Kembali · Esc", "Back · Esc"), (245, 592, 788, 42), self.back)
+
     def companion_world_position(self):
         """Keep the follower comfortably behind the trainer, with a small walk bob."""
         gap = 72 if self.moving else 64
@@ -4520,6 +4587,13 @@ class LegacyGame:
         self.map_zoom = 1.0
         self.mode = "map"
 
+    def open_map_from_hud(self):
+        if self.life.tutorial_active:
+            self.play_action_sound("menu-open", .24)
+            self.mode = "tutorial_map"
+        else:
+            self.open_global_map()
+
     def draw_global_map(self):
         self.canvas.fill((16, 27, 25))
         self.box((36, 22, 1208, 755), INK, 22)
@@ -4750,15 +4824,15 @@ class LegacyGame:
         self.box((24, 18, 1232, 113), INK, 15)
         self.text("OPENRPG", 44, 30, CREAM, self.medium)
         location = {"outdoors": "Rumah & peternakan", "house": "Ruang keluarga", "bedroom": "Kamar", "forest": "Hutan liar", "market": "Market", "reserve": f"Suaka Pokémon · {len(RESERVE_ZONES)} bioma", "coast": "Pantai pasang surut", "mountain": "Pegunungan kabut", "dungeon_hub": "Hub utara · Gym & dungeon", "local_dungeon": self.local_dungeon_name(min(10, max(1, self.life.local_dungeon_tier)))}[self.life.scene]
+        # Keep the location subtitle in its own header column so it never
+        # collides with the date and weather fields beside it.
+        while location and self.tiny.size(location)[0] > 174:
+            location = location[:-2].rstrip() + "…"
         self.text(location, 45, 64, MUTED, self.tiny)
         self.text(f"${self.life.money} / {'KUDA' if self.life.mounted else 'JALAN'}", 45, 92, retro.GOLD, self.small)
         minute = int(self.life.minutes)
         self.text(f"Hari {self.life.day:02} · {minute // 60:02}:{minute % 60:02}", 230, 31, CREAM)
         self.text(self.life.period + " · " + self.life.weather, 230, 60, MUTED, self.small)
-        if self.mode == "game":
-            self.button("+1 jam", (230, 84, 105, 34), self.skip_hour)
-        else:
-            self.text("T · maju 1 jam", 230, 91, GREEN, self.small)
         values = [("HP", self.life.health)] + list(self.life.stats.items())
         for i, (name, value) in enumerate(values):
             x = 456 + i * 121
@@ -4769,13 +4843,24 @@ class LegacyGame:
         self.text(f"{weapon} · SPACE serang · B terminal", 456, 94, CREAM, self.tiny)
         status = "PC AKTIF" if self.terminal.running else "PROMPT JALAN" if self.phone_terminal.phone_marker else "PC SIAP"
         self.text(status, 1100, 36, GREEN if self.terminal.running or self.phone_terminal.phone_marker else MUTED, self.small)
+        companion_id = int(getattr(self.life, "companion_id", 0) or 0)
+        companion_sprite = (self.pokemon_surface(companion_id, 42)
+                            if companion_id in self.life.pokemon_party else None)
+        self.box((1160, 58, 76, 66), retro.PANEL, 7, retro.EDGE)
+        if companion_sprite:
+            self.canvas.blit(companion_sprite, companion_sprite.get_rect(center=(1198, 85)))
+        else:
+            self.text("+", 1198, 68, MUTED, self.medium, True)
+        self.text(self.words("PENDAMPING", "PARTNER"), 1198, 108, CREAM, self.tiny, True)
+        if self.mode == "game":
+            self.buttons.append((pg.Rect(1160, 58, 76, 66), self.open_companion_picker))
         if self.phone_unread:
             self.text("HP · PESAN BARU", 985, 61, GREEN, self.small)
         if self.mode == "game":
             self.button("Profil · U", (792, 81, 105, 35), lambda: self.open_overlay("player_profile"))
             self.button("Misi · J", (902, 81, 105, 35), lambda: self.open_overlay("daily_quests"))
             self.button("Jurnal · L", (1012, 81, 105, 35), lambda: self.open_overlay("journal"))
-            self.button("Cuaca · C", (1122, 81, 115, 35), lambda: self.open_overlay("weather"))
+            # Time/map/weather controls live together in the bottom toolbar.
         objective = self.tutorial_objective() if self.life.tutorial_active else None
         if objective:
             self.box((914, 145, 342, 94), INK, 8, retro.EDGE)
@@ -4786,7 +4871,13 @@ class LegacyGame:
             self.text(objective_text, 930, 177, CREAM, self.tiny)
             self.text(self.tutorial_navigation(), 930, 203, GREEN, self.tiny)
         self.box((24, 727, 1232, 54), INK, 12)
-        self.text("WASD JALAN / T +1 JAM / M PETA", 44, 743, MUTED, self.tiny)
+        self.text("WASD JALAN", 44, 743, MUTED, self.tiny)
+        if self.mode == "game":
+            self.button("+1 jam", (143, 735, 96, 38), self.skip_hour)
+            self.button("M · Peta", (246, 735, 92, 38), self.open_map_from_hud)
+            self.button("C · Cuaca", (345, 735, 104, 38), lambda: self.open_overlay("weather"))
+        else:
+            self.text("T +1 JAM · M PETA · C CUACA", 150, 743, MUTED, self.tiny)
         prompt = "E · " + station[3] if station else "< Hutan     Rumah & peternakan     Market >"
         if self.life.scene == "forest" and not station:
             prompt = "Singa: 06–10 & 16–20  /  Utara: masuk suaka Pokémon"
@@ -4810,7 +4901,7 @@ class LegacyGame:
             age = time.monotonic() - self.fishing
             prompt = "E · TARIK SEKARANG!" if age >= 2.5 else "Tunggu ikan menggigit..."
         prompt = prompt if len(prompt) < 62 else prompt[:59] + "…"
-        self.text(prompt, 648, 756, GREEN, self.small, True)
+        self.text(prompt, 700, 756, GREEN, self.small, True)
         self.button("I TAS", (982, 735, 82, 38), self.open_inventory)
         self.button("P DEX", (1068, 735, 82, 38), self.open_dex)
         self.text("F1 / ESC", 1185, 743, MUTED, self.tiny, True)
@@ -5157,6 +5248,10 @@ class LegacyGame:
             self.draw_daily_quests()
         elif self.mode == "journal":
             self.draw_journal()
+        elif self.mode == "journal_cosmetics":
+            self.draw_cosmetic_collection()
+        elif self.mode == "companion_picker":
+            self.draw_companion_picker()
         elif self.mode == "player_profile":
             self.draw_player_profile()
         elif self.mode == "home_decor":
@@ -5314,9 +5409,83 @@ class LegacyGame:
         self.text(f"{self.journal_page + 1}/{pages}", 318, 610, MUTED, self.tiny)
         self.button(">", (360, 602, 55, 38), lambda: setattr(self, "journal_page", (self.journal_page + 1) % pages))
         unlocked_cosmetics = [row[1] for row in COLLECTION_COSMETICS if row[1] in self.life.cosmetics]
-        self.button(self.words("Ganti kosmetik", "Cycle cosmetic"), (427, 600, 200, 42),
-                    self.cycle_cosmetic, bool(unlocked_cosmetics))
+        self.button(self.words("Koleksi kosmetik", "Cosmetic collection"), (427, 600, 200, 42),
+                    self.open_cosmetic_collection, True)
         self.button(self.words("Kembali · Esc / L", "Back · Esc / L"), (642, 600, 391, 42), self.back, True)
+
+    def open_cosmetic_collection(self):
+        choices = [None, *COLLECTION_COSMETICS]
+        self.cosmetic_collection_selected = next(
+            (index for index, row in enumerate(choices)
+             if (row[1] if row else "") == self.life.active_cosmetic), 0)
+        self.mode = "journal_cosmetics"
+
+    def choose_cosmetic(self, cosmetic_key):
+        if cosmetic_key and cosmetic_key not in self.life.cosmetics:
+            self.notify(self.words("Kosmetik ini belum dimiliki.", "You do not own this cosmetic yet."))
+            return False
+        self.life.active_cosmetic = cosmetic_key
+        self.save_current()
+        self.play_action_sound("ui-confirm", .2)
+        self.notify(self.words("Tampilan karakter diperbarui.", "Character appearance updated."))
+        return True
+
+    def draw_cosmetic_collection(self):
+        # A wider two-column journal page keeps the selectable collection and
+        # the live trainer preview visible together.
+        self.box((70, 64, 1140, 676), INK, 18)
+        self.text(self.words("KOLEKSI KOSMETIK", "COSMETIC COLLECTION"), 108, 91, CREAM, self.medium)
+        owned_count = sum(row[1] in self.life.cosmetics for row in COLLECTION_COSMETICS)
+        self.text(self.words(f"Dimiliki {owned_count}/{len(COLLECTION_COSMETICS)}",
+                             f"Owned {owned_count}/{len(COLLECTION_COSMETICS)}"),
+                  1115, 99, GREEN, self.small, True)
+
+        self.box((98, 145, 515, 430), retro.PANEL, 10)
+        self.text(self.words("PILIH KOSMETIK", "SELECT A COSMETIC"), 122, 162, retro.GOLD, self.small)
+        options = [("", self.words("Tanpa kosmetik", "No cosmetic"), 0)]
+        options.extend((row[1], row[2 if self.life.language == "en" else 3], row[0])
+                       for row in COLLECTION_COSMETICS)
+        for index, (key, label, level) in enumerate(options):
+            y = 198 + index * 69
+            is_owned = not key or key in self.life.cosmetics
+            is_active = key == self.life.active_cosmetic
+            selected = index == self.cosmetic_collection_selected
+            rect = (118, y, 475, 57)
+            self.box(rect, retro.GOLD if selected else (retro.PANEL if is_owned else (44, 51, 65)), 7)
+            marker = self.words("DIPAKAI", "EQUIPPED") if is_active else (
+                self.words("DIMILIKI", "OWNED") if is_owned else f"Lv.{level}")
+            color = INK if selected else (GREEN if is_owned else MUTED)
+            self.text(label, 135, y + 8, color, self.small)
+            self.text(marker, 574, y + 17, color, self.tiny, True)
+            self.buttons.append((pg.Rect(rect), lambda k=key, i=index: self._select_cosmetic_option(k, i)))
+
+        self.box((637, 145, 545, 430), retro.PANEL, 10)
+        self.text(self.words("PRATINJAU KARAKTER", "CHARACTER PREVIEW"), 663, 162, retro.GOLD, self.small)
+        self.text(self.life.player_name, 910, 218, CREAM, self.medium, True)
+        # Draw the same selected trainer sprite and cosmetic renderer used in
+        # the overworld, so a choice is reflected immediately in this preview.
+        preview_x, preview_y = 910, 480
+        pg.draw.ellipse(self.canvas, (31, 45, 54), (preview_x - 88, preview_y - 14, 176, 29))
+        self.sprite(preview_x, preview_y, scale=2.8, walking=False)
+        self.draw_player_cosmetic(preview_x, preview_y)
+        selected_data = next((row for row in COLLECTION_COSMETICS
+                              if row[1] == self.life.active_cosmetic), None)
+        current_label = (selected_data[2 if self.life.language == "en" else 3] if selected_data
+                         else self.words("Tanpa kosmetik", "No cosmetic"))
+        self.text(current_label, preview_x, 544, GREEN, self.small, True)
+        self.text(self.words("Pilih item yang dimiliki untuk memperbarui tampilan langsung.",
+                             "Choose an owned item to update your look instantly."),
+                  preview_x, 573, MUTED, self.tiny, True)
+        self.button(self.words("Kembali ke Jurnal · Esc / L", "Back to Journal · Esc / L"),
+                    (98, 586, 1084, 48), self.close_cosmetic_collection, True)
+
+    def _select_cosmetic_option(self, key, index):
+        if self.choose_cosmetic(key):
+            self.cosmetic_collection_selected = index
+
+    def close_cosmetic_collection(self):
+        self.play_action_sound("ui-back", .2)
+        self.mode = "journal"
 
     def cycle_cosmetic(self):
         unlocked = [row[1] for row in COLLECTION_COSMETICS if row[1] in self.life.cosmetics]
@@ -5805,8 +5974,12 @@ class LegacyGame:
         elif weather == "Cerah":
             pg.draw.circle(self.canvas, (255, 219, 115), (1110, 265), 35, 4)
         # Fighter nameplates and HP bars.
-        self.box((50, 24, 490, 105), (32, 51, 48), 14)
-        self.box((740, 24, 490, 105), (32, 51, 48), 14)
+        # Keep the complete player HUD (HP, guard and ultimate charge) inside
+        # one panel instead of letting the lower meters cross its bottom edge.
+        self.box((50, 24, 490, 148), (32, 51, 48), 14)
+        # Keep both name/health panels aligned even though only the player's
+        # panel contains guard and ultimate meters.
+        self.box((740, 24, 490, 148), (32, 51, 48), 14)
         player_name = team.get("name", "Pokémon Anda").title() if team else "Pokémon Anda"
         enemy_name = enemy.get("name", "Pokémon liar").title() if enemy else "Pokémon liar"
         self.text(player_name, 76, 36, CREAM, self.medium)
@@ -5820,42 +5993,49 @@ class LegacyGame:
                           center_x,52,MUTED,self.tiny,True)
         self._fight_bar(76, 77, 440, b.get("player_hp", 1), b.get("player_max", 1), left=True)
         self._fight_bar(764, 77, 440, b.get("wild_hp", 1), b.get("wild_max", 1), left=False)
-        pg.draw.rect(self.canvas, (57, 71, 61), (76, 118, 440, 8), border_radius=0)
-        if b.get("super_meter", 0):
-            pg.draw.rect(self.canvas, (247, 194, 74), (76, 118, int(440 * b["super_meter"] / 100), 8), border_radius=0)
-        self.text(f"ULTIMATE {int(b.get('super_meter', 0))}%", 76, 132, (255, 222, 121), self.small)
-        self.text(f"TRAINER CONDITION ×{round(b.get('trainer_condition', 1.0) * 100)}%",
-                  76, 150, GREEN, self.tiny)
+        self.text("ULTIMATE", 76, 120, (255, 222, 121), self.tiny)
+        retro.meter(self.canvas, (151, 123, 365, 8), b.get("super_meter", 0), 100,
+                    (247, 194, 74))
+        # Guard follows the ultimate meter inside the same framed Pokémon panel.
+        self.text("S · GUARD", 76, 140, (158, 204, 233), self.tiny)
+        retro.meter(self.canvas, (151, 143, 170, 8), b.get("guard", 100), 100,
+                    (108, 194, 246))
         opponent_count = len(b.get("opponent_lineup", [b["wild_id"]]))
         battle_kind="TEAM BATTLE" if opponent_count > 1 else "WILD BATTLE"
         boss_scale = (f"  ·  ×{b.get('enemy_stat_multiplier',1):.2f} STAT"
                       if b.get("dungeon_is_boss") or (b.get("wild") or {}).get("is_boss") else "")
-        self.text(f"{battle_kind}  ·  Lv.{b.get('wild_level',5)}  ·  {b.get('difficulty_label','BALANCED')}{boss_scale}",
-                  W // 2, 47, CREAM, self.tiny, True)
-        self.text(f"{BATTLE_WEATHER_EMOJI.get(weather, '☁')} {weather.upper()}  ·  {arena.upper()} ARENA", W // 2, 68, GREEN, self.tiny, True)
+        round_label = b.get("dungeon_round_label") or (
+            f"RONDE {b.get('opponent_index', 0) + 1}/{opponent_count}" if opponent_count > 1 else "")
+        if b.get("boss_phase", 1) >= 2:
+            round_label = (round_label + "  ·  " if round_label else "") + self.words("BOSS · FASE 2", "BOSS · PHASE 2")
+        meta_lines = [
+            f"{battle_kind}  ·  Lv.{b.get('wild_level',5)}  ·  {b.get('difficulty_label','BALANCED')}{boss_scale}",
+            f"{BATTLE_WEATHER_EMOJI.get(weather, '☁')} {weather.upper()}  ·  {arena.upper()} ARENA",
+        ]
+        if round_label:
+            meta_lines.append(round_label)
         active_buffs = []
         if b.get("fruit_speed_timer", 0) > 0:
             active_buffs.append(f"🍌 SPEED {b['fruit_speed_timer']:.0f}s")
         if b.get("fruit_double_timer", 0) > 0:
             active_buffs.append(f"🍒 SKILL ×2 {b['fruit_double_timer']:.0f}s")
         if active_buffs:
-            self.text("  ·  ".join(active_buffs), W // 2, 105 if opponent_count > 1 else 89,
-                      (255, 218, 100), self.tiny, True)
+            meta_lines.append("  ·  ".join(active_buffs))
+        meta_y = 174
+        meta_height = 13 + len(meta_lines) * 20
+        self.box((400, meta_y, 480, meta_height), (25, 38, 58), 10, retro.EDGE)
+        for index, line in enumerate(meta_lines):
+            color = (255, 218, 100) if active_buffs and index == len(meta_lines)-1 else (
+                GREEN if index == 1 else CREAM)
+            self.text(line, W // 2, meta_y + 12 + index * 20, color, self.tiny, True)
         arena_marks = [f"{effect['emoji']} {effect['label']} {effect['timer']:.0f}s"
                        for effect in b.get("arena_effects", []) if effect.get("timer", 0) > 0]
         if arena_marks:
-            self.box((440, 134, 400, 27), (28, 46, 57), 7)
-            self.text(" · ".join(arena_marks)[:56], W // 2, 148, (154, 229, 195), self.tiny, True)
+            self.box((890, 178, 340, 27), (28, 46, 57), 7)
+            self.text(" · ".join(arena_marks)[:48], 1060, 192, (154, 229, 195), self.tiny, True)
         if b.get("arena_combo_timer", 0) > 0 and b.get("arena_combo"):
-            self.box((394, 166, 492, 29), (76, 48, 42), 7, retro.GOLD)
-            self.text(b["arena_combo"], W // 2, 180, (255, 224, 132), self.tiny, True)
-        if b.get("dungeon_round_label"):
-            self.text(b["dungeon_round_label"], W // 2, 87, CREAM, self.tiny, True)
-        elif opponent_count > 1:
-            self.text(f"RONDE {b.get('opponent_index', 0) + 1}/{opponent_count}", W // 2, 87, CREAM, self.tiny, True)
-        if b.get("boss_phase", 1) >= 2:
-            self.text(self.words("⚡ BOSS · FASE 2", "⚡ BOSS · PHASE 2"),
-                      W // 2, 105, (255, 186, 93), self.tiny, True)
+            self.box((890, 210, 340, 29), (76, 48, 42), 7, retro.GOLD)
+            self.text(b["arena_combo"], 1060, 224, (255, 224, 132), self.tiny, True)
         # Sprites use the larger cached API art, with squash/stretch on impacts.
         ground = 606
         for platform in b.get("platforms", []):
@@ -5976,9 +6156,9 @@ class LegacyGame:
         if b.get("block_flash", 0) > 0:
             self.box((79, 100, 180, 34), (59, 117, 164), 10)
             self.text("BLOK!", 169, 117, CREAM, self.small, True)
-        self.box((558, 204, 164, 42), (32, 51, 48), 12)
+        self.box((558, 24, 164, 42), (32, 51, 48), 12)
         seconds = max(0, int(math.ceil(b.get("time_left", 60))))
-        self.text(f"{seconds // 60:02}:{seconds % 60:02}", W // 2, 225,
+        self.text(f"{seconds // 60:02}:{seconds % 60:02}", W // 2, 45,
                   (238, 123, 94) if seconds <= 10 else CREAM, self.medium, True)
         if b.get("story_caption_timer", 0) > 0 and not b.get("boss_intro"):
             self.box((350, 440, 580, 42), (24, 34, 49), 9, retro.GOLD)
@@ -5991,15 +6171,18 @@ class LegacyGame:
         if capture or (b.get("result") and not enemy_ko):
             self.box((300, 536, 680, 40), (35, 54, 48), 12)
             self.text(phase, W // 2, 556, CREAM, self.small, True)
-        self.box((910, 142, 340, 66), (32, 51, 48), 9)
-        self.text("← → gerak · ↑ lompat/panjat · S tahan", 924, 151, CREAM, self.tiny)
-        self.text("A dekat · S tahan · Q stun · W dekat · E jauh · R ult · 1–3 ganti", 924, 170, GREEN, self.tiny)
-        self.text(f"O bola · ult tembus 40% guard · {int(b.get('time_left', 60))} dtk · Esc", 924, 185, MUTED, self.tiny)
+        if b.get("controls_tip_timer", 0) > 0:
+            self.box((300, 715, 630, 72), (32, 51, 48), 10, retro.EDGE)
+            self.text("← → gerak · ↑ lompat/panjat · S tahan", W // 2, 727, CREAM, self.tiny, True)
+            self.text("A dekat · Q stun · W dekat · E jauh · R ultimate · 1–3 ganti Pokémon",
+                      W // 2, 747, GREEN, self.tiny, True)
+            self.text(f"O Poké Ball · ultimate menembus 40% guard · Esc kembali",
+                      W // 2, 767, MUTED, self.tiny, True)
         if b.get("matchup_tip_timer", 0) > 0 and b.get("matchup_tip"):
-            self.box((910, 216, 340, 55), (26, 40, 52), 8)
-            self.text(self.words("TIP JENIS · POKÉAPI", "TYPE TIP · POKÉAPI"), 923, 221, retro.GOLD, self.tiny)
+            self.box((890, 250, 340, 84), (26, 40, 52), 8, retro.EDGE)
+            self.text(self.words("TIP JENIS · POKÉAPI", "TYPE TIP · POKÉAPI"), 904, 257, retro.GOLD, self.small)
             for index, (emoji, tip) in enumerate(b["matchup_tip"]):
-                self.text(f"{emoji} {tip}"[:34], 923, 238 + index * 16, CREAM, self.tiny)
+                self.text(f"{emoji} {tip}"[:38], 904, 279 + index * 21, CREAM, self.small)
         if b.get("result") and b["player_hp"] <= 0:
             self.box((470, 586, 340, 44), (32, 51, 48), 12)
             self.text("Enter / Esc · kembali ke peta", W // 2, 608, CREAM, self.small, True)
@@ -6702,6 +6885,18 @@ class LegacyGame:
                     self.toggle_active_pokemon()
                 elif event.key in (pg.K_ESCAPE, pg.K_n):
                     self.back()
+            elif self.mode == "companion_picker":
+                active = self.life.pokemon_active[:3]
+                if event.key in (pg.K_ESCAPE, pg.K_RETURN) and not active:
+                    self.back()
+                elif event.key == pg.K_ESCAPE:
+                    self.back()
+                elif event.key in (pg.K_LEFT, pg.K_UP) and active:
+                    self.companion_picker_selected = (self.companion_picker_selected - 1) % len(active)
+                elif event.key in (pg.K_RIGHT, pg.K_DOWN) and active:
+                    self.companion_picker_selected = (self.companion_picker_selected + 1) % len(active)
+                elif event.key in (pg.K_RETURN, pg.K_KP_ENTER) and active:
+                    self.select_companion(active[self.companion_picker_selected])
             elif self.mode == "hospitality":
                 if event.key == pg.K_1:
                     self.hospitality_order("meal" if self.hospitality_kind == "restaurant" else "hotel")
@@ -6715,6 +6910,25 @@ class LegacyGame:
             elif self.mode == "journal":
                 if event.key in (pg.K_ESCAPE, pg.K_l):
                     self.back()
+            elif self.mode == "journal_cosmetics":
+                options = [("", "", 0), *[(row[1], row[2], row[0]) for row in COLLECTION_COSMETICS]]
+                if event.key in (pg.K_ESCAPE, pg.K_l):
+                    self.close_cosmetic_collection()
+                elif event.key in (pg.K_UP, pg.K_DOWN):
+                    delta = -1 if event.key == pg.K_UP else 1
+                    index = (self.cosmetic_collection_selected + delta) % len(options)
+                    # Skip locked items; keyboard selection always previews an
+                    # owned choice and equips it on Enter.
+                    for _ in range(len(options)):
+                        key = options[index][0]
+                        if not key or key in self.life.cosmetics:
+                            self.cosmetic_collection_selected = index
+                            self.choose_cosmetic(key)
+                            break
+                        index = (index + delta) % len(options)
+                elif event.key in (pg.K_RETURN, pg.K_KP_ENTER):
+                    key = options[self.cosmetic_collection_selected][0]
+                    self.choose_cosmetic(key)
             elif self.mode == "secret_puzzle":
                 if event.key == pg.K_ESCAPE:
                     self.back()
@@ -6861,7 +7075,7 @@ class LegacyGame:
             self.notify("PONSEL: OpenCode selesai merespons · notifikasi baru diterima.")
         self.environment.update(dt)
         self.moving = False
-        active = self.mode in ("game", "map", "tutorial_map", "terminal", "inventory", "shop", "weather", "phone", "dex", "center", "battle", "encounter", "pokemon_info", "interaction_picker", "daily_quests", "journal", "secret_puzzle", "evolution", "settings", "hospitality", "home_decor", "dead")
+        active = self.mode in ("game", "map", "tutorial_map", "terminal", "inventory", "shop", "weather", "phone", "dex", "center", "companion_picker", "battle", "encounter", "pokemon_info", "interaction_picker", "daily_quests", "journal", "secret_puzzle", "evolution", "settings", "hospitality", "home_decor", "dead")
         if active:
             if self.mode == "game":self.ensure_walkable_position()
             if self.mode == "map" and not self.wild_pokemon and self.pokedex.catalog:
