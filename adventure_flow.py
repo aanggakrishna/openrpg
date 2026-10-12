@@ -1083,7 +1083,8 @@ class FlowMixin:
                         actor['rocket_triggered'] = True
                         actor['cooldown'] = 45
                         self.invitation = {'trainer': actor, 'cutin_started': time.monotonic(),
-                                           'auto_accept': True}
+                                           'auto_accept': True, 'rocket_video': True}
+                        self.start_rocket_video()
                         self.set_mode('invitation')
                         return
                     continue
@@ -1104,7 +1105,8 @@ class FlowMixin:
                         actor['rocket_triggered'] = True
                         actor['cooldown'] = 45
                         self.invitation = {'trainer': actor, 'cutin_started': time.monotonic(),
-                                           'auto_accept': False}
+                                           'auto_accept': False, 'rocket_video': True}
+                        self.start_rocket_video()
                         self.set_mode('invitation')
                         return
                     continue
@@ -1136,7 +1138,8 @@ class FlowMixin:
                     actor['rocket_triggered'] = True
                     actor['cooldown'] = 45
                     self.invitation = {'trainer': actor, 'cutin_started': time.monotonic(),
-                                       'auto_accept': True}
+                                       'auto_accept': True, 'rocket_video': True}
+                    self.start_rocket_video()
                     self.set_mode('invitation')
                     return
                 continue
@@ -1293,7 +1296,8 @@ class FlowMixin:
             return
         if (self.mode == 'invitation' and self.invitation
                 and self.invitation.get('auto_accept')
-                and time.monotonic() - self.invitation.get('cutin_started', time.monotonic()) >= 1.55):
+                and time.monotonic() - self.invitation.get('cutin_started', time.monotonic())
+                >= (self.rocket_video_duration if self.invitation.get('rocket_video') else 1.55)):
             self.accept_invitation()
             return
         self.update_challenges(dt)
