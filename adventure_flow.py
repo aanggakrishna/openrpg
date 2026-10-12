@@ -1214,6 +1214,8 @@ class FlowMixin:
                 return
         if self.mode=='battle' and event.type==pg.KEYDOWN and self.battle and any(self.battle.get(k) for k in ('rocket_defeat_cutin','rocket_win_cutin')):
             return
+        if self.mode=='battle' and event.type==pg.KEYDOWN and self.battle and self.battle.get('ko_anim'):
+            return
         if self.mode=='battle' and event.type==pg.KEYDOWN and self.battle and any(self.battle.get(k) for k in ('ultimate_cutin','capture','boss_intro','boss_evolution','victory_cutin')) and event.key!=pg.K_ESCAPE:
             return
         if self.mode=='tutorial_skip_confirm' and event.type==pg.KEYDOWN and event.key==pg.K_ESCAPE:

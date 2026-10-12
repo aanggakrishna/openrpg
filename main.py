@@ -2619,6 +2619,9 @@ class LegacyGame:
 
     def _win_battle(self):
         b = self.battle
+        if (b.get("ko_anim") or {}).get("owner") != "enemy":
+            b["ko_anim"] = {"owner": "enemy", "pokemon_id": int(b["wild_id"]),
+                            "timer": 1.0, "duration": 1.0, "next_pokemon": None}
         self.queue_pokemon_cry(b["player_id"])
         trainer = b.get("trainer")
         zone_index = b.get("reserve_zone")
@@ -5575,7 +5578,8 @@ class LegacyGame:
                 caption = caption[:63].rstrip() + "…"
             self.text(caption, W // 2, 461, CREAM, self.tiny, True)
         phase = b.get("phase", "Memuat Pokémon dari PokéAPI…") if capture else (b.get("result") or b.get("phase", "Memuat Pokémon dari PokéAPI…"))
-        if capture or b.get("result"):
+        enemy_ko = (b.get("ko_anim") or {}).get("owner") == "enemy"
+        if capture or (b.get("result") and not enemy_ko):
             self.box((300, 536, 680, 40), (35, 54, 48), 12)
             self.text(phase, W // 2, 556, CREAM, self.small, True)
         self.box((910, 142, 340, 66), (32, 51, 48), 9)
@@ -5596,11 +5600,11 @@ class LegacyGame:
             self.draw_ultimate_cutin(b, b["ultimate_cutin"])
         if b.get("boss_intro"):
             self.draw_boss_intro(b, b["boss_intro"])
-        if b.get("rocket_defeat_cutin"):
+        if b.get("rocket_defeat_cutin") and not enemy_ko:
             self.draw_rocket_defeat_cutin(b,b["rocket_defeat_cutin"])
         if b.get("rocket_win_cutin"):
             self.draw_rocket_win_cutin(b,b["rocket_win_cutin"])
-        if b.get("victory_cutin"):
+        if b.get("victory_cutin") and not enemy_ko:
             self.draw_victory_cutin(b, b["victory_cutin"])
 
     def draw_rocket_defeat_cutin(self,battle,cutin):

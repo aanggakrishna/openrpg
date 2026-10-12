@@ -580,7 +580,7 @@ class FighterMixin:
         elif self.trigger_boss_evolution():
             return True
         elif b['wild_hp']<=0:
-            b['ko_anim']={'owner':'enemy','pokemon_id':ident,'timer':.82,'duration':.82,'next_pokemon':None}
+            b['ko_anim']={'owner':'enemy','pokemon_id':ident,'timer':1.0,'duration':1.0,'next_pokemon':None}
             b['shots']=[]
             self._win_battle()
         return True
