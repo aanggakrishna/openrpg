@@ -60,7 +60,7 @@ class Battle:
     @staticmethod
     def fighter(team, x, side):
         return dict(team=team, slot=next((i for i,c in enumerate(team) if c['hp']>0),0), x=float(x), y=570., vy=0., side=side, facing=1 if side == 0 else -1,
-                    energy=25., guard=False, cooldowns=[0., 0., 0., 0., 0.], keys={}, input_age=0., ai=0.,stun=0.)
+                    energy=25., guard=False, cooldowns=[0., 0., 0., 0., 0.], keys={}, input_age=0., ai=0.,stun=0., effects={})
 
     def wave(self):
         self.fighters = {k:v for k,v in self.fighters.items() if not k.startswith('bot:')}
@@ -97,13 +97,19 @@ class Battle:
         damage = max(2, int(power * .20 * (p['attack'] + 80) / (q['defense'] + 80)))
         if p.get('boss'): damage = int(damage * 1.3)
         damage = int(damage * effectiveness)
+        if f.get('effects',{}).get('burn',0) and (move or {}).get('damage_class')=='physical': damage=int(damage*.82)
+        if f.get('effects',{}).get('intimidate',0) or f.get('effects',{}).get('charm',0): damage=int(damage*.78)
+        if g.get('effects',{}).get('armor_break',0): damage=int(damage*1.26)
         if g['guard'] and effectiveness != 0: damage = max(1, int(damage * (.40 if ultimate else .15)))
         q['hp'] = max(0, q['hp'] - damage)
-        stunned=False
-        if effectiveness>0 and move and move.get('stun_chance') and not g['guard'] and self.rng.random()<move['stun_chance']:
-            g['stun']=self.rng.uniform(1.0,3.0);stunned=True
+        effect=''
+        if effectiveness>0 and move and move.get('effect') and not g['guard'] and self.rng.random()<move.get('effect_chance',.72):
+            effect=move['effect'];duration=float(move.get('effect_duration',2.0))
+            if effect in ('stun','freeze','entomb'):g['stun']=max(g['stun'],duration)
+            elif effect=='knockback':g['x']=max(40,min(1240,g['x']+(120 if f['side']==0 else -120)))
+            else:g.setdefault('effects',{})[effect]=max(g.setdefault('effects',{}).get(effect,0),duration)
         self.emit('hit',pokemon=q['id'],type=attack_type,ultimate=ultimate,
-                  emoji=(move or {}).get('emoji','💥'),stunned=stunned,effectiveness=effectiveness)
+                  emoji=(move or {}).get('emoji','💥'),stunned=effect in ('stun','freeze','entomb'),effect=effect,effectiveness=effectiveness)
         f['energy'] = min(100, f['energy'] + (0 if ultimate else 7))
         label=('NO EFFECT' if effectiveness==0 else 'BLOCK' if g['guard'] else
                'SUPER!' if effectiveness>=2 else 'RESIST' if effectiveness<=.5 else str(damage))
@@ -157,7 +163,9 @@ class Battle:
         speed=1100 if ultimate else 500 if move.get('stun_chance') else 420
         self.shots.append(dict(owner=uid,side=f['side'],x=f['x'],y=f['y']-30,vx=dx/distance*speed,vy=dy/distance*speed,
                                remaining=move['range'],emoji=move['emoji'],power=power,ultimate=ultimate,
-                               type=move['type'],name=move['name'],style=move['style'],age=0.,windup=.78 if ultimate else 0.,stun_chance=move.get('stun_chance',0)))
+                               type=move['type'],name=move['name'],style=move['style'],age=0.,windup=.78 if ultimate else 0.,
+                               effect=move.get('effect'),effect_chance=move.get('effect_chance',0),
+                               effect_duration=move.get('effect_duration',0),damage_class=move.get('damage_class','special')))
 
     def tick(self, dt):
         if self.result: return
@@ -187,11 +195,14 @@ class Battle:
                                          w=self.rng.random()<.65,e=self.rng.random()<.5,r=self.rng.random()<.08)
                     f['ai'] = self.rng.uniform(.25,.65)
             keys = f['keys'];f['stun']=max(0,f['stun']-dt); f['guard'] = bool(keys.get('guard')) and f['stun']<=0
+            f['effects']={name:max(0.,ttl-dt) for name,ttl in f.get('effects',{}).items() if ttl>dt}
             for i in range(3):
                 if keys.get(str(i+1)) and i < len(f['team']) and f['team'][i]['hp'] > 0: f['slot'] = i
             movement = (int(keys.get('right',False))-int(keys.get('left',False))) if f['stun']<=0 else 0
+            if f['effects'].get('confuse') and self.rng.random()<.03: movement*=-1
+            speed_scale=.58 if (f['effects'].get('slow') or f['effects'].get('bind')) else 1.
             if movement: f['facing'] = movement
-            f['x'] = max(40,min(1240,f['x']+movement*(90 if f['guard'] else 230)*dt))
+            f['x'] = max(40,min(1240,f['x']+movement*(90 if f['guard'] else 230)*speed_scale*dt))
             grounded = f['y'] >= 570 or any(x-12 <= f['x'] <= x+w+12 and abs(f['y']-y)<1 for x,w,y in self.platforms)
             if keys.get('up') and grounded and f['stun']<=0: f['vy'] = -465
             old_y = f['y']; f['vy'] += 1150*dt; f['y'] += f['vy']*dt

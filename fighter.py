@@ -13,7 +13,7 @@ WEATHER_TYPES={'Cerah':({'fire','flying'},{'water'}),'Berawan':({'normal','bug',
                'Hujan':({'water','electric'},{'fire'}),'Salju':({'ice'},{'fire','grass'}),
                'Badai':({'electric','flying'},{'ground'})}
 WEATHER_EMOJI={'Cerah':'☀','Berawan':'☁','Hujan':'🌧','Salju':'❄','Badai':'⛈'}
-from combat_rules import EMOJI, VARIANTS, skill, fighter_loadout
+from combat_rules import EMOJI, VARIANTS, skill, fighter_loadout, decorate_ultimate
 
 # Skills leave a short-lived tactical mark on the stage.  The marks are
 # deliberately local and expire after seven seconds, so real-time movement
@@ -63,11 +63,13 @@ class FighterMixin:
         super().prepare_battle()
         b=self.battle
         if not b:return
-        b.setdefault('shots',[]);b.setdefault('impacts',[]);b.setdefault('cooldowns',[])
+        b.setdefault('shots',[]);b.setdefault('impacts',[]);b.setdefault('cooldowns',{})
         # Old saves and interrupted battles can carry a list or a dict.  The
         # cooldown table must be a dict before combat starts.
         if not isinstance(b['cooldowns'],dict): b['cooldowns']={}
         b.setdefault('arena_effects',[]);b.setdefault('arena_combo','')
+        b.setdefault('player_statuses',{});b.setdefault('enemy_statuses',{})
+        b.setdefault('status_tick',1.0)
         b.setdefault('guard',100.0);b.setdefault('player_vx',0.0);b.setdefault('enemy_vy',0.0)
         b.setdefault('guard_break',0.0);b.setdefault('enemy_decision',.6)
         b.setdefault('player_stun_timer',0.0);b.setdefault('enemy_stun_timer',0.0)
@@ -194,13 +196,9 @@ class FighterMixin:
                 move=max(candidates,key=lambda item:(item.get('power',0)+(8 if item.get('type')==primary else 0)))
             else:
                 move=generated_ultimate
-            ultimate=dict(move)
-            ultimate.update(style='beam',range=1100,cooldown=12.0,ultimate=True,
-                            power=min(150,max(100,int(ultimate['power']*1.25))))
-            return ultimate
+            return decorate_ultimate(move)
         skills=self.skills_for(ident)
-        return dict(skills[-1],style='beam',range=1100,cooldown=12.0,ultimate=True,
-                    power=min(150,max(100,int(skills[-1]['power']*1.25)))) if skills else None
+        return decorate_ultimate(skills[-1]) if skills else None
 
     def random_battle_platforms(self):
         # A connected route: each ledge is within one regular jump of its neighbor.
@@ -268,6 +266,53 @@ class FighterMixin:
             direction=1 if owner=='player' else -1
             b[target+'_x']=max(55,min(1225,b[target+'_x']+direction*105))
 
+    def status_active(self, who, effect):
+        return self.battle and self.battle.get(who+'_statuses',{}).get(effect,0)>0
+
+    def apply_control(self, shot, target, defending):
+        """Apply Q's elemental control, with clear independent timers."""
+        effect=shot.get('effect')
+        if not effect or defending or self.pokemon_rng.random()>shot.get('effect_chance',.72):
+            return ''
+        b=self.battle; duration=float(shot.get('effect_duration',2.0))
+        statuses=b.setdefault(target+'_statuses',{})
+        if effect in ('stun','freeze','entomb'):
+            b[target+'_stun_timer']=max(b.get(target+'_stun_timer',0),duration)
+            if effect != 'stun': statuses[effect]=max(statuses.get(effect,0),duration)
+        elif effect=='knockback':
+            direction=1 if shot['owner']=='player' else -1
+            b[target+'_x']=max(55,min(1225,b[target+'_x']+direction*118))
+        else:
+            statuses[effect]=max(statuses.get(effect,0),duration)
+        return shot.get('effect_label',effect.upper())
+
+    def update_statuses(self,dt):
+        b=self.battle
+        if not b:return
+        for who in ('player','enemy'):
+            statuses=b.setdefault(who+'_statuses',{})
+            for effect in tuple(statuses):
+                statuses[effect]=max(0.0,statuses[effect]-dt)
+                if statuses[effect]<=0:del statuses[effect]
+        b['status_tick']=b.get('status_tick',1.0)-dt
+        if b['status_tick']>0:return
+        b['status_tick']+=1.0
+        for who in ('player','enemy'):
+            statuses=b.get(who+'_statuses',{})
+            if not any(effect in statuses for effect in ('burn','poison')):continue
+            hpkey='player_hp' if who=='player' else 'wild_hp'
+            damage=(2 if 'burn' in statuses else 0)+(2 if 'poison' in statuses else 0)
+            b[hpkey]=max(0,b[hpkey]-damage)
+            b['hit_flash' if who=='player' else 'enemy_flash']=.15
+            if who=='player':self.save_battle_player_hp()
+            if b[hpkey]<=0 and not b.get('ko_anim'):
+                ident=b['player_id'] if who=='player' else b['wild_id']
+                b['ko_anim']={'owner':who,'pokemon_id':ident,'timer':.82 if who=='player' else 1.0,
+                              'duration':.82 if who=='player' else 1.0,'next_pokemon':None}
+                b['shots']=[]
+                if who=='enemy':self._win_battle()
+                else:b['result']=self.words('Tim KO / Esc kembali','Team KO / Esc to return')
+
     def update_arena_effects(self,dt):
         b=self.battle
         if not b:return
@@ -297,6 +342,35 @@ class FighterMixin:
                         else: b['result']=self.words('Tim KO / Esc kembali','Team KO / Esc to return')
             active.append(effect)
         b['arena_effects']=active
+
+    def draw_fighter_status(self, who, x, y, sprite_size):
+        """Semi-transparent status overlays anchored directly on the fighter."""
+        b=self.battle
+        if not b:return
+        statuses=b.get(who+'_statuses',{})
+        stunned=b.get(who+'_stun_timer',0)>0
+        if not statuses and not stunned:return
+        overlay=pg.Surface((sprite_size+54,sprite_size+50),pg.SRCALPHA)
+        cx=(sprite_size+54)//2;cy=(sprite_size+50)//2
+        def icon(value,px,py,size=30,alpha=220):
+            glyph=self.emoji_font.render(value,True,(255,255,255))
+            glyph=pg.transform.scale(glyph,(size,size));glyph.set_alpha(alpha)
+            overlay.blit(glyph,glyph.get_rect(center=(px,py)))
+        if stunned: icon('❔',cx,12,31)
+        if 'freeze' in statuses:
+            pg.draw.ellipse(overlay,(167,230,255,112),(22,18,sprite_size+10,sprite_size+18));icon('🧊',cx,cy,48,145)
+        if 'entomb' in statuses:
+            for ox,oy in ((-26,19),(0,27),(27,17)):icon('🪨',cx+ox,cy+oy,37,150)
+        if 'bind' in statuses: icon('🌿',cx-20,cy,38,180);icon('🕸️',cx+23,cy-6,35,170)
+        if 'burn' in statuses: icon('🔥',cx-25,cy+18,33,220);icon('🔥',cx+26,cy+15,29,200)
+        if 'poison' in statuses: icon('🟣',cx-24,cy-8,25,180);icon('☠️',cx+22,cy-20,29,180)
+        if 'slow' in statuses: icon('🐌',cx,cy+21,30,185)
+        if 'confuse' in statuses: icon('😵‍💫',cx,11,32,220)
+        if 'fear' in statuses: icon('👻',cx,11,31,190)
+        if 'blind' in statuses: icon('🌫️',cx,cy,48,130)
+        if 'armor_break' in statuses: icon('💥',cx,10,28,220);icon('🛡️',cx,cy+16,34,120)
+        if 'intimidate' in statuses or 'charm' in statuses: icon('📉',cx,11,27,220)
+        self.canvas.blit(overlay,(int(x-overlay.get_width()/2),int(y-overlay.get_height()/2)))
 
     def draw_arena_effects(self,b,ground=606):
         """Render stage marks behind fighters, with a timer and clear icon."""
@@ -346,6 +420,10 @@ class FighterMixin:
         result=max(125,min(270,base+(speed-70)*.52))
         if who=='player' and self.battle and self.battle.get('fruit_speed_timer',0)>0:
             result*=1.35
+        if self.status_active(who,'slow') or self.status_active(who,'bind'):
+            result*=.58
+        if self.status_active(who,'fear'):
+            result*=.82
         return result
 
     def spawn_jump_dust(self,who,ident,floor_y):
@@ -589,6 +667,7 @@ class FighterMixin:
             puff['vy']+=125*dt
             if puff['ttl']>0:dust.append(puff)
         b['dust_particles']=dust
+        self.update_statuses(dt)
         self.update_arena_effects(dt)
         if b.get('ko_anim') or b.get('result'):
             return
@@ -599,6 +678,8 @@ class FighterMixin:
         b['guard']=max(0,min(100,b['guard']+(-19 if guarding else 16)*dt))
         if b['guard']<=0:b['guard_break']=1.4
         axis=int(keys[pg.K_RIGHT])-int(keys[pg.K_LEFT])
+        if self.status_active('player','confuse') and self.pokemon_rng.random()<.035:
+            axis*=-1
         if b['player_stun_timer']>0:axis=0
         self.physics('player',dt,axis*.35 if guarding else axis,b.get('jump_buffer',0)>0 and b['player_stun_timer']<=0,keys[pg.K_UP] and b['player_stun_timer']<=0,keys[pg.K_DOWN])
         b['player_facing']=1 if b['enemy_x']>=b['player_x'] else -1
@@ -614,6 +695,10 @@ class FighterMixin:
             low=max(.3,min(.85,.7-level_gap*.009));high=max(low+.16,min(1.15,1.02-level_gap*.01))
             b['enemy_decision']=self.pokemon_rng.uniform(low,high)/b.get('enemy_reflex_factor',1)
             b['enemy_axis']=direction if action=='approach' else -direction if action=='retreat' else 0
+            if self.status_active('enemy','fear'):
+                b['enemy_axis']=-direction
+            elif self.status_active('enemy','confuse') and self.pokemon_rng.random()<.32:
+                b['enemy_axis']*=-1
             if action=='guard':b['enemy_guard_timer']=.7
             if action=='attack' and b['enemy_cooldown']<=0:
                 moves=self.skills_for(b['wild_id'])
@@ -670,6 +755,9 @@ class FighterMixin:
     def apply_hit(self,shot,target):
         b=self.battle
         if b.get('result'):return False
+        if self.status_active(shot['owner'],'blind') and self.pokemon_rng.random()>.68:
+            b['phase']=self.words('SERANGAN GAGAL · pandangan tertutup kabut','MISS · vision is obscured')
+            return False
         if self.pokemon_rng.random()*100>shot['accuracy']:
             b['phase']='MISS';return False
         defending=b['guarding'] if target=='player' else b.get('enemy_guard_timer',0)>0
@@ -692,6 +780,9 @@ class FighterMixin:
         attack_mod=mods.get(str(shot['source_id']),{}).get('attack',0)
         defense_mod=mods.get(str(ident),{}).get('defense',0)
         damage=int(damage*(1+attack_mod/100)/max(.5,1+defense_mod/100))
+        if self.status_active(shot['owner'],'burn') and shot.get('damage_class')=='physical': damage=int(damage*.82)
+        if self.status_active(shot['owner'],'intimidate') or self.status_active(shot['owner'],'charm'): damage=int(damage*.78)
+        if self.status_active(target,'armor_break'): damage=int(damage*1.26)
         damage=int(damage*factor)
         if factor == 0:
             b['phase']=self.words('TIDAK MEMPAN','NO EFFECT')
@@ -715,12 +806,9 @@ class FighterMixin:
         b[hpkey]=max(0,b[hpkey]-damage)
         b['hit_flash' if target=='player' else 'enemy_flash']=.24
         b['super_meter']=min(100,b['super_meter']+(7 if target=='player' else 13))
-        stunned=False
-        if shot.get('stun_chance') and not defending and self.pokemon_rng.random()<shot['stun_chance']:
-            b[target+'_stun_timer']=self.pokemon_rng.uniform(1.0,3.0)
-            stunned=True
+        control=self.apply_control(shot,target,defending)
         self.play_hit_cry(ident)
-        b['phase']=('STUN! ' if stunned else 'BLOCK ' if defending else '')+f'-{damage} HP'
+        b['phase']=(f'{control}! ' if control else 'BLOCK ' if defending else '')+f'-{damage} HP'
         self.activate_arena_effect(shot,target)
         if target=='player':
             self.save_battle_player_hp()
@@ -759,7 +847,8 @@ class FighterMixin:
             for i,(x,y) in enumerate(shot['trail']):
                 pg.draw.circle(self.canvas,color,(int(x),int(y)),max(1,i//2))
             self.emoji(shot['emoji'],(shot['x'],shot['y']),size)
-            if shot.get('stun_chance'):self.emoji('❔',(shot['x'],shot['y']-20),20)
+            if shot.get('effect'):
+                self.emoji(shot.get('effect_emoji','❔'),(shot['x'],shot['y']-22),20)
             if shot['style']=='area':
                 for offset in (-35,35):self.emoji(shot['emoji'],(shot['x']+offset,shot['y']+math.sin(self.frame*.2+offset)*24),size//2)
         for impact in b.get('impacts',[]):
@@ -791,7 +880,7 @@ class FighterMixin:
             self.emoji(m['emoji'],(x+23,y+23),23)
             cooldown=b.get('cooldowns',{}).get(self.skill_key(b['player_id'],i),0)
             self.text(('Q','W','E')[i]+' / '+(f'{cooldown:.1f}s' if cooldown else 'READY'),x+44,y+13,retro.GOLD if not cooldown else retro.MUTED,self.tiny)
-            label=m['name']
+            label=(m.get('effect_label','')+' · '+m['name']) if i==0 and m.get('effect_label') else m['name']
             if self.tiny.size(label)[0]>143:label=label[:19]
             self.text(label,x+7,y+44,retro.CREAM,self.tiny)
         ult_cooldown=b.get('cooldowns',{}).get(self.skill_key(b['player_id'],'ultimate'),0)

@@ -35,6 +35,58 @@ def move_emoji(typ, name):
             return emoji
     return EMOJI.get(typ, '💥')
 
+# Q is a tactical control slot.  Its exact control effect follows the move's
+# elemental identity so every Pokémon can contribute something distinct even
+# when the local learnset lacks a traditional status move.
+CONTROL_BY_TYPE = {
+    'normal': ('daze', '😵‍💫', 'PUSING', 1.6),
+    'fire': ('burn', '🔥', 'TERBAKAR', 4.0),
+    'water': ('slow', '💧', 'MELAMBAT', 3.4),
+    'electric': ('stun', '⚡', 'STUN', 1.55),
+    'grass': ('bind', '🌿', 'TERJERAT', 3.2),
+    'ice': ('freeze', '🧊', 'BEKU', 1.35),
+    'fighting': ('knockback', '💥', 'TERLEMPAR', 0.0),
+    'poison': ('poison', '☠️', 'RACUN', 4.5),
+    'ground': ('slow', '🟤', 'LUMPUR', 3.8),
+    'flying': ('knockback', '🌪️', 'TERHEMPAS', 0.0),
+    'psychic': ('confuse', '🔮', 'BINGUNG', 3.0),
+    'bug': ('bind', '🕸️', 'TERJERAT', 3.5),
+    'rock': ('entomb', '🪨', 'TERKUBUR BATU', 1.45),
+    'ghost': ('fear', '👻', 'KETAKUTAN', 2.6),
+    'dragon': ('intimidate', '🐉', 'ATK TURUN', 4.0),
+    'dark': ('blind', '🌫️', 'PANDANGAN GELAP', 3.0),
+    'steel': ('armor_break', '💥🛡️', 'DEF TURUN', 4.0),
+    'fairy': ('charm', '💖', 'DAYA SERANG TURUN', 3.5),
+}
+
+ULTIMATE_VARIANTS = {
+    'normal': ('Meteor Impact', '☄️', 'area'), 'fire': ('Inferno Nova', '🌋', 'area'),
+    'water': ('Tidal Cataclysm', '🌊', 'wave'), 'electric': ('Thunder Dominion', '⚡', 'beam'),
+    'grass': ('Verdant Tempest', '🌳', 'area'), 'ice': ('Absolute Zero', '🧊', 'area'),
+    'fighting': ('Meteor Barrage', '🥊', 'rush'), 'poison': ('Venom Eclipse', '🟣', 'area'),
+    'ground': ('Continental Break', '🌎', 'area'), 'flying': ('Skybreaker', '🌪️', 'rush'),
+    'psychic': ('Mind Collapse', '🧠', 'beam'), 'bug': ('Swarm Eclipse', '🐝', 'barrage'),
+    'rock': ('Mountain Fall', '⛰️', 'area'), 'ghost': ('Phantom Rift', '👻', 'beam'),
+    'dragon': ('Draco Catastrophe', '🐉', 'beam'), 'dark': ('Nightfall Ruin', '🌑', 'area'),
+    'steel': ('Iron Citadel', '⚙️', 'barrage'), 'fairy': ('Starlight Verdict', '🌟', 'beam'),
+}
+
+def control_for(move):
+    """Return a Q-slot control descriptor for a real move."""
+    effect, emoji, label, duration = CONTROL_BY_TYPE.get(move.get('type', 'normal'), CONTROL_BY_TYPE['normal'])
+    return {'effect': effect, 'effect_emoji': emoji, 'effect_label': label,
+            'effect_duration': duration, 'effect_chance': .72 if effect not in ('knockback',) else 1.0}
+
+def decorate_ultimate(move):
+    """Give R a type-specific name, icon and animation lane."""
+    result=dict(move)
+    title, emoji, style = ULTIMATE_VARIANTS.get(result.get('type', 'normal'), ULTIMATE_VARIANTS['normal'])
+    result.update(name=title, emoji=emoji, ultimate_style=style,
+                  style='area' if style in ('area','barrage') else 'beam' if style=='beam' else 'projectile',
+                  range=1100, cooldown=12.0, ultimate=True,
+                  power=min(150,max(100,int(result.get('power',80)*1.25))))
+    return result
+
 def skill(move,ultimate=False):
     typ=move['type']['name']; name=move['name'];power=move.get('power') or 50
     status=move.get('damage_class',{}).get('name')=='status'
@@ -59,12 +111,10 @@ def fighter_loadout(moves):
     q,w,e=(skill(move) for move in moves)
     # Preserve each Pokémon's real move name/type/emoji, while making the
     # combat roles readable and predictable across every battle mode.
-    q.update(style='projectile',range=max(420,q['range']),cooldown=max(6.0,q['cooldown']),
-             stun_chance=.42)
+    q.update(style='projectile',range=max(420,q['range']),cooldown=max(6.0,q['cooldown']))
+    q.update(control_for(q))
     w.update(style='melee',range=116,cooldown=max(1.7,min(3.2,w['cooldown'])))
     if e['style'] in ('melee','status'):e['style']='projectile'
     e.update(range=max(650,e['range']),cooldown=max(3.5,min(5.5,e['cooldown'])))
-    ultimate=dict(e)
-    ultimate.update(style='beam',range=1100,cooldown=12.0,ultimate=True,
-                    power=min(150,max(100,int(ultimate['power']*1.25))),stun_chance=0)
+    ultimate=decorate_ultimate(e)
     return [q,w,e],ultimate

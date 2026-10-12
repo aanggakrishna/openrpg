@@ -5888,8 +5888,9 @@ class LegacyGame:
                 # the fighter needs to face right toward its opponent.
                 if faces_right:
                     sprite = pg.transform.flip(sprite, True, False)
-                stunned=b.get(key+"_stun_timer",0)>0
-                if stunned and not self.life.reduced_motion:
+                immobilized=b.get(key+"_stun_timer",0)>0
+                confused=self.status_active(key, "confuse")
+                if confused and not self.life.reduced_motion:
                     sprite=pg.transform.rotate(sprite,(self.frame*7)%360)
                 flash = b.get("hit_flash", 0) if key == "player" else b.get("enemy_flash", 0)
                 if flash > 0 and not self.life.reduced_motion and int(flash * 50) % 2:
@@ -5929,7 +5930,9 @@ class LegacyGame:
                     else:
                         self.canvas.blit(sprite, (x - sprite.get_width() // 2,
                                                   ground - sprite.get_height() + fighter_y))
-                if stunned:
+                self.draw_fighter_status(key, x, ground - sprite.get_height() // 2 + fighter_y,
+                                         sprite.get_height())
+                if confused:
                     question=self.emoji_font.render("❔",True,CREAM)
                     question=pg.transform.scale(question,(38,38))
                     self.canvas.blit(question,question.get_rect(center=(x,ground-sprite.get_height()-25+fighter_y)))
@@ -6139,6 +6142,7 @@ class LegacyGame:
             pg.draw.polygon(self.canvas, (28, 34, 73),
                             [(offset, 0), (offset + 42, 0), (offset - 218, H), (offset - 260, H)])
         accent = TYPE_MOVES.get(cutin["move_type"], TYPE_MOVES["normal"])[1]
+        ultimate_style = (cutin.get("move") or {}).get("ultimate_style", "beam")
         veil = pg.Surface((W, H), pg.SRCALPHA)
         veil.fill((*accent, 34))
         self.canvas.blit(veil, (0, 0))
@@ -6161,6 +6165,27 @@ class LegacyGame:
         glyph = self.ultimate_font.render(cutin["emoji"], True, CREAM)
         glyph = pg.transform.scale(glyph, (116, 116))
         self.canvas.blit(glyph, glyph.get_rect(center=(625, 487)))
+        # Each ultimate family receives a different motion language before
+        # impact: beams converge, areas expand, rushes streak forward and
+        # barrages shower repeated projectiles.
+        if ultimate_style == "area":
+            for radius in (72, 112, 154):
+                pg.draw.circle(self.canvas, accent, (885, 486), radius, 4)
+        elif ultimate_style == "rush":
+            for index in range(7):
+                y = 398 + index * 28
+                pg.draw.line(self.canvas, accent, (742, y), (1090 + index * 15, y - 28), 7)
+        elif ultimate_style == "barrage":
+            for index in range(9):
+                x = 744 + (index % 3) * 118
+                y = 392 + (index // 3) * 80
+                self.emoji(cutin["emoji"], (x, y), 34)
+        elif ultimate_style == "wave":
+            for index in range(4):
+                pg.draw.arc(self.canvas, accent, (736, 386 + index * 24, 330, 95), .1, math.pi - .1, 6)
+        else:
+            for index in range(6):
+                pg.draw.line(self.canvas, accent, (739, 485), (1090, 330 + index * 62), 4)
         pg.draw.rect(self.canvas, accent, (485, 584, 565, 8))
 
     def draw_battle_intro(self, battle):
