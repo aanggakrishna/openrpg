@@ -4435,15 +4435,29 @@ class LegacyGame:
         if scene == "reserve":
             zone = self.reserve_zone_at(self.life.x, self.life.y)
             zone_name = zone["biome"]
+            # Keep a stable, varied loop for each sanctuary.  The index selects
+            # a track once per map, so walking around does not restart music.
             biome_tracks = {
-                "meadow": "meadow.ogg", "forest": "forest.ogg", "desert": "desert.ogg",
-                "coast": "ocean.ogg", "swamp": "swamp.ogg", "cave": "cavern.ogg",
-                "badlands": "ruins.ogg", "mountain": "adventure.ogg", "volcano": "tavern.ogg",
-                "snow": "snow.ogg", "sky": "sky.ogg", "crystal": "mystical.ogg",
-                "ancient_forest": "fairy.ogg", "deepsea": "ocean.ogg",
-                "dragon_valley": "tavern.ogg", "legendary_ruins": "cavern.ogg",
+                "meadow": ("meadow.ogg", "cc0_rpg/rpgchip03_town.ogg", "cc0_rpg/rpgchip10_fountain_of_the_fairies.ogg"),
+                "forest": ("forest.ogg", "cc0_rpg/rpgchip10_fountain_of_the_fairies.ogg", "cc0_rpg/rpgchip07_the_shrine_of_mysteries.ogg"),
+                "desert": ("desert.ogg", "cc0_rpg/rpgchip07_the_shrine_of_mysteries.ogg"),
+                "coast": ("ocean.ogg", "cc0_rpg/rpgchip09_rainy_streets.ogg", "cc0_rpg/rpgchip11_airship.ogg"),
+                "swamp": ("swamp.ogg", "cc0_rpg/rpgchip09_rainy_streets.ogg"),
+                "cave": ("cavern.ogg", "cc0_rpg/rpgchip06_dungeon.ogg", "cc0_rpg/rpgchip07_the_shrine_of_mysteries.ogg"),
+                "badlands": ("ruins.ogg", "cc0_rpg/rpgchip06_dungeon.ogg"),
+                "mountain": ("adventure.ogg", "cc0_rpg/rpgchip11_airship.ogg"),
+                "volcano": ("tavern.ogg", "cc0_rpg/rpgchip14_battle_2.ogg"),
+                "snow": ("snow.ogg", "cc0_rpg/rpgchip09_rainy_streets.ogg"),
+                "sky": ("sky.ogg", "cc0_rpg/rpgchip11_airship.ogg"),
+                "crystal": ("mystical.ogg", "cc0_rpg/rpgchip07_the_shrine_of_mysteries.ogg"),
+                "ancient_forest": ("fairy.ogg", "cc0_rpg/rpgchip10_fountain_of_the_fairies.ogg"),
+                "deepsea": ("ocean.ogg", "cc0_rpg/rpgchip09_rainy_streets.ogg"),
+                "dragon_valley": ("tavern.ogg", "cc0_rpg/rpgchip14_battle_2.ogg"),
+                "legendary_ruins": ("cavern.ogg", "cc0_rpg/rpgchip07_the_shrine_of_mysteries.ogg"),
             }
-            track = biome_tracks.get(zone_name, "adventure.ogg")
+            choices = biome_tracks.get(zone_name, ("adventure.ogg",))
+            zone_index = reserve_index_at(self.life.x, self.life.y)
+            track = choices[(zone_index * 7 + len(zone_name)) % len(choices)]
 
         if self.mode == "battle":
             track = (self.battle or {}).get("music_track", "battle.wav")
@@ -4484,6 +4498,7 @@ class LegacyGame:
             "battle.wav", "adventure.ogg", "tavern.ogg", "ruins.ogg", "mystical.ogg",
             "cavern.ogg", "sky.ogg", "desert.ogg", "forest.ogg", "swamp.ogg",
             "snow.ogg", "ocean.ogg", "fairy.ogg",
+            "cc0_rpg/rpgchip13_battle_1.ogg", "cc0_rpg/rpgchip14_battle_2.ogg",
         ) if (music_dir / name).is_file()]
         if not candidates:
             return "battle.wav"
