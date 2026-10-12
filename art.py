@@ -106,6 +106,31 @@ class RPGArt:
             for anim in ("Idle", "Walk", "Attack"):
                 self.characters[name, anim] = pg.image.load(NINJA / f"Actor/Character/{name}/SeparateAnim/{anim}.png").convert_alpha()
         self.nature = pg.image.load(NINJA / "Backgrounds/Tilesets/TilesetNature.png").convert_alpha()
+        # Reuse the bundled CC0 Ninja Adventure effects for contextual gate
+        # challenges. They are kept as sprite sheets and only scaled when a
+        # frame is actually rendered.
+        self.gate_effect_sheets = {}
+        effect_paths = {
+            "water": ("FX/Elemental/Water/SpriteSheet.png", 40, 33),
+            "fire": ("FX/Elemental/Flam/SpriteSheet.png", 20, 30),
+            "rock": ("FX/Elemental/Rock/SpriteSheet.png", 30, 30),
+            "ice": ("FX/Elemental/Ice/SpriteSheet.png", 32, 32),
+            "plant": ("FX/Elemental/Plant/SpriteSheet.png", 32, 32),
+            "smoke": ("FX/Smoke/Smoke/SpriteSheet.png", 32, 32),
+            "explode": ("FX/Elemental/Explosion/SpriteSheet.png", 32, 32),
+            "wood": ("FX/Particle/Wood.png", 16, 16),
+            "wind": ("FX/Particle/Clouds.png", 16, 16),
+        }
+        for name, (relative, frame_w, frame_h) in effect_paths.items():
+            path = NINJA / relative
+            if path.is_file():
+                self.gate_effect_sheets[name] = (pg.image.load(path).convert_alpha(), frame_w, frame_h)
+        self.gate_items = {}
+        for name, relative in {"axe": "Items/Weapons/Axe/SpriteInHand.png",
+                               "pickaxe": "Items/Weapons/Pickaxe/SpriteInHand.png"}.items():
+            path = NINJA / relative
+            if path.is_file():
+                self.gate_items[name] = pg.image.load(path).convert_alpha()
         # The nature atlas also has multi-tile tree parts. Cropping every 32px
         # cell made some of those parts appear as half-trees in the world.
         # Use only the intact, rounded tree cells from its first row.
@@ -204,6 +229,32 @@ class RPGArt:
                 source = self.tiles[pack, index]
             self.scaled[key] = pg.transform.scale(source, (size, size))
         return self.scaled[key]
+
+    def gate_effect(self, target, name, x, y, frame, scale=2, flip=False):
+        """Render a frame from one local elemental/particle sprite sheet."""
+        source = self.gate_effect_sheets.get(name)
+        if not source:
+            return
+        sheet, frame_w, frame_h = source
+        count = max(1, sheet.get_width() // frame_w)
+        crop_x = (int(frame) % count) * frame_w
+        image = sheet.subsurface((crop_x, 0, frame_w, min(frame_h, sheet.get_height())))
+        if flip:
+            image = pg.transform.flip(image, True, False)
+        if scale != 1:
+            image = pg.transform.scale(image, (max(1, int(image.get_width() * scale)),
+                                               max(1, int(image.get_height() * scale))))
+        target.blit(image, image.get_rect(center=(int(x), int(y))))
+
+    def gate_item(self, target, name, x, y, scale=3, angle=0):
+        image = self.gate_items.get(name)
+        if image is None:
+            return
+        image = pg.transform.scale(image, (max(1, int(image.get_width() * scale)),
+                                            max(1, int(image.get_height() * scale))))
+        if angle:
+            image = pg.transform.rotate(image, angle)
+        target.blit(image, image.get_rect(center=(int(x), int(y))))
 
     def tile(self, target, pack, index, x, y, size=48):
         target.blit(self.image(pack, index, size), (x, y))

@@ -68,6 +68,7 @@ class Life:
     reserve_space_wins: dict = field(default_factory=dict)
     reserve_space_boss_thresholds: dict = field(default_factory=dict)
     reserve_space_bosses: list = field(default_factory=list)
+    reserve_gate_trials: list = field(default_factory=list)
     # Team Rocket retains Pokémon stolen after a loss until the player wins a rematch.
     rocket_stolen_pokemon: list = field(default_factory=list)
     local_dungeon_tier: int = 1
@@ -598,6 +599,12 @@ class Life:
             state.reserve_space_bosses = sorted({int(index) for index in bosses
                                                  if str(index).lstrip("-").isdigit()
                                                  and 0 <= int(index) < 50})
+            gate_trials = raw.get("reserve_gate_trials", [])
+            if not isinstance(gate_trials, list):
+                gate_trials = []
+            state.reserve_gate_trials = sorted({int(index) for index in gate_trials
+                                                if str(index).lstrip("-").isdigit()
+                                                and 0 <= int(index) < 50})
             stolen = raw.get("rocket_stolen_pokemon", [])
             state.rocket_stolen_pokemon = []
             if isinstance(stolen, list):

@@ -64,6 +64,55 @@ ULTIMATE_EMOJI = {"normal": "✨", "fire": "🔥", "water": "🌊", "electric": 
                   "ice": "❄️", "fighting": "💥", "poison": "☠️", "ground": "🌋", "flying": "🌪️",
                   "psychic": "🔮", "bug": "🐞", "rock": "🪨", "ghost": "👻", "dragon": "🐉",
                   "dark": "🌑", "steel": "⚙️", "fairy": "✨"}
+GATE_TRIALS = {
+    "meadow": (
+        {"name": ("Sulur Penjaga", "Guardian Vines"), "hint": ("Sulur menutup jalan. Gunakan tipe Api, Terbang, atau Serangga untuk membuka jalur.", "Vines block the path. Use Fire, Flying, or Bug to clear it."), "types": ("fire", "flying", "bug"), "action": ("membakar dan menyibak sulur", "burning and parting the vines"), "motion": "vine", "sound": "fire"},
+        {"name": ("Jembatan Akar", "Root Bridge"), "hint": ("Akar rapuh melintasi jurang. Tipe Rumput atau Tanah dapat menahannya.", "A fragile root bridge spans the gap. Grass or Ground can stabilize it."), "types": ("grass", "ground", "rock"), "action": ("menguatkan jembatan akar", "reinforcing the root bridge"), "motion": "earth", "sound": "earth"}),
+    "forest": (
+        {"name": ("Dinding Sulur", "Vine Wall"), "hint": ("Sulur hutan menghalangi pintu. Tipe Api, Terbang, atau Serangga bisa menyingkirkannya.", "Forest vines block the gate. Fire, Flying, or Bug can clear them."), "types": ("fire", "flying", "bug"), "action": ("membuka jalan di antara sulur", "opening a path through the vines"), "motion": "vine", "sound": "fire"},
+        {"name": ("Pohon Tumbang", "Fallen Tree"), "hint": ("Batang besar menutup jalan. Tipe Api, Petarung, atau Baja dapat menyingkirkannya.", "A fallen trunk blocks the way. Fire, Fighting, or Steel can clear it."), "types": ("fire", "fighting", "steel"), "action": ("memindahkan batang tumbang", "moving the fallen trunk"), "motion": "log", "sound": "earth"}),
+    "ancient_forest": (
+        {"name": ("Akar Kuno", "Ancient Roots"), "hint": ("Akar kuno melilit gerbang. Tipe Api, Terbang, atau Serangga dapat membukanya.", "Ancient roots coil around the gate. Fire, Flying, or Bug can clear them."), "types": ("fire", "flying", "bug"), "action": ("menyingkap akar kuno", "parting the ancient roots"), "motion": "vine", "sound": "fire"},
+        {"name": ("Gerbang Lumut", "Moss Gate"), "hint": ("Pintu batu tertutup lumut tebal. Tipe Air atau Es dapat membersihkannya.", "A stone door is sealed with thick moss. Water or Ice can wash it clean."), "types": ("water", "ice", "grass"), "action": ("membersihkan gerbang lumut", "cleaning the moss gate"), "motion": "water", "sound": "water"}),
+    "coast": (
+        {"name": ("Arus Selat", "Channel Crossing"), "hint": ("Arus deras memisahkan jalan. Menyeberanglah bersama Pokémon tipe Air, Terbang, atau Es.", "A strong current splits the path. Cross with a Water, Flying, or Ice Pokémon."), "types": ("water", "flying", "ice"), "action": ("menyeberangi arus di atas punggungnya", "crossing the current on its back"), "motion": "surf", "sound": "water"},
+        {"name": ("Pusaran Pasang", "Tidal Whirlpool"), "hint": ("Pusaran menjaga gerbang. Tipe Air, Listrik, atau Rumput dapat menenangkan arus.", "A whirlpool guards the gate. Water, Electric, or Grass can calm the current."), "types": ("water", "electric", "grass"), "action": ("menenangkan pusaran pasang", "calming the tidal whirlpool"), "motion": "surf", "sound": "water"}),
+    "deepsea": (
+        {"name": ("Palung Arus", "Trench Current"), "hint": ("Arus bawah laut terlalu kuat untuk dilalui sendiri. Gunakan tipe Air, Terbang, atau Es.", "The deep current is too strong to cross alone. Use Water, Flying, or Ice."), "types": ("water", "flying", "ice"), "action": ("menyelam lalu mengantar trainer", "diving and carrying the Trainer across"), "motion": "surf", "sound": "water"},
+        {"name": ("Karang Penjaga", "Reef Barrier"), "hint": ("Karang menutup lorong. Tipe Air, Rumput, atau Petarung dapat membuka celah aman.", "A reef blocks the passage. Water, Grass, or Fighting can open a safe gap."), "types": ("water", "grass", "fighting"), "action": ("membuka celah di antara karang", "opening a safe gap through the reef"), "motion": "rock", "sound": "earth"}),
+    "desert": (
+        {"name": ("Runtuhan Pasir", "Sandfall"), "hint": ("Batu tertimbun pasir menutup gerbang. Tipe Tanah, Air, atau Petarung dapat membersihkannya.", "Sand-buried rocks block the gate. Ground, Water, or Fighting can clear them."), "types": ("ground", "water", "fighting"), "action": ("menggali dan meruntuhkan batu", "digging through the rockfall"), "motion": "rock", "sound": "earth"},
+        {"name": ("Badai Pasir", "Sandstorm Gap"), "hint": ("Angin pasir menutup celah. Tipe Terbang, Baja, atau Batu dapat menahan hembusannya.", "A sandstorm seals the pass. Flying, Steel, or Rock can brace against it."), "types": ("flying", "steel", "rock"), "action": ("membelah badai pasir", "parting the sandstorm"), "motion": "wind", "sound": "wind"}),
+    "badlands": (
+        {"name": ("Longsor Batu", "Rockslide"), "hint": ("Longsor menutup pintu. Tipe Petarung, Tanah, atau Baja dapat menghancurkan batu.", "A rockslide blocks the entrance. Fighting, Ground, or Steel can break through."), "types": ("fighting", "ground", "steel"), "action": ("menghancurkan longsoran batu", "smashing through the rockslide"), "motion": "rock", "sound": "earth"},
+        {"name": ("Jurang Retak", "Cracked Ravine"), "hint": ("Jurang memutus jalan. Tipe Terbang, Batu, atau Naga dapat membawa trainer melintasinya.", "A ravine breaks the path. Flying, Rock, or Dragon can carry the Trainer across."), "types": ("flying", "rock", "dragon"), "action": ("melompati jurang bersama trainer", "leaping the ravine with the Trainer"), "motion": "fly", "sound": "wind"}),
+    "swamp": (
+        {"name": ("Rawa Dalam", "Deep Bog"), "hint": ("Lumpur rawa terlalu dalam. Tipe Air, Tanah, atau Rumput dapat membuat lintasan.", "The bog is too deep. Water, Ground, or Grass can make a safe path."), "types": ("water", "ground", "grass"), "action": ("membuat lintasan di rawa", "making a path through the bog"), "motion": "mud", "sound": "water"},
+        {"name": ("Kabut Beracun", "Poison Miasma"), "hint": ("Kabut beracun menyelimuti pintu. Tipe Racun, Baja, atau Psikis dapat menetralkannya.", "Poisonous mist covers the gate. Poison, Steel, or Psychic can neutralize it."), "types": ("poison", "steel", "psychic"), "action": ("menetralisir kabut rawa", "neutralizing the swamp mist"), "motion": "mist", "sound": "wind"}),
+    "cave": (
+        {"name": ("Batu Runtuh", "Cave-in"), "hint": ("Batu besar menutup lorong. Tipe Petarung, Tanah, Batu, atau Baja dapat menghancurkannya.", "Huge boulders block the tunnel. Fighting, Ground, Rock, or Steel can break them."), "types": ("fighting", "ground", "rock", "steel"), "action": ("menghancurkan batu penghalang", "breaking the blocking boulders"), "motion": "rock", "sound": "earth"},
+        {"name": ("Kristal Gema", "Resonant Crystal"), "hint": ("Kristal bergetar menutup pintu. Tipe Listrik, Baja, atau Psikis dapat memecah resonansinya.", "A resonant crystal seals the door. Electric, Steel, or Psychic can disrupt it."), "types": ("electric", "steel", "psychic"), "action": ("memecah resonansi kristal", "breaking the crystal resonance"), "motion": "crystal", "sound": "punch"}),
+    "mountain": (
+        {"name": ("Tebing Terjal", "Cliff Pass"), "hint": ("Jalan terputus di tebing. Tipe Terbang, Batu, atau Petarung dapat menyeberangkan trainer.", "The cliff trail is broken. Flying, Rock, or Fighting can get the Trainer across."), "types": ("flying", "rock", "fighting"), "action": ("membawa trainer melewati tebing", "carrying the Trainer over the cliff"), "motion": "fly", "sound": "wind"},
+        {"name": ("Longsor Puncak", "Summit Rockfall"), "hint": ("Batu menghalangi jalur puncak. Tipe Tanah, Petarung, atau Baja dapat membersihkannya.", "Rocks block the summit route. Ground, Fighting, or Steel can clear them."), "types": ("ground", "fighting", "steel"), "action": ("membuka jalur di longsor", "clearing the summit rockfall"), "motion": "rock", "sound": "earth"}),
+    "volcano": (
+        {"name": ("Aliran Lava", "Lava Flow"), "hint": ("Lava menutup gerbang. Tipe Air, Tanah, atau Batu dapat membuat jalur aman.", "Lava blocks the gate. Water, Ground, or Rock can make a safe path."), "types": ("water", "ground", "rock"), "action": ("mendinginkan lava dan membuka jalan", "cooling the lava and opening a path"), "motion": "lava", "sound": "water"},
+        {"name": ("Semburan Uap", "Steam Vent"), "hint": ("Uap panas menyembur dari celah. Tipe Air, Es, atau Terbang dapat melewatinya.", "Hot steam blasts from the cracks. Water, Ice, or Flying can get through."), "types": ("water", "ice", "flying"), "action": ("menembus semburan uap", "crossing the steam vents"), "motion": "steam", "sound": "water"}),
+    "snow": (
+        {"name": ("Dinding Es", "Ice Wall"), "hint": ("Dinding es menutup jalur. Tipe Api, Petarung, atau Baja dapat membukanya.", "An ice wall blocks the route. Fire, Fighting, or Steel can break it."), "types": ("fire", "fighting", "steel"), "action": ("mencairkan dinding es", "melting the ice wall"), "motion": "ice", "sound": "fire"},
+        {"name": ("Celah Badai Salju", "Blizzard Pass"), "hint": ("Badai salju menutup jembatan. Tipe Api, Batu, atau Terbang dapat menuntun trainer.", "A blizzard hides the bridge. Fire, Rock, or Flying can guide the Trainer."), "types": ("fire", "rock", "flying"), "action": ("menuntun trainer melintasi badai salju", "guiding the Trainer through the blizzard"), "motion": "snow", "sound": "wind"}),
+    "sky": (
+        {"name": ("Arus Angin", "Wind Current"), "hint": ("Angin kencang memutus jembatan. Tipe Terbang, Listrik, atau Psikis bisa menyeberang.", "Strong winds break the bridge. Flying, Electric, or Psychic can cross."), "types": ("flying", "electric", "psychic"), "action": ("terbang melintasi arus angin", "flying across the wind current"), "motion": "fly", "sound": "wind"},
+        {"name": ("Pulau Awan", "Cloud Gap"), "hint": ("Celah awan terlalu lebar untuk dilompati. Tipe Terbang, Naga, atau Es dapat mengantar trainer.", "The cloud gap is too wide to jump. Flying, Dragon, or Ice can carry the Trainer."), "types": ("flying", "dragon", "ice"), "action": ("terbang di atas pulau awan", "flying above the cloud gap"), "motion": "fly", "sound": "wind"}),
+    "crystal": (
+        {"name": ("Gerbang Kristal", "Crystal Gate"), "hint": ("Dinding kristal menghalangi pintu. Tipe Baja, Petarung, atau Tanah dapat memecahkannya.", "A crystal wall blocks the gate. Steel, Fighting, or Ground can shatter it."), "types": ("steel", "fighting", "ground"), "action": ("memecahkan dinding kristal", "shattering the crystal wall"), "motion": "crystal", "sound": "punch"},
+        {"name": ("Prisma Cahaya", "Prism Lock"), "hint": ("Prisma mengunci gerbang dengan cahaya. Tipe Psikis, Peri, atau Listrik dapat menyelaraskannya.", "A prism locks the gate with light. Psychic, Fairy, or Electric can align it."), "types": ("psychic", "fairy", "electric"), "action": ("menyelaraskan prisma gerbang", "aligning the gate prism"), "motion": "crystal", "sound": "wind"}),
+    "dragon_valley": (
+        {"name": ("Gerbang Naga Beku", "Frozen Dragon Gate"), "hint": ("Es naga menyegel jalur. Tipe Es, Peri, atau Naga dapat membukanya.", "Dragon ice seals the pass. Ice, Fairy, or Dragon can open it."), "types": ("ice", "fairy", "dragon"), "action": ("membuka segel es naga", "breaking the dragon-ice seal"), "motion": "ice", "sound": "fire"},
+        {"name": ("Jurang Naga", "Dragon Ravine"), "hint": ("Jurang dalam memutus jalan. Tipe Terbang, Naga, atau Batu dapat mengantar trainer.", "A deep ravine breaks the path. Flying, Dragon, or Rock can carry the Trainer."), "types": ("flying", "dragon", "rock"), "action": ("terbang melintasi jurang naga", "flying across the dragon ravine"), "motion": "fly", "sound": "wind"}),
+    "legendary_ruins": (
+        {"name": ("Segel Reruntuhan", "Ruin Seal"), "hint": ("Segel kuno menutup pintu. Tipe Psikis, Hantu, Baja, atau Peri dapat membukanya.", "An ancient seal locks the gate. Psychic, Ghost, Steel, or Fairy can open it."), "types": ("psychic", "ghost", "steel", "fairy"), "action": ("membuka segel kuno", "opening the ancient seal"), "motion": "seal", "sound": "wind"},
+        {"name": ("Pilar Reruntuhan", "Ruin Pillar"), "hint": ("Pilar batu runtuh menutup jalan. Tipe Petarung, Tanah, atau Baja dapat membersihkannya.", "A fallen stone pillar blocks the way. Fighting, Ground, or Steel can clear it."), "types": ("fighting", "ground", "steel"), "action": ("menggeser pilar reruntuhan", "moving the ruin pillar"), "motion": "rock", "sound": "earth"})}
 
 
 class LegacyGame:
@@ -145,6 +194,7 @@ class LegacyGame:
         self.ensure_farm_drops()
         self.pokemon_encounter_clock = 0.0
         self.battle = None
+        self.gate_trial = None
         self.encounter_target = None
         self.encounter_choice = 0
         self.interaction_choices = []
@@ -726,6 +776,93 @@ class LegacyGame:
             self.notify(f"Gerbang terkunci. Kalahkan Pokémon penjaga Lv.{required_boss} di {zone['name']} dulu.")
             return
         target = gate["target"]
+        target_index = RESERVE_ZONES.index(target)
+        # Odd numbered sanctuaries host Team Rocket encounters. Traversal
+        # trials belong to the even numbered destinations, after their
+        # preceding boss gate has opened.
+        if target_index % 2 == 1 and target_index not in self.life.reserve_gate_trials:
+            self.open_reserve_gate_trial(target_index, direction)
+            return
+        self.enter_reserve_gate_target(target, direction)
+
+    def reserve_gate_trial_spec(self, target_index):
+        zone = RESERVE_ZONES[int(target_index)]
+        options = GATE_TRIALS.get(zone["biome"], GATE_TRIALS["meadow"])
+        variant = (int(target_index) + int(target_index) // 3) % len(options)
+        return options[variant]
+
+    def open_reserve_gate_trial(self, target_index, direction):
+        spec = self.reserve_gate_trial_spec(target_index)
+        allowed = set(spec["types"])
+        catalog = pokemon_db.type_catalog()
+        # The player chooses from the whole healthy collection. A wrong choice
+        # is a meaningful experiment, rather than the UI revealing the answer
+        # by filtering incompatible Pokémon away.
+        candidates = [int(ident) for ident in self.life.pokemon_party
+                      if self.life.pokemon_health.get(str(ident), 100) > 0]
+        self.gate_trial = {"target_index": int(target_index), "direction": direction,
+                           "spec": spec, "allowed": allowed, "candidates": candidates,
+                           "selected": 0, "phase": "choose", "timer": 0.0,
+                           "feedback": "", "mistakes": 0}
+        for ident in candidates:
+            self.pokedex.request(ident)
+        self.play_action_sound("gate", .32)
+        self.mode = "gate_trial"
+
+    def select_gate_trial_pokemon(self, offset):
+        trial = self.gate_trial
+        if not trial or trial["phase"] != "choose" or not trial["candidates"]:
+            return
+        trial["selected"] = (trial["selected"] + int(offset)) % len(trial["candidates"])
+
+    def begin_gate_trial_action(self):
+        trial = self.gate_trial
+        if not trial or trial["phase"] != "choose":
+            return
+        if not trial["candidates"]:
+            spec = trial["spec"]
+            needed = ", ".join(kind.title() for kind in spec["types"])
+            self.notify(self.words(f"Rintangan ini perlu Pokémon tipe {needed}. Tangkap atau pulihkan salah satunya, lalu coba lagi.",
+                                   f"This obstacle needs a {needed} Pokémon. Catch or heal one, then try again."))
+            return
+        ident = trial["candidates"][trial["selected"]]
+        pokemon_types = set(pokemon_db.type_catalog().get(int(ident), ()))
+        if not trial["allowed"].intersection(pokemon_types):
+            self.life.health = max(0, float(self.life.health) - 10)
+            trial["mistakes"] += 1
+            trial["feedback"] = self.words(
+                "Pokémon tidak cocok dengan rintangan ini. -10 HP, coba lagi.",
+                "That Pokémon does not suit this obstacle. -10 HP, try again.")
+            self.play_action_sound("wildlife-hurt", .42)
+            self.save_current()
+            return
+        trial.update(phase="action", timer=0.0, pokemon_id=ident)
+        self.pokedex.request(ident)
+        sound = trial["spec"].get("sound", "gate")
+        self.play_action_sound(sound, .55)
+
+    def update_gate_trial(self, dt):
+        trial = self.gate_trial
+        if not trial or trial["phase"] != "action":
+            return
+        trial["timer"] += max(0.0, float(dt))
+        if trial["timer"] >= 2.8:
+            target_index = trial["target_index"]
+            target = RESERVE_ZONES[target_index]
+            if target_index not in self.life.reserve_gate_trials:
+                self.life.reserve_gate_trials.append(target_index)
+                self.life.reserve_gate_trials.sort()
+            direction = trial["direction"]
+            self.gate_trial = None
+            self.mode = "game"
+            self.enter_reserve_gate_target(target, direction)
+
+    def cancel_gate_trial(self):
+        self.gate_trial = None
+        self.mode = "game"
+        self.play_action_sound("ui-back", .2)
+
+    def enter_reserve_gate_target(self, target, direction):
         if direction == "timur":
             x, y = target["x"] + 115, target["y"] + RESERVE_ZONE_H // 2
         elif direction == "barat":
@@ -742,6 +879,7 @@ class LegacyGame:
             self.life.horse_x, self.life.horse_y = x, y
         self.projectiles.clear()
         self.spawn_map_pokemon()
+        self.save_current()
         self.notify(f"Memasuki {target['name']} · {target['biome']} · Pokémon lebih langka dan kuat")
 
     def obstacles(self, scene=None):
@@ -2099,7 +2237,8 @@ class LegacyGame:
                 "chicken": "chicken.ogg", "wildlife-hurt": "hurt_01.ogg",
                 "cook-sizzle": "cook-sizzle.wav", "stove-on": "stove-on.ogg",
                 "attack-swing": "scythe-swish.wav", "grunt_01": "grunt_01.ogg",
-                "grunt_02": "grunt_02.ogg",
+                "grunt_02": "grunt_02.ogg", "fire": "fire.ogg", "water": "water.ogg",
+                "earth": "earth.ogg", "wind": "wind.ogg", "punch": "punch.ogg",
                 "sleep": "sleep.wav",
             }.get(sound_name, f"{sound_name}.wav")
         path = ROOT / "assets" / "audio" / "sfx" / "actions" / filename
@@ -4731,8 +4870,248 @@ class LegacyGame:
         pg.key.stop_text_input()
         self.notify("WASD: jalan. Kiri: hutan. Kanan: market. E: interaksi. I: inventory.")
 
+    def draw_gate_trial_barrier(self, motion, progress=0.0):
+        """Draw a compact biome obstacle and animate it clearing during traversal."""
+        center_x, ground_y = 642, 493
+        clear = max(0.0, min(1.0, (progress - .36) / .48))
+        if motion == "surf":
+            pg.draw.rect(self.canvas, (35, 112, 163), (115, 402, 1050, 110))
+            for row in range(5):
+                offset = int((self.frame * 2 + row * 103) % 190)
+                y = 417 + row * 19
+                for x in range(120 + offset, 1170, 190):
+                    pg.draw.arc(self.canvas, (108, 197, 219), (x, y, 48, 14), 0, math.pi, 2)
+            if clear < 1:
+                for x in (center_x - 18, center_x + 31):
+                    pg.draw.circle(self.canvas, (91, 155, 173), (x, 390), 26, 4)
+            for index in range(5):
+                self.art.gate_effect(self.canvas, "water", 220 + index * 205,
+                                     427 + int(math.sin(self.frame / 5 + index) * 9),
+                                     int(self.frame / 3 + index * 2), 1.4)
+        elif motion in ("rock", "earth", "log"):
+            for index, x in enumerate((center_x - 43, center_x + 12, center_x - 4)):
+                wobble = int(math.sin(self.frame / 5 + index) * 4 * (1 - clear))
+                y = ground_y - 38 - (index % 2) * 22 + wobble
+                if clear < .9:
+                    if motion == "log":
+                        pg.draw.rect(self.canvas, (93, 61, 42), (x - 47, y - 10, 94, 33), border_radius=11)
+                        pg.draw.circle(self.canvas, (184, 129, 70), (x - 45, y + 7), 16)
+                        pg.draw.circle(self.canvas, (72, 47, 37), (x - 45, y + 7), 16, 3)
+                    else:
+                        rock = self.art.rock_sprites[(index * 3 + int(self.frame / 16)) % len(self.art.rock_sprites)]
+                        image = pg.transform.rotozoom(rock, wobble * 1.7, 1.45)
+                        self.canvas.blit(image, image.get_rect(center=(x, y)))
+        elif motion == "vine":
+            for index, x in enumerate((center_x - 35, center_x, center_x + 36)):
+                sway = int(math.sin(self.frame / 7 + index) * 12 * (1 - clear))
+                pg.draw.line(self.canvas, (72, 145, 78), (x + sway, 360),
+                             (x - sway, ground_y), 9)
+                for y in range(380, 475, 34):
+                    pg.draw.line(self.canvas, (145, 193, 92), (x + sway, y),
+                                 (x + sway + (18 if index % 2 else -18), y - 10), 4)
+                self.art.gate_effect(self.canvas, "plant", x + sway, 418 + index * 11,
+                                     int(self.frame / 4 + index * 3), 1.45)
+        elif motion in ("lava", "steam", "fire"):
+            color = (232, 87, 42) if motion != "steam" else (197, 211, 211)
+            pg.draw.rect(self.canvas, (83, 54, 60), (115, 445, 1050, 58))
+            for index in range(15):
+                x = 150 + index * 70
+                y = 462 + int(math.sin(self.frame / 5 + index) * 13)
+                pg.draw.circle(self.canvas, color, (x, y), 8 + index % 3 * 2)
+                if motion == "lava":
+                    pg.draw.circle(self.canvas, (255, 190, 72), (x + 4, y - 5), 4)
+                self.art.gate_effect(self.canvas, "fire" if motion == "lava" else "smoke", x, y - 24,
+                                     int(self.frame / 3 + index), 1.7)
+        elif motion in ("ice", "snow"):
+            for index, x in enumerate((center_x - 42, center_x, center_x + 43)):
+                height = (64, 102, 77)[index]
+                points = [(x - 29, ground_y), (x - 17, ground_y - height + 24),
+                          (x, ground_y - height), (x + 11, ground_y - height + 31),
+                          (x + 29, ground_y)]
+                if clear < .9:
+                    pg.draw.polygon(self.canvas, (138, 192, 215), points)
+                    pg.draw.polygon(self.canvas, (217, 238, 240), points, 2)
+                    self.art.gate_effect(self.canvas, "ice", x, ground_y - height // 2,
+                                         int(self.frame / 4 + index * 2), 1.35)
+        elif motion in ("wind", "fly"):
+            for index in range(7):
+                y = 362 + index * 20
+                offset = int((self.frame * 4 + index * 79) % 220)
+                x = 150 + offset
+                pg.draw.line(self.canvas, (151, 203, 218), (x, y), (x + 82, y - 15), 3)
+                self.art.gate_effect(self.canvas, "wind", x + 38, y - 7,
+                                     int(self.frame / 4 + index), 1.45)
+        elif motion in ("mud", "mist"):
+            pg.draw.rect(self.canvas, (74, 78, 58), (134, 430, 1010, 76), border_radius=18)
+            for index in range(16):
+                x = 170 + index * 61
+                y = 450 + int(math.sin(self.frame / 6 + index) * 12)
+                pg.draw.circle(self.canvas, (119, 111, 72), (x, y), 12 + index % 3 * 4)
+                if motion == "mist":
+                    self.art.gate_effect(self.canvas, "smoke", x, y - 54,
+                                         int(self.frame / 4 + index), 1.3)
+        elif motion in ("crystal", "seal"):
+            for index, x in enumerate((center_x - 42, center_x, center_x + 42)):
+                top = 355 + (index % 2) * 20
+                points = [(x, top), (x + 24, top + 42), (x + 8, ground_y),
+                          (x - 19, ground_y - 10), (x - 29, top + 46)]
+                if clear < .9:
+                    pg.draw.polygon(self.canvas, (123, 144, 204), points)
+                    pg.draw.polygon(self.canvas, (207, 207, 245), points, 2)
+                    self.art.gate_effect(self.canvas, "ice", x, top + 51,
+                                         int(self.frame / 4 + index), 1.3)
+            pg.draw.circle(self.canvas, (168, 171, 226), (center_x, 414), 88, 2)
+        else:
+            pg.draw.rect(self.canvas, (104, 123, 109), (center_x - 40, 375, 80, 120), 4)
+
+    def draw_gate_trial_action_fx(self, trial, pokemon_x, obstacle_x, obstacle_y):
+        """Animate a readable cause-and-effect action over the local CC0 FX."""
+        spec = trial["spec"]
+        motion = spec["motion"]
+        tick = int(self.frame / 2)
+        progress = max(0.0, min(1.0, trial["timer"] / 2.8))
+        if motion in ("rock", "earth", "crystal", "seal"):
+            for index in range(6):
+                t = (progress * 2.5 + index / 6) % 1
+                x = pokemon_x + (obstacle_x - pokemon_x) * t
+                y = obstacle_y - 18 - abs(math.sin(t * math.pi)) * 45
+                self.art.gate_effect(self.canvas, "rock", x, y, tick + index, 1.35)
+            if motion == "rock":
+                self.art.gate_item(self.canvas, "pickaxe", pokemon_x + 21,
+                                   obstacle_y - 50, 3.1, int(math.sin(self.frame / 2) * 42))
+        elif motion == "log":
+            self.art.gate_item(self.canvas, "axe", pokemon_x + 28, obstacle_y - 48,
+                               3.4, int(math.sin(self.frame / 2) * 46))
+            for index in range(11):
+                theta = self.frame / 4 + index * .57
+                self.art.gate_effect(self.canvas, "wood", obstacle_x + math.cos(theta) * 44,
+                                     obstacle_y - 20 + math.sin(theta) * 27, tick + index, 1.8)
+        elif motion in ("surf", "mud", "lava", "steam"):
+            for index in range(7):
+                x = pokemon_x + (obstacle_x - pokemon_x) * (index / 7)
+                y = obstacle_y - 30 + int(math.sin(self.frame / 3 + index) * 17)
+                self.art.gate_effect(self.canvas, "water", x, y, tick + index, 1.8)
+            if motion == "lava":
+                for index in range(6):
+                    self.art.gate_effect(self.canvas, "smoke", obstacle_x + index * 21 - 58,
+                                         obstacle_y - 56 - index % 2 * 15, tick + index, 1.25)
+        elif motion in ("vine", "ice", "snow"):
+            effect = "fire" if motion in ("ice", "snow") else "plant"
+            for index in range(6):
+                self.art.gate_effect(self.canvas, effect, obstacle_x + (index - 3) * 23,
+                                     obstacle_y - 55 + int(math.sin(self.frame / 4 + index) * 16),
+                                     tick + index, 1.65)
+        elif motion in ("wind", "fly"):
+            for index in range(10):
+                self.art.gate_effect(self.canvas, "wind", pokemon_x + index * 39,
+                                     obstacle_y - 65 - int(math.sin(self.frame / 5 + index) * 25),
+                                     tick + index, 1.65)
+        else:
+            self.art.gate_effect(self.canvas, "explode", obstacle_x, obstacle_y - 42, tick, 2.0)
+
+    def draw_gate_trial(self):
+        trial = self.gate_trial
+        if not trial:
+            self.mode = "game"
+            return
+        spec = trial["spec"]
+        zone = RESERVE_ZONES[trial["target_index"]]
+        biome_colors = {
+            "coast": (19, 67, 104), "deepsea": (15, 47, 79), "cave": (48, 53, 72),
+            "volcano": (78, 42, 47), "snow": (70, 102, 123), "forest": (27, 65, 48),
+            "ancient_forest": (26, 61, 45), "desert": (111, 78, 49), "badlands": (91, 58, 50),
+            "swamp": (39, 65, 58), "sky": (55, 89, 127), "crystal": (59, 52, 98),
+            "dragon_valley": (79, 55, 71), "legendary_ruins": (57, 58, 87),
+            "mountain": (65, 79, 86), "meadow": (45, 79, 56)}
+        base = biome_colors.get(zone["biome"], (34, 53, 65))
+        self.canvas.fill(base)
+        pg.draw.rect(self.canvas, (16, 23, 41), (34, 31, 1212, 738), 3)
+        for index in range(18):
+            x = (index * 97 + 35) % W
+            y = 215 + (index % 6) * 59
+            pg.draw.circle(self.canvas, tuple(min(255, value + 18) for value in base), (x, y), 2)
+        self.text(self.words("GERBANG PENJELAJAH", "SANCTUARY GATE TRIAL"), W / 2, 57,
+                  retro.GOLD, self.medium, True)
+        self.text(f"{zone['name']}  ·  {zone['biome'].replace('_', ' ').title()}", W / 2, 101,
+                  CREAM, self.small, True)
+        self.box((106, 139, 1068, 64), INK, 9)
+        self.text(f"{spec['name'][self.life.language == 'en']}  ·  {spec['hint'][self.life.language == 'en']}",
+                  W / 2, 171, CREAM, self.small, True)
+        self.draw_gate_trial_barrier(spec["motion"],
+                                     trial["timer"] / 2.8 if trial["phase"] == "action" else 0)
+        if trial["phase"] == "choose":
+            candidates = trial["candidates"]
+            if candidates:
+                ident = candidates[trial["selected"]]
+                details = self.pokemon_data(ident) or {}
+                pokemon_name = details.get("name", f"Pokémon #{ident}").title()
+                types = pokemon_db.type_catalog().get(ident, ())
+                type_text = " / ".join(kind.title() for kind in types)
+                self.box((302, 533, 676, 100), INK, 12, retro.GOLD)
+                sprite = self.pokemon_surface(ident, 74)
+                if sprite:
+                    self.canvas.blit(sprite, sprite.get_rect(midleft=(345, 582)))
+                self.text(f"{pokemon_name}  ·  Lv.{self.pokemon_level(ident)}", 410, 552,
+                          CREAM, self.small)
+                self.text(type_text, 410, 588, GREEN, self.small)
+                self.button("‹", (304, 558, 36, 48), lambda: self.select_gate_trial_pokemon(-1))
+                self.button("›", (940, 558, 36, 48), lambda: self.select_gate_trial_pokemon(1))
+                self.text(f"{trial['selected'] + 1} / {len(candidates)}", W / 2, 613,
+                          MUTED, self.tiny, True)
+                self.button(self.words("Coba Pokémon ini  ·  Enter", "Try this Pokémon  ·  Enter"),
+                            (250, 667, 520, 55), self.begin_gate_trial_action, True)
+            else:
+                self.box((282, 546, 716, 76), INK, 10, (202, 104, 89))
+                self.text(self.words("Tidak ada Pokémon sehat untuk mencoba rintangan.",
+                                     "There is no healthy Pokémon to try this obstacle."), W / 2, 568,
+                          retro.GOLD, self.small, True)
+                self.text(self.words("Pulihkan Pokémon yang cocok atau tangkap di area sebelumnya.",
+                                     "Heal a matching Pokémon or catch one in an earlier area."), W / 2, 598,
+                          MUTED, self.tiny, True)
+                self.button(self.words("Kembali ke suaka sebelumnya · Esc", "Return to previous sanctuary · Esc"),
+                            (384, 667, 512, 55), self.cancel_gate_trial, True)
+            if trial.get("feedback"):
+                self.box((784, 667, 350, 55), (102, 52, 57), 8, (218, 110, 91))
+                self.text(trial["feedback"], 959, 680, CREAM, self.tiny, True)
+                self.text(self.words(f"HP trainer: {int(self.life.health)} · salah {trial['mistakes']}×",
+                                     f"Trainer HP: {int(self.life.health)} · wrong {trial['mistakes']}×"),
+                          959, 706, retro.GOLD, self.tiny, True)
+            self.text(self.words("Pilih sendiri Pokémon yang ingin mencoba. Rintangan ini hanya perlu dilewati sekali.",
+                                 "Choose which Pokémon will try. This obstacle only needs to be cleared once."),
+                      W / 2, 734, MUTED, self.tiny, True)
+        else:
+            ident = trial.get("pokemon_id")
+            progress = max(0.0, min(1.0, trial["timer"] / 2.8))
+            px = int(200 + progress * 880)
+            ground = 474 + int(math.sin(self.frame / 3) * 3)
+            sprite = self.pokemon_surface(ident, 112) if ident else None
+            if sprite:
+                self.canvas.blit(sprite, sprite.get_rect(midbottom=(px, ground)))
+            if spec["motion"] in ("surf", "fly"):
+                char_y = ground - 59
+            else:
+                char_y = ground + 4
+            self.art.character(self.canvas, px - 36, char_y, self.life.character, 1.2,
+                               self.frame, True, "right")
+            self.draw_gate_trial_action_fx(trial, px, 642, 444)
+            for index in range(9):
+                theta = self.frame / 4 + index * math.tau / 9
+                radius = 39 + int(7 * math.sin(self.frame / 3 + index))
+                color = TYPE_MOVES.get(spec["types"][0], TYPE_MOVES["normal"])[1]
+                particle = (int(px + math.cos(theta) * radius),
+                            int(411 + math.sin(theta) * 31))
+                pg.draw.circle(self.canvas, color, particle, 3 + index % 2)
+            self.text(self.words(f"Pokémon sedang {spec['action'][0]}…",
+                                 f"Pokémon is {spec['action'][1]}…"), W / 2, 585,
+                      retro.GOLD, self.small, True)
+            pg.draw.rect(self.canvas, INK, (347, 650, 586, 18))
+            pg.draw.rect(self.canvas, GREEN, (350, 653, int(580 * progress), 12))
+
     def overlay(self):
         self.buttons = []
+        if self.mode == "gate_trial":
+            self.draw_gate_trial()
+            return
         if self.mode == "map":
             self.draw_global_map()
             return
@@ -6171,7 +6550,7 @@ class LegacyGame:
                         return
         if event.type == pg.KEYDOWN:
             if self.mode in ("inventory", "shop", "weather", "dex", "center", "encounter",
-                             "pokemon_info", "daily_quests", "journal", "secret_puzzle", "evolution", "settings", "hospitality", "home_decor", "map"):
+                             "pokemon_info", "daily_quests", "journal", "secret_puzzle", "evolution", "settings", "hospitality", "home_decor", "map", "gate_trial"):
                 if event.key in (pg.K_UP, pg.K_DOWN, pg.K_LEFT, pg.K_RIGHT, pg.K_1, pg.K_2, pg.K_3,
                                  pg.K_TAB, pg.K_PAGEUP, pg.K_PAGEDOWN):
                     self.play_action_sound("ui-click", .16)
@@ -6334,6 +6713,15 @@ class LegacyGame:
             elif self.mode == "settings":
                 if event.key in (pg.K_ESCAPE, pg.K_RETURN):
                     self.back()
+            elif self.mode == "gate_trial":
+                if event.key == pg.K_ESCAPE:
+                    self.cancel_gate_trial()
+                elif event.key in (pg.K_LEFT, pg.K_UP):
+                    self.select_gate_trial_pokemon(-1)
+                elif event.key in (pg.K_RIGHT, pg.K_DOWN):
+                    self.select_gate_trial_pokemon(1)
+                elif event.key in (pg.K_RETURN, pg.K_KP_ENTER):
+                    self.begin_gate_trial_action()
             elif self.mode == "game":
                 if event.key == pg.K_e:
                     self.interact()
@@ -6395,6 +6783,8 @@ class LegacyGame:
 
     def update(self, dt):
         self.frame += dt * 60
+        if self.mode == "gate_trial":
+            self.update_gate_trial(dt)
         now = time.monotonic()
         queued, self.pending_action_sounds = self.pending_action_sounds, []
         for play_at, sound_name, volume in queued:
