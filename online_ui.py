@@ -98,6 +98,9 @@ class OnlineMixin:
         if self.net and self.net.connected:self.net.send(action,**kwargs)
         else:self.online_error=self.words('Belum terhubung','Not connected')
 
+    def online_use_skill(self,slot):
+        self.online_send('skill',slot=slot)
+
     def leave_online(self):
         if self.net:self.net.close();self.net=None
         self.online_state={};self.online_input=None;pg.key.stop_text_input();self.set_mode('game')
@@ -177,7 +180,8 @@ class OnlineMixin:
                     feedback={'heal':self.words('Tim pulih. Biaya 5 koin.','Team healed. Paid 5 coins.'),
                               'trade':self.words('Tawaran dikirim. Menunggu persetujuan.','Offer sent. Waiting for acceptance.'),
                               'pvp':self.words('Tantangan dikirim.','Challenge sent.'),'active':self.words('Tim aktif diperbarui.','Active team updated.'),
-                              'reply':self.words('Pilihan diproses.','Response processed.'),'room':'','raid':'','ready':'','chat':''}
+                              'reply':self.words('Pilihan diproses.','Response processed.'),'room':'','raid':'','ready':'','chat':'',
+                              'skill':self.words('Skill digunakan.','Skill used.')}
                     if data.get('_action') in feedback:self.online_error=feedback[data['_action']]
                     if kind=='connected':
                         self.online_credentials.parent.mkdir(parents=True,exist_ok=True)
@@ -619,6 +623,7 @@ class OnlineMixin:
             for i,(key,move,cooldown) in enumerate(actions):
                 x=25+i*307;y=614
                 self.box((x,y,294,62),retro.PANEL)
+                self.buttons.append((pg.Rect(x,y,294,62),lambda slot=i+1:self.online_use_skill(slot)))
                 self.text(key,x+13,y+8,GOLD if cooldown<=0 else M,self.font,True)
                 glyph=move.get('emoji','✨');self.text(glyph,x+48,y+7,C,self.font)
                 label=move.get('name','Ultimate')
