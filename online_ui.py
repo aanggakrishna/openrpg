@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 import queue
 import time
+import traceback
 import pygame as pg
 import retro
 import pokemon_db
@@ -25,6 +26,7 @@ class OnlineMixin:
         self.online_url='http://127.0.0.1:8765';self.online_code='';self.online_target=0;self.trade_give=0;self.trade_want=0;self.trade_price=0
         self.online_images={};self.online_scaled_images={};self.online_team_page=0;self.media_prune_timer=0.;self.online_terminal=False;self.online_last_hp={};self.online_audio_id=None;self.online_audio_seq=0;self.online_audio_result=False;self.online_visual_positions={}
         self.online_battle_help_id=None;self.online_battle_help_until=0.
+        self.online_battle_error_log_at={}
         self.online_room_background=None;self.online_room_background_key=None
         super().__init__(*args,**kwargs)
         try:self.online_url=json.loads((ROOT/'.openrpg/online/preferences.json').read_text()).get('url',self.online_url)
@@ -213,21 +215,43 @@ class OnlineMixin:
 
     def online_audio(self,battle):
         if not battle:return
-        if battle['id']!=self.online_audio_id:
-            self.online_audio_id=battle['id'];self.online_audio_seq=0;self.online_audio_result=False
-            for fighter in battle['fighters'].values():
-                for creature in fighter['team']:self.pokedex.request_cry(creature['id'])
-        for event in battle.get('events',[]):
-            if event['seq']<=self.online_audio_seq:continue
-            self.online_audio_seq=event['seq']
-            if event['kind']=='attack':
-                self.play_type_sound(event['type'],event['ultimate'])
-                if event['ultimate']:self.play_pokemon_cry(event['pokemon'])
-            elif event['kind']=='hit':
-                if event.get('ultimate'):self.play_ultimate_impact(event.get('type','normal'))
-                self.play_pokemon_cry(event['pokemon'])
-        if battle['result'] and not self.online_audio_result:
-            self.online_audio_result=True;self.play_battle_sound('victory',.4)
+        try:
+            battle_id=battle.get('id')
+            if battle_id!=self.online_audio_id:
+                self.online_audio_id=battle_id;self.online_audio_seq=0;self.online_audio_result=False
+                for fighter in battle.get('fighters',{}).values():
+                    for creature in fighter.get('team',[]):
+                        if creature.get('id') is not None:self.pokedex.request_cry(creature['id'])
+            for event in battle.get('events',[]):
+                sequence=event.get('seq',0)
+                if sequence<=self.online_audio_seq:continue
+                self.online_audio_seq=sequence
+                if event.get('kind')=='attack':
+                    self.play_type_sound(event.get('type','normal'),event.get('ultimate',False))
+                    if event.get('ultimate') and event.get('pokemon') is not None:self.play_pokemon_cry(event['pokemon'])
+                elif event.get('kind')=='hit':
+                    if event.get('ultimate'):self.play_ultimate_impact(event.get('type','normal'))
+                    if event.get('pokemon') is not None:self.play_pokemon_cry(event['pokemon'])
+            if battle.get('result') and not self.online_audio_result:
+                self.online_audio_result=True;self.play_battle_sound('victory',.4)
+        except Exception:
+            # Audio is optional; a server event or a missing sound must never
+            # take down the game loop during a live PvP match.
+            self.log_online_battle_error('audio')
+
+    def log_online_battle_error(self,source):
+        """Persist unexpected PvP client errors so a recoverable match can be diagnosed."""
+        now=time.monotonic()
+        if now-self.online_battle_error_log_at.get(source,0)<5:return
+        self.online_battle_error_log_at[source]=now
+        try:
+            path=ROOT/'.openrpg'/'online'/'client-errors.log'
+            path.parent.mkdir(parents=True,exist_ok=True)
+            with path.open('a',encoding='utf-8') as stream:
+                stream.write(f'\n[{time.strftime("%Y-%m-%d %H:%M:%S")}] {source}\n')
+                stream.write(traceback.format_exc())
+        except OSError:
+            pass
 
     def online_sprite(self,ident,x,y,size=70,flip=False,angle=0):
         if ident not in self.online_images:
@@ -429,6 +453,23 @@ class OnlineMixin:
         self.online_send('active',active=active)
 
     def draw_online_battle(self):
+        try:
+            self._draw_online_battle()
+        except Exception:
+            self.log_online_battle_error('render')
+            self.buttons=[]
+            self.canvas.fill((22,31,55))
+            self.box((250,220,780,300),retro.PANEL)
+            self.text(self.words('Terjadi kendala saat menampilkan PvP.',
+                                 'The PvP screen encountered a problem.'),640,280,GOLD,self.font,True)
+            self.text(self.words('Game tetap berjalan. Kembali ke room dan coba sambungkan ulang.',
+                                 'The game is still running. Return to the room and reconnect.'),640,330,C,self.small,True)
+            self.text(self.words('Detail tersimpan di .openrpg/online/client-errors.log',
+                                 'Details saved to .openrpg/online/client-errors.log'),640,370,M,self.tiny,True)
+            self.button(self.words('Kembali ke room','Return to room'),(440,430,400,52),
+                        lambda:self.online_send('leave_battle'))
+
+    def _draw_online_battle(self):
         b=self.online_state['battle'];me=self.online_state.get('me',{});own=b['fighters'].get(me.get('id'))
         if self.online_battle_help_id!=b['id']:
             self.online_battle_help_id=b['id'];self.online_battle_help_until=time.monotonic()+20.
