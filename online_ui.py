@@ -27,6 +27,7 @@ class OnlineMixin:
         self.online_images={};self.online_scaled_images={};self.online_team_page=0;self.media_prune_timer=0.;self.online_terminal=False;self.online_last_hp={};self.online_audio_id=None;self.online_audio_seq=0;self.online_audio_result=False;self.online_visual_positions={}
         self.online_battle_help_id=None;self.online_battle_help_until=0.
         self.online_battle_error_log_at={}
+        self.online_guard_click=False
         self.online_room_background=None;self.online_room_background_key=None
         super().__init__(*args,**kwargs)
         try:self.online_url=json.loads((ROOT/'.openrpg/online/preferences.json').read_text()).get('url',self.online_url)
@@ -101,6 +102,12 @@ class OnlineMixin:
     def online_use_skill(self,slot):
         self.online_send('skill',slot=slot)
 
+    def online_switch(self,slot):
+        self.online_send('switch',slot=slot)
+
+    def online_toggle_guard(self):
+        self.online_guard_click=not self.online_guard_click
+
     def leave_online(self):
         if self.net:self.net.close();self.net=None
         self.online_state={};self.online_input=None;pg.key.stop_text_input();self.set_mode('game')
@@ -157,6 +164,12 @@ class OnlineMixin:
                     elif self.mode=='online_connect':self.set_mode('game')
                     else:self.set_mode('online_room')
                     return
+                if self.mode=='online_room' and self.online_state.get('battle'):
+                    skill_slots={pg.K_a:0,pg.K_q:1,pg.K_w:2,pg.K_e:3,pg.K_r:4}
+                    if event.key in skill_slots:
+                        self.online_use_skill(skill_slots[event.key]);return
+                    if event.key in (pg.K_1,pg.K_2,pg.K_3):
+                        self.online_switch(event.key-pg.K_1);return
                 if self.mode=='online_room' and event.key==pg.K_t:self.online_edit('chat','');return
                 if self.mode=='online_room' and event.key==pg.K_e and not self.online_state.get('battle'):self.online_enter();return
             if event.type==pg.MOUSEBUTTONDOWN and event.button==1:
@@ -190,7 +203,9 @@ class OnlineMixin:
                         self.online_error=''
                 else:self.online_error=str(data)
             keys=pg.key.get_pressed();enabled=self.mode=='online_room' and not self.online_input
-            self.net.keys={name:bool(enabled and keys[key]) for name,key in [('left',pg.K_LEFT),('right',pg.K_RIGHT),('up',pg.K_UP),('down',pg.K_DOWN),('a',pg.K_a),('q',pg.K_q),('w',pg.K_w),('e',pg.K_e),('r',pg.K_r),('guard',pg.K_s),('1',pg.K_1),('2',pg.K_2),('3',pg.K_3)]}
+            if not self.online_state.get('battle'):self.online_guard_click=False
+            self.net.keys={name:bool(enabled and (keys[key] or (name=='guard' and self.online_guard_click)))
+                           for name,key in [('left',pg.K_LEFT),('right',pg.K_RIGHT),('up',pg.K_UP),('down',pg.K_DOWN),('a',pg.K_a),('q',pg.K_q),('w',pg.K_w),('e',pg.K_e),('r',pg.K_r),('guard',pg.K_s),('1',pg.K_1),('2',pg.K_2),('3',pg.K_3)]}
         if self.mode.startswith('online_') or self.online_terminal:
             self.frame+=dt*60;self.terminal.poll();self.load_pokemon_events()
             return
@@ -530,8 +545,9 @@ class OnlineMixin:
             pg.draw.rect(self.canvas,(18,27,44),(151,123,365,8))
             pg.draw.rect(self.canvas,GOLD,(151,123,int(365*max(0,min(100,own.get('energy',0)))/100),8))
             self.text('S · GUARD',76,140,(158,204,233),self.tiny)
+            self.buttons.append((pg.Rect(70,132,445,26),self.online_toggle_guard))
             pg.draw.rect(self.canvas,(55,71,87),(151,143,170,8))
-            if own.get('guard'):
+            if own.get('guard') or self.online_guard_click:
                 pg.draw.rect(self.canvas,(108,194,246),(151,143,170,8))
         if foe:
             enemy=foe['team'][foe['slot']]
@@ -618,19 +634,21 @@ class OnlineMixin:
             # Normalize to all five action slots (basic, Q, W, E, ultimate).
             cooldowns=list(own.get('cooldowns') or [])
             cooldowns=(cooldowns+[0.] * 5)[:5]
-            actions=[(key,move,cooldowns[i+1]) for i,(key,move) in enumerate(zip('QWE',p['moves']))]
+            basic={'name':self.words('Pukulan','Punch'),'emoji':'🥊'}
+            actions=[('A',basic,cooldowns[0])]
+            actions.extend((key,move,cooldowns[i+1]) for i,(key,move) in enumerate(zip('QWE',p['moves'])))
             actions.append(('R',p.get('ultimate') or {},cooldowns[4]))
             for i,(key,move,cooldown) in enumerate(actions):
-                x=25+i*307;y=614
-                self.box((x,y,294,62),retro.PANEL)
-                self.buttons.append((pg.Rect(x,y,294,62),lambda slot=i+1:self.online_use_skill(slot)))
+                x=25+i*250;y=614
+                self.box((x,y,236,62),retro.PANEL)
+                self.buttons.append((pg.Rect(x,y,236,62),lambda slot=i:self.online_use_skill(slot)))
                 self.text(key,x+13,y+8,GOLD if cooldown<=0 else M,self.font,True)
                 glyph=move.get('emoji','✨');self.text(glyph,x+48,y+7,C,self.font)
                 label=move.get('name','Ultimate')
-                if i==0 and move.get('effect_label'):label=move['effect_label']+' · '+label
+                if key=='Q' and move.get('effect_label'):label=move['effect_label']+' · '+label
                 if len(label)>25:label=label[:23]+'…'
                 suffix=(f'{cooldown:.1f}s' if cooldown>0 else
-                        ('READY' if i<3 or own.get('energy',0)>=100 else 'CHARGING'))
+                        ('READY' if key!='R' or own.get('energy',0)>=100 else 'CHARGING'))
                 self.text(f'{label}  {suffix}',x+79,y+10,G if cooldown<=0 else M,self.small)
             # The same team-switch keys as local combat, shown as compact
             # square portraits with a per-Pokémon health bar.
@@ -638,6 +656,7 @@ class OnlineMixin:
                 x=25+row*82;y=690
                 active=row==own.get('slot',0)
                 self.box((x,y,58,54),retro.PANEL,5,GOLD if active else retro.EDGE)
+                self.buttons.append((pg.Rect(x,y,58,54),lambda slot=row:self.online_switch(slot)))
                 self.online_sprite(member['id'],x+29,y+27,43,False)
                 self.text(str(row+1),x+7,y+4,GOLD,self.tiny,True)
                 pg.draw.rect(self.canvas,(55,71,87),(x-2,y+57,62,8))

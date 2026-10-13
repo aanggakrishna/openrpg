@@ -110,7 +110,7 @@ class World:
         elif kind=='skill':
             if not p['match'] or p['match'] not in self.matches:raise ValueError('You are not in a battle')
             slot=int(b.get('slot',0))
-            if slot not in (1,2,3,4):raise ValueError('Unknown skill slot')
+            if slot not in (0,1,2,3,4):raise ValueError('Unknown skill slot')
             battle=self.matches[p['match']]['battle'];fighter=battle.fighters.get(uid)
             if not fighter or battle.result:raise ValueError('Battle is no longer active')
             if battle.intro>0:raise ValueError('Wait for the battle to begin')
@@ -120,6 +120,15 @@ class World:
             if slot>=len(cooldowns) or cooldowns[slot]>0:raise ValueError('That skill is cooling down')
             if slot==4 and fighter.get('energy',0)<100:raise ValueError('Ultimate is still charging')
             battle.attack(uid,slot)
+        elif kind=='switch':
+            if not p['match'] or p['match'] not in self.matches:raise ValueError('You are not in a battle')
+            battle=self.matches[p['match']]['battle'];fighter=battle.fighters.get(uid)
+            if not fighter or battle.result:raise ValueError('Battle is no longer active')
+            if battle.intro>0:raise ValueError('Wait for the battle to begin')
+            slot=int(b.get('slot',-1))
+            if slot<0 or slot>=len(fighter.get('team',[])):raise ValueError('Unknown Pokémon slot')
+            if fighter['team'][slot].get('hp',0)<=0:raise ValueError('That Pokémon has fainted')
+            fighter['slot']=slot
         elif kind=='chat':
             if time.monotonic()-p['chat_at'] < .7:raise ValueError('Please slow down')
             msg=''.join(c for c in str(b.get('text','')) if c.isprintable())[:160].strip()
