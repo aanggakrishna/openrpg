@@ -245,7 +245,7 @@ class OnlineMixin:
         if now-self.online_battle_error_log_at.get(source,0)<5:return
         self.online_battle_error_log_at[source]=now
         try:
-            path=ROOT/'.openrpg'/'online'/'client-errors.log'
+            path=Path.home()/'.openrpg'/'online'/'client-errors.log'
             path.parent.mkdir(parents=True,exist_ok=True)
             with path.open('a',encoding='utf-8') as stream:
                 stream.write(f'\n[{time.strftime("%Y-%m-%d %H:%M:%S")}] {source}\n')
@@ -464,8 +464,8 @@ class OnlineMixin:
                                  'The PvP screen encountered a problem.'),640,280,GOLD,self.font,True)
             self.text(self.words('Game tetap berjalan. Kembali ke room dan coba sambungkan ulang.',
                                  'The game is still running. Return to the room and reconnect.'),640,330,C,self.small,True)
-            self.text(self.words('Detail tersimpan di .openrpg/online/client-errors.log',
-                                 'Details saved to .openrpg/online/client-errors.log'),640,370,M,self.tiny,True)
+            self.text(self.words('Detail tersimpan di ~/.openrpg/online/client-errors.log',
+                                 'Details saved to ~/.openrpg/online/client-errors.log'),640,370,M,self.tiny,True)
             self.button(self.words('Kembali ke room','Return to room'),(440,430,400,52),
                         lambda:self.online_send('leave_battle'))
 
