@@ -610,8 +610,12 @@ class OnlineMixin:
             pg.draw.rect(self.canvas,(55,71,87),(112,67,180,8))
             if own.get('guard'):
                 pg.draw.rect(self.canvas,(108,194,246),(112,67,180,8))
-            actions=[(key,move,own['cooldowns'][i+1]) for i,(key,move) in enumerate(zip('QWE',p['moves']))]
-            actions.append(('R',p.get('ultimate') or {},own['cooldowns'][4]))
+            # Older online servers may send only the cooldown slots they use.
+            # Normalize to all five action slots (basic, Q, W, E, ultimate).
+            cooldowns=list(own.get('cooldowns') or [])
+            cooldowns=(cooldowns+[0.] * 5)[:5]
+            actions=[(key,move,cooldowns[i+1]) for i,(key,move) in enumerate(zip('QWE',p['moves']))]
+            actions.append(('R',p.get('ultimate') or {},cooldowns[4]))
             for i,(key,move,cooldown) in enumerate(actions):
                 x=25+i*307;y=614
                 self.box((x,y,294,62),retro.PANEL)
