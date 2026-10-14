@@ -136,13 +136,17 @@ class LegacyGame:
         self.emoji_font = retro.IconFont(38)
         self.fruit_font = retro.IconFont(18)
         self.ultimate_font = retro.IconFont(84)
-        # Decode the local NPC-versus portrait once at startup.
+        # Decode FireRed's native trainer portraits once at startup. The old
+        # locally generated portraits remain a fallback for incomplete packs.
         self.trainer_versus_sprites = []
         self.trainer_versus_surface_cache = {}
-        for versus_portrait in sorted((ROOT / "assets" / "trainers").glob("*.png")):
+        portrait_paths = sorted((ROOT / "assets" / "gba" / "trainers" / "front_pics").glob("*.png"))
+        if not portrait_paths:
+            portrait_paths = sorted((ROOT / "assets" / "trainers").glob("*.png"))
+        for versus_portrait in portrait_paths:
             try:
                 image = pg.image.load(versus_portrait).convert_alpha()
-                name = versus_portrait.stem.removeprefix("VS")
+                name = versus_portrait.stem.removeprefix("VS").removesuffix("_front_pic").replace("_", " ").title()
                 self.trainer_versus_sprites.append({"name": name, "image": image})
             except (OSError, pg.error):
                 continue
@@ -256,6 +260,7 @@ class LegacyGame:
         self.poke_surfaces = {}
         self.poke_battle_surfaces = {}
         self.poke_animations = {}
+        self.gba_poke_surfaces = self.load_gba_pokemon_sprites()
         # Reuse rasterized sprites and emoji across frames instead of copying,
         # resizing, and pixelating the same surfaces at 60 FPS.
         self.pokemon_render_cache = {}
@@ -3259,8 +3264,42 @@ class LegacyGame:
         size = (max(1, round(surface.get_width() * scale)), max(1, round(surface.get_height() * scale)))
         return pg.transform.scale(surface, size)
 
+    def load_gba_pokemon_sprites(self):
+        """Load the complete local FireRed sprite set by canonical species id.
+
+        FireRed covers the original 386 species. Later-generation Pokémon
+        retain the app's existing cache fallback, while every GBA-era sprite
+        is rendered from the extracted local source without a network request.
+        """
+        root = ROOT / "assets" / "gba" / "pokemon"
+        by_name = {entry["name"]: int(entry["id"]) for entry in pokemon_db.catalog()}
+        sprites = {}
+        if not root.is_dir():
+            return sprites
+        for path in root.glob("*/front.png"):
+            # FireRed's folder spelling uses underscores where PokéAPI uses
+            # hyphens (for example nidoran_f and mr_mime).
+            ident = by_name.get(path.parent.name.replace("_", "-"))
+            if ident is None:
+                continue
+            try:
+                sprites[ident] = pg.image.load(path).convert_alpha()
+            except (OSError, pg.error):
+                continue
+        return sprites
+
     def pokemon_surface(self, pokemon_id, target_size=96):
         ident = int(pokemon_id)
+        gba_source = self.gba_poke_surfaces.get(ident)
+        if gba_source is not None:
+            key = (ident, int(target_size), "gba")
+            cached = self.pokemon_render_cache.get(key)
+            if cached is not None:
+                return cached
+            surface = self.fit_pokemon_sprite(gba_source, target_size)
+            retro.pixelate(surface, 2)
+            self.pokemon_render_cache[key] = surface
+            return surface
         frames = self.poke_animations.get(ident)
         frame_index = -1
         source = None
@@ -7264,7 +7303,12 @@ def main():
     parser.add_argument("--project", type=Path, default=ROOT / "computer-workspace", help="Folder awal terminal PC")
     parser.add_argument("--shell", help="Shell terminal, default mengikuti SHELL")
     args = parser.parse_args()
-    Game(args.project, shell=args.shell).run()
+    game = Game(args.project, shell=args.shell)
+    # Desktop launches bypass the decorative title/character introduction.
+    # Existing profiles enter the overworld immediately; a new install opens
+    # only the required profile setup.
+    game.begin()
+    game.run()
 
 
 if __name__ == "__main__":

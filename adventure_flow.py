@@ -205,13 +205,14 @@ class FlowMixin:
         milestones=self.life.claim_collection_rewards()
         if milestones:self.save_current()
         self.encounter_grace=15
-        # Cache the active team and the three Pokémon used in the sanctuary
-        # entrance before showing the world. Remaining species stay on-demand.
+        # The FireRed sprite pack ships with the game, so the overworld can
+        # open immediately. Keep the requests in the background only for
+        # metadata, cries, and later-generation fallback species.
         self.asset_loading_ids = list(dict.fromkeys(
             self.active_pokemon_team() + [1, 15, 16]))
         for ident in self.asset_loading_ids:
             self.pokedex.request(ident)
-        self.set_mode('asset_loading')
+        self.set_mode('game')
         pg.key.stop_text_input()
         message=self.words('B terminal · J misi · L jurnal · E interaksi · P Pokédex',
                            'B terminal · J quests · L journal · E interact · P Pokédex')

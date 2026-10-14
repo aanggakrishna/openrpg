@@ -12,6 +12,7 @@ from world_regions import (RESERVE_GRID_POSITIONS, RESERVE_COLUMNS, RESERVE_ROWS
 
 ROOT = Path(__file__).resolve().parent / "assets"
 NINJA = ROOT / "ninja-adventure/Ninja Adventure - Asset Pack"
+GBA = ROOT / "gba"
 # Playable trainers use the human adventurer sprites from the bundled CC0 pack.
 # Keep the legacy slot order so old saves keep a stable character index, while
 # replacing the two ninja slots with ordinary villagers.
@@ -105,6 +106,23 @@ class RPGArt:
         for name in dict.fromkeys(PLAYER_STYLES + ("OldMan", "Villager4")):
             for anim in ("Idle", "Walk", "Attack"):
                 self.characters[name, anim] = pg.image.load(NINJA / f"Actor/Character/{name}/SeparateAnim/{anim}.png").convert_alpha()
+        # FireRed's native 16×32 overworld sprites replace the generic player
+        # cast. Each sheet contains the walking poses used by the GBA engine.
+        # The small name map also makes the market NPCs look like part of the
+        # same world rather than a second art pack.
+        people = GBA / "object_events/pics/people"
+        self.gba_people = {}
+        for key, filename in {
+            "player-0": "red_normal.png", "player-1": "green_normal.png",
+            "player-2": "lass.png", "Woman": "woman_1.png",
+            "Hunter": "youngster.png", "OldMan": "old_man_1.png",
+            "Villager4": "gentleman.png", "Samurai": "ninja_boy.png",
+            "Princess": "beauty.png", "Cavegirl": "picnicker.png",
+            "EggGirl": "girl.png",
+        }.items():
+            path = people / filename
+            if path.is_file():
+                self.gba_people[key] = pg.image.load(path).convert_alpha()
         self.nature = pg.image.load(NINJA / "Backgrounds/Tilesets/TilesetNature.png").convert_alpha()
         # Reuse the bundled CC0 Ninja Adventure effects for contextual gate
         # challenges. They are kept as sprite sheets and only scaled when a
@@ -666,6 +684,22 @@ class RPGArt:
         self.tile(target, "rpg", (28, 9), x - 24, y - 59, 48)
 
     def character(self, target, x, y, index, scale, frame, walking, facing="down", attacking=False, npc=None):
+        gba_key = npc or f"player-{index % 3}"
+        gba_source = self.gba_people.get(gba_key)
+        if gba_source is not None and gba_source.get_width() >= 16 and gba_source.get_height() >= 32:
+            # Object-event sheets are a horizontal row of 16×32 poses.  The
+            # original order starts with the four facing poses, followed by
+            # their stepping variants.  Keep the frame selection deterministic
+            # for both the native game and the headless integration check.
+            cells = gba_source.get_width() // 16
+            base = {"down": 0, "up": 1, "left": 2, "right": 3}.get(facing, 0) % max(1, cells)
+            pose = (base + (1 + int(frame / 7) % max(1, cells - 4) if walking and cells > 4 else 0)) % cells
+            sprite = gba_source.subsurface((pose * 16, 0, 16, 32))
+            size = max(24, round(16 * scale * 2.05))
+            height = size * 2
+            pg.draw.ellipse(target, (32, 48, 43), (x - size * .32, y - 7, size * .64, 10))
+            target.blit(pg.transform.scale(sprite, (size, height)), (x - size / 2, y - height))
+            return
         name = npc or PLAYER_STYLES[index % len(PLAYER_STYLES)]
         anim = "Attack" if attacking else "Walk" if walking else "Idle"
         source = self.characters[name, anim]
