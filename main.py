@@ -5836,8 +5836,7 @@ class LegacyGame:
         if identity_label:
             self.text(identity_label.replace('_',' ').replace('-',' '),265,310,MUTED,self.small)
         else:
-            self.text(self.words("Perempuan" if self.life.gender == "female" else "Laki-laki",
-                                 "Female" if self.life.gender == "female" else "Male"), 265, 310, MUTED, self.small)
+            self.text(self.words("Pelatih Pokémon", "Pokémon Trainer"), 265, 310, MUTED, self.small)
         level = int(self.life.trainer_level)
         xp = int(self.life.trainer_xp)
         threshold = max(100, level * 100)

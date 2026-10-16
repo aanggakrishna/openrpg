@@ -60,6 +60,8 @@ class OnlineUITests(unittest.TestCase):
             g.life.x=zone['x']+640;g.life.y=zone['y']+800;g.spawn_map_pokemon()
             self.assertLessEqual(len(g.wild_pokemon),13)
             self.assertTrue(all(p.get('zone',0)==index for p in g.wild_pokemon))
-            self.assertEqual(len(g.reserve_trainers),1)
+            self.assertTrue(g.reserve_trainers)
+            self.assertLessEqual(len(g.reserve_trainers),5)
+            self.assertTrue(all(t.get('zone')==index for t in g.reserve_trainers))
 
 if __name__=='__main__':unittest.main()
