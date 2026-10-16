@@ -103,13 +103,10 @@ class OnlineMixin:
         self.play_online_lobby_music()
 
     def play_online_lobby_music(self):
-        if not pg.mixer.get_init():return
         path=ROOT/'assets/audio/music/online_lobby.wav'
-        if not path.is_file() or getattr(self,'_music_key',None)=='online-lobby':return
-        try:
-            pg.mixer.music.load(str(path));pg.mixer.music.play(-1,fade_ms=350)
-            pg.mixer.music.set_volume(.24*getattr(self.life,'music_volume',1));self._music_key='online-lobby'
-        except pg.error:pass
+        if path.is_file():
+            self.start_background_music(path,'online-lobby',
+                                        .24*getattr(self.life,'music_volume',1),fade_ms=350)
 
     def online_send(self,action,**kwargs):
         if self.net and self.net.connected:self.net.send(action,**kwargs)

@@ -121,7 +121,8 @@ class RPGArt:
             "Villager4": "gentleman.png",
             "Princess": "beauty.png", "Cavegirl": "picnicker.png",
             "EggGirl": "lass.png", "Boy": "boy.png",
-            "Samurai": "youngster.png",
+            "Samurai": "youngster.png", "Nurse": "nurse.png",
+            "Chef": "chef.png", "OldWoman": "old_woman.png",
         }.items():
             path = people / filename
             if path.is_file():

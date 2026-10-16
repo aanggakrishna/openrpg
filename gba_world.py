@@ -19,6 +19,8 @@ class GBAWorld:
                       for name in ('pallet_town','viridian_city','cave','generic_building_1')}
         self.objects={name:pg.image.load(ROOT/f'{name}.png').convert_alpha()
                       for name in ('home','lab','center','mart','hotel','restaurant','tree','rock')}
+        self.interiors={name:pg.image.load(ROOT/f'interior_{name}.png').convert_alpha()
+                        for name in ('center','restaurant','hotel')}
         self.arenas={}
         self.cache={}
 
@@ -131,48 +133,7 @@ class GBAWorld:
 
     def interior(self,target,scene):
         if scene in ('center','restaurant','hotel'):
-            # FireRed's 16px town atlas keeps service rooms in the same visual
-            # language as the exterior: tiled floors, colored wall bands and
-            # crisp, chunky furniture silhouettes.
-            target.fill((26,43,47))
-            self.fill(target,(0,0,1280,800),366,32)
-            self.fill(target,(32,32,1216,142),32,32)
-            self.fill(target,(32,144,1216,20),234,32)
-            self.fill(target,(32,166,1216,18),235,32)
-            self.fill(target,(32,184,1216,18),236,32)
-            self.fill(target,(32,202,1216,14),235,32)
-            # Recessed entrance and a warm threshold at the lower edge.
-            self.fill(target,(560,706,160,64),234,32)
-            self.fill(target,(592,738,96,32),235,32)
-            if scene=='center':
-                # Signature red counter and healing stations.
-                self.fill(target,(655,270,420,42),32,32)
-                self.fill(target,(655,312,420,26),234,32)
-                self.fill(target,(690,240,350,32),32,32)
-                for x in (770,890,1010):
-                    pg.draw.rect(target,(228,224,196),(x,355,68,52))
-                    pg.draw.rect(target,(195,68,73),(x,355,68,10))
-                    pg.draw.rect(target,(83,130,132),(x+8,374,52,24))
-                    pg.draw.rect(target,(225,220,191),(x+29,380,10,12))
-                    pg.draw.rect(target,(225,220,191),(x+32,377,4,18))
-            elif scene=='restaurant':
-                for x,y in ((260,340),(510,438),(1050,348)):
-                    pg.draw.rect(target,(102,68,49),(x,y+42,132,15))
-                    pg.draw.rect(target,(152,104,66),(x,y,132,40))
-                    pg.draw.rect(target,(211,171,105),(x+7,y+6,118,28))
-                    pg.draw.circle(target,(213,79,75),(x+66,y+20),9)
-                    pg.draw.rect(target,(246,225,179),(x+63,y+14,6,12))
-                pg.draw.rect(target,(108,65,47),(170,220,198,55))
-                pg.draw.rect(target,(206,86,76),(170,220,198,16))
-            else:
-                for x,y in ((230,330),(500,330),(1040,330)):
-                    pg.draw.rect(target,(91,62,48),(x,y+76,195,16))
-                    pg.draw.rect(target,(228,218,187),(x,y+28,195,49))
-                    pg.draw.rect(target,(168,66,69),(x,y+23,195,16))
-                    pg.draw.rect(target,(242,235,211),(x+13,y+39,62,28))
-                    pg.draw.rect(target,(91,128,128),(x+16,y+42,56,20))
-                pg.draw.rect(target,(154,103,67),(166,229,170,74))
-                pg.draw.rect(target,(225,208,163),(178,241,146,48),2)
+            target.blit(self.interiors[scene], (0, 0))
             return
         target.fill((29,48,52))
         atlas='generic_building_1'
@@ -187,6 +148,16 @@ class GBAWorld:
             self.grid(target,[[24,25],[40,41]],284,216,88,atlas)
             self.grid(target,[[96,97,98,99]],804,227,60,atlas)
         for x in (730,1020):self.grid(target,[[71],[87]],x,250,32,atlas)
+
+    @staticmethod
+    def service_anchors(scene):
+        """Pixel-space NPC, exit, and arrival points for the compiled GBA maps."""
+        return {
+            # Map origins and 4x GBA metatiles correspond to the exported rooms.
+            'center': {'npc': (640, 260), 'exit': (640, 648), 'entry': (640, 580)},
+            'restaurant': {'npc': (792, 540), 'exit': (576, 680), 'entry': (576, 610)},
+            'hotel': {'npc': (448, 370), 'exit': (384, 680), 'entry': (384, 610)},
+        }[scene]
 
     def arena(self,target,style):
         if style not in self.arenas:

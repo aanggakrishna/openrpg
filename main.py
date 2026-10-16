@@ -524,6 +524,11 @@ class LegacyGame:
         self.text(text, x, y + 9, font=self.tiny, center=True)
 
     def stations(self):
+        if self.life.scene in ("center", "restaurant", "hotel"):
+            npc_name = {"center": "Perawat Pokémon", "restaurant": "Pelayan", "hotel": "Resepsionis"}[self.life.scene]
+            anchors = self.art.gba.service_anchors(self.life.scene)
+            return [("service_npc", *anchors["npc"], f"Bicara dengan {npc_name}"),
+                    ("service_exit", *anchors["exit"], "Keluar lewat pintu")]
         if self.life.scene == "outdoors":
             result = [("home", 350, 350, "Masuk rumah"), ("ranch", 905, 350, "Beri makan ayam"),
                       ("pond", 963, 615, "Memancing"), ("bench", 312, 616, "Duduk & bersantai"),
@@ -901,6 +906,28 @@ class LegacyGame:
             return list(self.art.region_obstacles(index))
         if scene in ("dungeon_hub", "local_dungeon"):
             return trees + [pg.Rect(r) for r in scene_layout(scene)["solids"]]
+        if scene in ("center", "restaurant", "hotel"):
+            if scene == "center":
+                left, top, width, height, door_x = 160, 80, 960, 640, 640
+            elif scene == "restaurant":
+                left, top, width, height, door_x = 160, 48, 960, 704, 576
+            else:
+                left, top, width, height, door_x = 96, 48, 1088, 704, 384
+            right, bottom = left + width, top + height
+            walls = [pg.Rect(left, top, width, 76), pg.Rect(left, top, 44, height),
+                     pg.Rect(right - 44, top, 44, height),
+                     pg.Rect(left, bottom - 32, door_x-left-48, 32),
+                     pg.Rect(door_x + 48, bottom - 32, right-door_x-48, 32)]
+            if scene == "center":
+                furniture = [pg.Rect(420, 258, 440, 75), pg.Rect(292, 125, 120, 120),
+                             pg.Rect(858, 125, 70, 125), pg.Rect(860, 405, 145, 150)]
+            elif scene == "restaurant":
+                furniture = [pg.Rect(224, 245, 128, 125), pg.Rect(224, 495, 128, 125),
+                             pg.Rect(190, 355, 570, 52), pg.Rect(805, 150, 315, 455)]
+            else:
+                furniture = [pg.Rect(890, 230, 185, 145), pg.Rect(890, 480, 185, 145),
+                             pg.Rect(160, 355, 435, 88), pg.Rect(160, 100, 105, 190)]
+            return walls + furniture
         if scene in OUTSIDE:
             trees += [pg.Rect(r) for r in scene_layout(scene)["solids"]]
             service_points={"outdoors":((780,590),(880,620)),"forest":((300,475),(980,475)),
@@ -953,6 +980,10 @@ class LegacyGame:
     def interaction_radius(action):
         if action == "garden":
             return 175
+        if action == "service_npc":
+            # The nurse/receptionist/chef often stands behind a counter in the
+            # original GBA maps; let the player interact from its public side.
+            return 140
         if action == "world_event":
             return 190
         if action.startswith("drop:"):
@@ -1034,7 +1065,7 @@ class LegacyGame:
                     category = self.words("Item / kegiatan", "Item / activity")
                 elif action.startswith("drop:"):
                     category = self.words("Item", "Item")
-                elif action.startswith("npc_"):
+                elif action.startswith("npc_") or action == "service_npc":
                     category = self.words("NPC", "NPC")
                 else:
                     category = self.words("Tempat / objek", "Place / object")
@@ -1120,7 +1151,8 @@ class LegacyGame:
     def transition(self, scene, x, y):
         old_scene = self.life.scene
         if old_scene != scene:
-            if scene in ("house", "bedroom") or old_scene in ("house", "bedroom"):
+            room_scenes = ("house", "bedroom", "center", "restaurant", "hotel")
+            if scene in room_scenes or old_scene in room_scenes:
                 self.play_action_sound("door-wood-open", .35)
                 self.door_close_timer = .28
             else:
@@ -1182,6 +1214,20 @@ class LegacyGame:
                                    "Move near an object and press E to interact."))
             return
         action = station[0]
+        if action == "service_exit":
+            return_scene = self.life.service_return_scene
+            return_x, return_y = self.life.service_return_x, self.life.service_return_y
+            self.life.service_return_scene = "outdoors"
+            self.life.service_return_x, self.life.service_return_y = 350, 405
+            self.service_interior_kind = None
+            self.transition(return_scene, return_x, return_y)
+            return
+        if action == "service_npc":
+            self.service_interior_kind = self.life.scene
+            self.service_menu_selected = 0
+            self.mode = "service_interior"
+            self.play_action_sound("menu-open", .24)
+            return
         if action.startswith("drop:"):
             self.collect_farm_drop(int(action.split(":", 1)[1]))
             return
@@ -2480,8 +2526,12 @@ class LegacyGame:
         self.service_interior_kind = kind
         self.service_menu_selected = 0
         self.service_interior_return_mode = None
-        self.mode = "service_interior"
         self.play_action_sound("menu-open", .24)
+        self.life.service_return_scene = self.life.scene
+        self.life.service_return_x = self.life.x
+        self.life.service_return_y = self.life.y
+        entry_x, entry_y = self.art.gba.service_anchors(kind)["entry"]
+        self.transition(kind, entry_x, entry_y)
 
     def open_center_services(self):
         self.service_interior_return_mode = "service_interior"
@@ -2508,25 +2558,18 @@ class LegacyGame:
 
     def draw_service_interior(self):
         kind = self.service_interior_kind or "center"
-        self.art.gba.interior(self.canvas, kind)
-        title, npc, subtitle = {
-            "center": ("POKÉMON CENTER", "Perawat", "Rawat Pokémon dan atur tim bersama perawat."),
-            "restaurant": ("RESTORAN", "Pelayan", "Makanan hangat untuk memulihkan kebutuhanmu."),
-            "hotel": ("POKÉMON HOTEL", "Resepsionis", "Beristirahatlah sebelum perjalanan berikutnya."),
-        }.get(kind, ("POKÉMON CENTER", "Perawat", "Selamat datang!"))
-        self.box((52, 35, 1176, 102), INK, 14, retro.EDGE)
-        self.text(title, 82, 51, retro.GOLD, self.medium)
-        self.text(subtitle, 85, 105, CREAM, self.small)
-        # FireRed-style overworld people sprites, enlarged with nearest-neighbor scaling.
-        person = {"center": "Woman", "restaurant": "Villager4", "hotel": "Woman"}[kind]
-        self.art.character(self.canvas, 902, 450, 0, 3.3, int(self.life.elapsed * 4), False,
-                           "down", npc=person)
-        self.box((784, 500, 242, 55), (35, 61, 62), 9, retro.EDGE)
-        self.text(npc, 905, 514, CREAM, self.small, True)
-        self.text({"center": "Ada yang bisa saya bantu?", "restaurant": "Silakan pilih hidangan!",
-                   "hotel": "Selamat datang, Trainer!"}[kind], 905, 537, MUTED, self.tiny, True)
-        self.box((66, 190, 524, 422), (20, 39, 43), 14, retro.EDGE)
-        self.text("LAYANAN", 94, 207, GREEN, self.small)
+        veil = pg.Surface((W, H), pg.SRCALPHA)
+        veil.fill((9, 15, 25, 105))
+        self.canvas.blit(veil, (0, 0))
+        title, npc, greeting = {
+            "center": ("POKÉMON CENTER", "Perawat", "Selamat datang! Tim Pokémonmu bisa dirawat di sini."),
+            "restaurant": ("RESTORAN", "Pelayan", "Silakan pilih hidangan."),
+            "hotel": ("POKÉMON HOTEL", "Resepsionis", "Kamar sudah siap untukmu."),
+        }.get(kind, ("LAYANAN", "NPC", "Ada yang bisa saya bantu?"))
+        self.box((270, 186, 740, 454), INK, 16, retro.EDGE)
+        self.text(title, 310, 211, retro.GOLD, self.medium)
+        self.text(f"{npc}: {greeting}", 315, 265, CREAM, self.small)
+        self.text(f"Koin: {self.life.money}", 315, 298, GREEN, self.tiny)
         if kind == "center":
             options = [("Periksa tim & atur Pokémon", "team"),
                        ("Pulihkan semua Pokémon", "heal"),
@@ -2536,20 +2579,12 @@ class LegacyGame:
         else:
             options = [("Menginap 8 jam · 15 koin", "hotel")]
         for index, (label, action) in enumerate(options):
-            y = 256 + index * 64
-            self.button(label, (94, y, 464, 54), lambda value=action: self.service_action(value),
+            y = 334 + index * 62
+            self.button(label, (314, y, 652, 50), lambda value=action: self.service_action(value),
                         index == self.service_menu_selected)
-            self.text("01" if index == 0 else "02", 108, y + 17, retro.GOLD, self.tiny)
-        if kind == "center":
-            self.text("Tim Pokémon", 96, 460, CREAM, self.small)
-            for index, pokemon_id in enumerate(self.life.pokemon_party[:4]):
-                name = (self.pokemon_data(pokemon_id) or {}).get("name", f"Pokémon {pokemon_id}").title()
-                self.text(f"{index + 1}. {name}", 105, 488 + index * 25, MUTED, self.tiny)
-        else:
-            self.text(f"Koin tersedia: {self.life.money}", 96, 430, CREAM, self.small)
-            self.text("Pilihan layanan akan diproses oleh NPC.", 96, 466, MUTED, self.tiny)
-        self.text("↑ ↓ pilih   Enter bicara   Esc keluar", 94, 570, GREEN, self.tiny)
-        self.button("Keluar · Esc", (858, 681, 280, 54), self.back, True)
+            self.text(f"0{index + 1}", 330, y + 15, retro.GOLD, self.tiny)
+        self.text("↑ ↓ pilih   Enter konfirmasi   Esc kembali ke ruangan", 315, 562, MUTED, self.tiny)
+        self.button("Kembali · Esc", (770, 588, 196, 40), self.back, True)
 
     def draw_hospitality(self):
         restaurant = self.hospitality_kind == "restaurant"
@@ -4261,10 +4296,11 @@ class LegacyGame:
                             ("PC · TERMINAL", 929, 446), ("E · KELUAR", 640, 679)]:
             self.label(title, x, y)
 
+    def service_room(self):
+        kind = self.life.scene
+        self.art.gba.interior(self.canvas, kind)
+
     def draw_world(self):
-        if self.mode == "service_interior":
-            self.canvas.fill((18, 27, 23))
-            return
         if self.life.scene == "reserve":
             self.draw_reserve_world()
             return
@@ -4290,8 +4326,11 @@ class LegacyGame:
             station = self.nearest()
             self.hud(station)
             return
-        {"outdoors": self.outdoors, "house": self.house, "bedroom": self.bedroom,
-         "forest": self.forest, "market": self.market}[self.life.scene]()
+        if self.life.scene in ("center", "restaurant", "hotel"):
+            self.service_room()
+        else:
+            {"outdoors": self.outdoors, "house": self.house, "bedroom": self.bedroom,
+             "forest": self.forest, "market": self.market}[self.life.scene]()
         self.world_characters()
         self.environment.draw(self.canvas, self.life)
         self.hud(self.nearest())
@@ -4314,6 +4353,10 @@ class LegacyGame:
         elif self.life.scene == "outdoors":
             drawables += [(drop["y"], "farm_drop", drop) for drop in self.life.farm_drops
                           if not drop.get("taken")]
+        elif self.life.scene in ("center", "restaurant", "hotel"):
+            npc_x, npc_y = self.art.gba.service_anchors(self.life.scene)["npc"]
+            drawables.append((npc_y, "service_npc", (npc_x, npc_y,
+                {"center": "Nurse", "restaurant": "Chef", "hotel": "OldWoman"}[self.life.scene])))
         drawables += [(t["y"], "trainer", t) for t in self.route_trainers if t["scene"] == self.life.scene]
         if not self.life.mounted and self.life.scene == self.life.horse_scene:
             drawables.append((self.life.horse_y, "horse", (self.life.horse_x, self.life.horse_y)))
@@ -4330,6 +4373,9 @@ class LegacyGame:
             elif kind == "npc":
                 _, x, y, name, _ = obj
                 self.art.character(self.canvas, x, y, 0, 1.7, self.frame, self.life.market_open, npc=name)
+            elif kind == "service_npc":
+                x, y, style = obj
+                self.art.character(self.canvas, x, y, 0, 2.2, self.frame, False, "down", npc=style)
             elif kind == "trainer":
                 trainer_style = "Woman" if obj.get("rival") else "Hunter"
                 self.art.character(self.canvas, obj["x"], obj["y"], 1, 1.8, self.frame, True, "down", npc=trainer_style)
@@ -4576,7 +4622,8 @@ class LegacyGame:
             "outdoors": "meadow.ogg", "house": "home.ogg", "bedroom": "bedroom.ogg",
             "forest": "forest.ogg", "market": "market.ogg", "coast": "ocean.ogg",
             "mountain": "adventure.ogg", "dungeon_hub": "mystical.ogg",
-            "local_dungeon": "cavern.ogg",
+            "local_dungeon": "cavern.ogg", "center": "mystical.ogg",
+            "restaurant": "tavern.ogg", "hotel": "home.ogg",
         }.get(scene, "adventure.ogg")
         zone_name = ""
         if scene == "local_dungeon":
@@ -4618,13 +4665,11 @@ class LegacyGame:
         path = music_dir / track
         music_key = f"battle:{track}" if self.mode == "battle" else f"{scene}:{zone_name}:{track}"
         if path.is_file() and music_key != self._music_key:
-            try:
-                pg.mixer.music.load(str(path))
-                pg.mixer.music.play(-1, fade_ms=650)
-                pg.mixer.music.set_volume((.36 if self.mode == "battle" else .28) * self.life.music_volume)
-                self._music_key = music_key
-            except pg.error:
-                pass
+            self.start_background_music(
+                path, music_key,
+                (.36 if self.mode == "battle" else .28) * self.life.music_volume,
+                fade_ms=650,
+            )
 
         in_market = scene == "market" and self.mode not in ("title", "battle", "dead") and self._market_ambience is not None and self._market_ambience_channel is not None
         if in_market and not self._market_ambience_channel.get_busy():
@@ -4644,6 +4689,27 @@ class LegacyGame:
                 self._forest_ambience_channel.play(self._forest_ambience, loops=-1, fade_ms=700)
         elif self._forest_ambience_channel is not None and self._forest_ambience_channel.get_busy():
             self._forest_ambience_channel.fadeout(700)
+
+    def start_background_music(self, path, key, volume, fade_ms=0, loops=-1):
+        """Own the single pygame music stream and make track changes exclusive."""
+        if not pg.mixer.get_init():
+            return False
+        music = pg.mixer.music
+        if key == self._music_key and music.get_busy():
+            return False
+        try:
+            # pygame's music stream is global. Explicitly stop before loading
+            # any replacement so fast scene/mode transitions cannot leave an
+            # old loop audible under a newly started track.
+            music.stop()
+            music.load(str(path))
+            music.set_volume(max(0.0, min(1.0, float(volume))))
+            music.play(loops, fade_ms=max(0, int(fade_ms)))
+            self._music_key = key
+            return True
+        except pg.error:
+            self._music_key = None
+            return False
 
     def choose_battle_music(self):
         """Pick one locally bundled battle loop, avoiding the last battle's track."""
@@ -4911,7 +4977,12 @@ class LegacyGame:
         self.box((24, 18, 1232, 113), INK, 15)
         self.text("OPENRPG", 44, 28, CREAM, self.medium)
         self.text("FIELD JOURNAL", 231, 23, GREEN, self.tiny)
-        location = {"outdoors": "Rumah & peternakan", "house": "Ruang keluarga", "bedroom": "Kamar", "forest": "Hutan liar", "market": "Market", "reserve": f"Suaka Pokémon · {len(RESERVE_ZONES)} bioma", "coast": "Pantai pasang surut", "mountain": "Pegunungan kabut", "dungeon_hub": "Hub utara · Gym & dungeon", "local_dungeon": self.local_dungeon_name(min(10, max(1, self.life.local_dungeon_tier)))}[self.life.scene]
+        location = {"outdoors": "Rumah & peternakan", "house": "Ruang keluarga", "bedroom": "Kamar",
+                    "forest": "Hutan liar", "market": "Market", "reserve": f"Suaka Pokémon · {len(RESERVE_ZONES)} bioma",
+                    "coast": "Pantai pasang surut", "mountain": "Pegunungan kabut",
+                    "dungeon_hub": "Hub utara · Gym & dungeon",
+                    "local_dungeon": self.local_dungeon_name(min(10, max(1, self.life.local_dungeon_tier))),
+                    "center": "Pokémon Center", "restaurant": "Restoran", "hotel": "Pokémon Hotel"}[self.life.scene]
         # Keep the location subtitle in its own header column so it never
         # collides with the date and weather fields beside it.
         while location and self.tiny.size(location)[0] > 174:
@@ -6808,7 +6879,6 @@ class LegacyGame:
         self.play_action_sound("ui-back", .2)
         if self.mode == "service_interior":
             self.mode = "game"
-            self.service_interior_kind = None
         elif self.mode in ("center", "hospitality") and self.service_interior_return_mode == "service_interior":
             self.mode = "service_interior"
             self.service_interior_return_mode = None
@@ -7302,13 +7372,16 @@ class LegacyGame:
                         self.check_edges()
                         self.life.x = max(30, min(1250, self.life.x))
                         self.life.y = max(156, min(664, self.life.y))
+                    elif self.life.scene in ("center", "restaurant", "hotel"):
+                        self.life.x = max(46, min(1234, self.life.x))
+                        self.life.y = max(222, min(754, self.life.y))
                     else:
                         self.life.x = max(211, min(1070, self.life.x))
                         self.life.y = max(281, min(655, self.life.y))
             if self.life.mounted:
                 self.life.horse_x, self.life.horse_y, self.life.horse_scene = self.life.x, self.life.y, self.life.scene
             if self.mode == "game" and self.moving and self.footstep_timer <= 0:
-                footstep = ("step-wood" if self.life.scene in ("house", "bedroom", "market")
+                footstep = ("step-wood" if self.life.scene in ("house", "bedroom", "market", "center", "restaurant", "hotel")
                             else "step-dirt" if self.life.scene in ("forest", "reserve", "coast", "mountain")
                             else "step-grass")
                 self.play_action_sound(footstep, .19 if not self.life.mounted else .13)

@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import tempfile
 import time
+import math
 import unittest
 from unittest.mock import patch
 import pygame as pg
@@ -124,6 +125,39 @@ class RedesignTests(unittest.TestCase):
         self.assertEqual(g.life.money,money-cost)
         self.assertEqual(g.center_cost(),0)
         g.draw();pg.image.save(g.canvas,str(ROOT/'artifacts/redesign-center.png'))
+
+    def test_service_rooms_are_walkable_and_return_to_their_door(self):
+        g=self.game;g.life=Life(scene='market',x=700,y=610);g.mode='game'
+        g.open_service_interior('restaurant')
+        self.assertEqual((g.life.scene,g.mode),('restaurant','game'))
+        self.assertEqual((g.life.service_return_scene,g.life.service_return_x,g.life.service_return_y),
+                         ('market',700,610))
+        g.draw()
+        self.assertNotEqual(g.canvas.get_at((640,400)),pg.Color('black'))
+        save_path=Path(self.temp.name)/'service-room.json';g.life.save(save_path)
+        loaded=Life.load(save_path)
+        self.assertEqual((loaded.scene,loaded.service_return_scene),('restaurant','market'))
+        npc=next(row for row in g.stations() if row[0]=='service_npc')
+        g.life.x,g.life.y=npc[1],npc[2]
+        g.interact_selected()
+        self.assertEqual(g.mode,'service_interior')
+        g.draw();self.assertGreater(len(g.buttons),0)
+        g.back();self.assertEqual((g.life.scene,g.mode),('restaurant','game'))
+        door=next(row for row in g.stations() if row[0]=='service_exit')
+        g.life.x,g.life.y=door[1],door[2]
+        g.interact_selected()
+        self.assertEqual((g.life.scene,g.mode),("market","game"))
+        self.assertLess(math.hypot(g.life.x-700,g.life.y-610),40)
+
+    def test_background_music_reuses_one_stream_and_stops_on_track_change(self):
+        g=self.game;g._music_key=None
+        with patch('main.pg.mixer.get_init',return_value=True), patch('main.pg.mixer.music') as music:
+            self.assertTrue(g.start_background_music(Path('meadow.ogg'),'outdoors:meadow',.28))
+            self.assertFalse(g.start_background_music(Path('meadow.ogg'),'outdoors:meadow',.28))
+            self.assertTrue(g.start_background_music(Path('center.ogg'),'center',.28,fade_ms=650))
+            self.assertEqual(music.stop.call_count,2)
+            self.assertEqual(music.load.call_count,2)
+            self.assertEqual(music.play.call_count,2)
 
     def test_pokemon_center_pokeball_purchase_and_capacity(self):
         g=self.game;g.life=Life(money=200);g.life.bag['Pokeball']=5
