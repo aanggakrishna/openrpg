@@ -31,6 +31,9 @@ class Life:
     character: int = 0
     trainer_versus_name: str = ""
     scene: str = "outdoors"
+    service_return_scene: str = "outdoors"
+    service_return_x: float = 350
+    service_return_y: float = 405
     x: float = 490
     y: float = 490
     day: int = 1
@@ -519,8 +522,14 @@ class Life:
             state = cls(**{k: v for k, v in raw.items() if k in cls.__dataclass_fields__})
             if "trainer_xp_bank" not in raw:
                 state.trainer_xp_bank = max(0, int(raw.get("trainer_xp", 0)))
-            if state.scene not in ("outdoors", "house", "bedroom", "forest", "market", "reserve", "coast", "mountain", "dungeon_hub", "local_dungeon"):
+            valid_scenes = ("outdoors", "house", "bedroom", "forest", "market", "reserve",
+                            "coast", "mountain", "dungeon_hub", "local_dungeon",
+                            "center", "restaurant", "hotel")
+            if state.scene not in valid_scenes:
                 raise ValueError("invalid scene")
+            if state.service_return_scene not in valid_scenes[:10]:
+                state.service_return_scene = "outdoors"
+                state.service_return_x, state.service_return_y = 350, 405
             state.local_dungeon_tier = max(1, min(11, int(getattr(state, "local_dungeon_tier", 1))))
             state.local_dungeon_cleared = sorted({int(v) for v in getattr(state, "local_dungeon_cleared", []) if 1 <= int(v) <= 10})
             state.character = int(state.character) % 9

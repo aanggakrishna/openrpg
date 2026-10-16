@@ -176,6 +176,7 @@ class FlowMixin:
                     lambda: self.confirm_profile_replace(False))
 
     def activate_profile(self):
+        self.service_interior_kind = self.life.scene if self.life.scene in ("center", "restaurant", "hotel") else None
         self.life.ensure_companion_quest()
         if self.life.companion_id:
             self.pokedex.request_animation(self.life.companion_id)
@@ -821,13 +822,8 @@ class FlowMixin:
         if pg.mixer.get_init():
             audio_path=ROOT/'assets'/'team_rocket'/'team_rocket_video_audio.ogg'
             if audio_path.is_file():
-                try:
-                    pg.mixer.music.load(str(audio_path))
-                    pg.mixer.music.set_volume(.28*self.life.music_volume)
-                    pg.mixer.music.play()
-                    self._music_key='rocket_video'
-                except pg.error:
-                    pass
+                self.start_background_music(audio_path,'rocket_video',
+                                            .28*self.life.music_volume,loops=0)
 
     def stop_rocket_video_audio(self,fade_ms=180):
         if pg.mixer.get_init() and getattr(self,'_music_key',None)=='rocket_video':

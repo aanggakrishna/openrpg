@@ -59,6 +59,21 @@ class GBAAssetsTests(unittest.TestCase):
             world.interior(canvas,scene)
             self.assertNotEqual(canvas.get_at((640,400)),pg.Color('black'))
 
+    def test_service_interiors_use_distinct_fire_red_maps_and_aligned_doors(self):
+        world=GBAWorld()
+        signatures={}
+        for scene in ('center','restaurant','hotel'):
+            room=world.interiors[scene]
+            self.assertEqual(room.get_size(),(1280,800))
+            signatures[scene]=tuple(tuple(room.get_at(point))
+                                    for point in ((640,400),(320,300),(960,560)))
+            anchors=world.service_anchors(scene)
+            self.assertLess(abs(anchors['entry'][0]-anchors['exit'][0]),1)
+            self.assertLess(anchors['entry'][1],anchors['exit'][1])
+            self.assertLess(abs(anchors['npc'][0]-anchors['exit'][0])+
+                            abs(anchors['npc'][1]-anchors['exit'][1]),800)
+        self.assertEqual(len(set(signatures.values())),3)
+
     def test_all_sanctuary_buildings_and_service_signs_are_separated(self):
         for index, zone in enumerate(RESERVE_ZONES):
             layout=reserve_layout(index)

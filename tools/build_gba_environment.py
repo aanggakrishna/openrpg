@@ -121,4 +121,28 @@ def main():
             result.paste(rgba,(i%32*8,i//32*8))
         result.save(DEST / f'arena_{kind}.png')
 
+    # Complete, playable interior backdrops from canonical FireRed maps.
+    # The map block IDs reference both the shared Building tileset and each
+    # room's secondary tileset; compile them together before nearest-neighbor
+    # scaling so the original GBA pixel grid remains crisp in the 1280x800 UI.
+    layouts = json.loads((SOURCE/'data/layouts/layouts.json').read_text())['layouts']
+    interior_maps = {
+        'center': ('PokemonCenter_1F_Layout', 'PokemonCenter_1F', 'pokemon_center'),
+        'hotel': ('CeladonCity_Hotel_Layout', 'CeladonCity_Hotel', 'restaurant_hotel'),
+        'restaurant': ('CeladonCity_Restaurant_Layout', 'CeladonCity_Restaurant', 'restaurant_hotel'),
+    }
+    for name, (layout_name, map_name, secondary) in interior_maps.items():
+        layout = next(row for row in layouts if row.get('name') == layout_name)
+        tiles = Tileset('building', secondary)
+        raw = (SOURCE/layout['blockdata_filepath']).read_bytes()
+        room = Image.new('RGBA', (layout['width']*16, layout['height']*16))
+        for j, (entry,) in enumerate(struct.iter_unpack('<H', raw)):
+            room.paste(tiles.block(entry & 1023),
+                       ((j % layout['width'])*16, (j // layout['width'])*16))
+        scale = min(4, 1280 // room.width, 800 // room.height)
+        room = room.resize((room.width*scale, room.height*scale), Image.Resampling.NEAREST)
+        frame = Image.new('RGBA', (1280, 800), '#192d32')
+        frame.alpha_composite(room, ((1280-room.width)//2, (800-room.height)//2))
+        frame.save(DEST/f'interior_{name}.png')
+
 if __name__ == '__main__': main()
