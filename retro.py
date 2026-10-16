@@ -1,12 +1,12 @@
 """Shared pixel UI. Rendering only: no simulation or input state lives here."""
 import pygame as pg
 
-INK = (19, 25, 46)
-PANEL = (31, 43, 69)
-EDGE = (88, 111, 146)
-CREAM = (255, 241, 204)
-MUTED = (164, 184, 207)
-GREEN = (117, 224, 166)
+INK = (23, 45, 49)
+PANEL = (35, 64, 67)
+EDGE = (105, 150, 141)
+CREAM = (250, 246, 225)
+MUTED = (184, 208, 199)
+GREEN = (144, 232, 184)
 GOLD = (255, 204, 103)
 RED = (245, 116, 109)
 
@@ -46,13 +46,11 @@ def panel(surface, rect, color, border=None):
         color = INK if sum(color[:3]) < 130 else PANEL
     light = sum(color[:3]) > 570
     outline = border or (EDGE if not light else GOLD)
-    pg.draw.rect(surface, (9, 14, 28), r.move(4, 4))
-    pg.draw.rect(surface, outline, r)
-    pg.draw.rect(surface, color, r.inflate(-4, -4))
-    pg.draw.line(surface, (255, 229, 170) if light else (65, 85, 118),
+    pg.draw.rect(surface, (15, 32, 34), r.move(2, 3), border_radius=6)
+    pg.draw.rect(surface, outline, r, border_radius=6)
+    pg.draw.rect(surface, color, r.inflate(-4, -4), border_radius=4)
+    pg.draw.line(surface, (255, 255, 245) if light else (64, 96, 93),
                  (r.left + 4, r.top + 4), (r.right - 5, r.top + 4), 2)
-    for x, y in ((r.left, r.top), (r.right-3, r.top), (r.left, r.bottom-3), (r.right-3, r.bottom-3)):
-        pg.draw.rect(surface, INK, (x, y, 3, 3))
 
 
 def pixelate(surface, factor=2):

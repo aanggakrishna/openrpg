@@ -37,6 +37,23 @@ class OnlineTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.world.action(self.v,dict(action='reply',offer=offer,accept=True))
         again=self.world.connect(dict(token=self.a['token']))
         self.assertEqual(again['me']['money'],115)
+
+    def test_lobby_server_listing_privacy_and_owner_start(self):
+        self.world.action(self.u,dict(action='create_server',name='Alice Arena',room_code='secret',private=True))
+        listing=self.world.snapshot(self.u)['servers']
+        self.assertEqual(len(listing),1)
+        server=listing[0]
+        self.assertEqual((server['name'],server['owner'],server['players'],server['started']),('Alice Arena','Alice',1,False))
+        with self.assertRaises(ValueError):
+            self.world.action(self.v,dict(action='join_server',server=server['id'],room_code='wrong'))
+        self.world.action(self.v,dict(action='join_server',server=server['id'],room_code='secret'))
+        self.assertEqual(self.world.snapshot(self.v)['room'],'server:'+server['id'])
+        with self.assertRaises(ValueError):self.world.action(self.v,dict(action='start_server'))
+        self.world.action(self.u,dict(action='start_server'))
+        self.assertTrue(self.world.snapshot(self.u)['servers'][0]['started'])
+        self.world.action(self.u,dict(action='leave_server'))
+        self.assertFalse(self.world.snapshot(self.v)['servers'])
+        self.assertEqual(self.world.snapshot(self.v)['room'],'lobby')
     def test_dungeon_lock_waves_and_progress(self):
         with self.assertRaises(ValueError):self.world.action(self.u,dict(action='room',room='dungeon:2'))
         self.world.action(self.u,dict(action='room',room='dungeon:1'));self.world.action(self.u,dict(action='ready'));self.world.action(self.u,dict(action='raid'))

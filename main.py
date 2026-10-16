@@ -128,7 +128,7 @@ class LegacyGame:
         self.battle_flash = pg.Surface((W, H), pg.SRCALPHA)
         self.clock = pg.time.Clock()
         self.font = retro.font(24)
-        self.small = retro.font(20)
+        self.small = retro.font(18)
         self.tiny = retro.font(16)
         self.big = retro.font(48)
         self.logo_font = retro.font(80)
@@ -218,6 +218,9 @@ class LegacyGame:
         self.countdown_tts_loading = True
         self.countdown_tts_channel = None
         self.hospitality_kind = "restaurant"
+        self.service_interior_kind = None
+        self.service_interior_return_mode = None
+        self.service_menu_selected = 0
         self.last_hit_cry = 0.0
         self._last_pokemon_cry = (None, 0.0)
         self._music_key = None
@@ -260,7 +263,6 @@ class LegacyGame:
         self.poke_surfaces = {}
         self.poke_battle_surfaces = {}
         self.poke_animations = {}
-        self.gba_poke_surfaces = self.load_gba_pokemon_sprites()
         # Reuse rasterized sprites and emoji across frames instead of copying,
         # resizing, and pixelating the same surfaces at 60 FPS.
         self.pokemon_render_cache = {}
@@ -404,7 +406,9 @@ class LegacyGame:
         # feel inhabited while keeping each merchant available predictably.
         result = []
         routes = {"Sari": (415, 350, "Woman"), "Budi": (902, 350, "Hunter"),
-                  "Joy": (673, 594, "OldMan")}
+                  # Keep Joy in the open market plaza, clear of both shop
+                  # footprints and the old hotel/service-point collision box.
+                  "Joy": (540, 548, "OldMan")}
         for name, (start, end, service) in NPC_SCHEDULES.items():
             if not start <= self.life.hour < end:
                 continue
@@ -515,9 +519,9 @@ class LegacyGame:
 
     def label(self, text, x, y):
         text = self.tr(text)
-        size = self.small.size(text)
-        self.box((x - size[0] / 2 - 12, y - 4, size[0] + 24, 27), CREAM, 6)
-        self.text(text, x, y + 10, font=self.small, center=True)
+        size = self.tiny.size(text)
+        self.box((x - size[0] / 2 - 10, y - 3, size[0] + 20, 24), CREAM, 6, retro.EDGE)
+        self.text(text, x, y + 9, font=self.tiny, center=True)
 
     def stations(self):
         if self.life.scene == "outdoors":
@@ -903,7 +907,7 @@ class LegacyGame:
                             "market":((700,610),(960,610)),"coast":((280,500),(1050,500)),"mountain":((290,560),(1000,560))}
             trees += [pg.Rect(x-38,y-30,76,40) for x,y in service_points.get(scene,())]
         if scene == "outdoors":
-            return trees + [pg.Rect(181, 170, 340, 132), pg.Rect(824, 176, 217, 118), pg.Rect(930, 477, 288, 91), pg.Rect(1026, 568, 192, 100)]
+            return trees + [pg.Rect(297, 180, 176, 122), pg.Rect(842, 176, 176, 118), pg.Rect(930, 477, 288, 91), pg.Rect(1026, 568, 192, 100)]
         if scene == "forest":
             return trees
         if scene == "reserve":
@@ -913,9 +917,9 @@ class LegacyGame:
         if scene == "mountain":
             return trees
         if scene == "market":
-            return trees + [pg.Rect(320, 220, 194, 112), pg.Rect(809, 220, 194, 112), pg.Rect(576, 493, 194, 83)]
+            return trees + [pg.Rect(320, 220, 194, 112), pg.Rect(809, 220, 194, 112)]
         if scene == "house":
-            return [pg.Rect(204, 194, 301, 71), pg.Rect(539, 335, 150, 75), pg.Rect(832, 388, 207, 49)]
+            return [pg.Rect(204, 194, 301, 71), pg.Rect(539, 335, 150, 150), pg.Rect(842, 388, 160, 80)]
         return [pg.Rect(284, 216, 176, 150), pg.Rect(804, 227, 253, 98)]
 
     def ensure_walkable_position(self):
@@ -1190,7 +1194,11 @@ class LegacyGame:
             self.mode = "secret_puzzle"
             return
         if action == "online_gym":
-            self.set_mode("online_connect")
+            self.play_action_sound("portal-online", .38)
+            # The configured WebRTC endpoint is loaded from local preferences;
+            # skip the redundant URL/code form and open server discovery.
+            self.online_transport = "webrtc"
+            self.connect_online()
             return
         if action == "dungeon_hub":
             self.transition("dungeon_hub", 640, 555)
@@ -1232,7 +1240,7 @@ class LegacyGame:
         if action in ("restaurant", "hotel"):
             self.play_action_sound("menu-open", .32)
             self.hospitality_kind = action
-            self.mode = "hospitality"
+            self.open_service_interior(action)
             return
         if action.startswith("gate:"):
             self.travel_reserve_gate(action.split(":", 1)[1])
@@ -1274,13 +1282,7 @@ class LegacyGame:
             self.toggle_mount()
             return
         if action == "center":
-            self.play_action_sound("menu-open", .32)
-            self.mode = "center"
-            self.center_selected = 0
-            self.center_message = "Selamat datang! Kami bisa memeriksa dan memulihkan timmu."
-            for pokemon_id in self.life.pokemon_party[:8]:
-                self.pokedex.request(pokemon_id)
-                self.pokedex.request_species(pokemon_id)
+            self.open_service_interior("center")
             return
         if action == "wood":
             if self.attack_cooldown <= 0:
@@ -1815,17 +1817,26 @@ class LegacyGame:
         return team or [int(ident) for ident in self.life.pokemon_party[:3]] or [1]
 
     def random_battle_platforms(self):
-        """Scatter climbable rock ledges across the player's side of each arena."""
+        """Build a readable, varied climb route rather than a random wall ladder."""
+        style = getattr(self, "_building_arena_style", "meadow")
+        materials = {"meadow": ("log", "moss", "earth"), "water": ("reef", "driftwood", "ice"),
+                     "cave": ("rock", "crystal", "ledge"), "volcano": ("basalt", "lava", "rock"),
+                     "sky": ("cloud", "stone", "cloud")}
+        count = self.pokemon_rng.randint(4, 6)
+        slots = [190 + i * (900 // max(1, count - 1)) for i in range(count)]
+        heights = [0, -64, -100, -132]
         platforms = []
-        attempts = 0
-        target_count = self.pokemon_rng.randint(4, 7)
-        while len(platforms) < target_count and attempts < 30:
-            attempts += 1
-            x = self.pokemon_rng.randint(150, 1150)
-            if any(abs(x - item["x"]) < 52 for item in platforms):
-                continue
-            platforms.append({"x": x, "width": self.pokemon_rng.randint(68, 138),
-                              "height": self.pokemon_rng.choice((-58, -92, -126, -160, -194))})
+        previous_height = 0
+        for index, x in enumerate(slots):
+            choices = [height for height in heights if abs(height - previous_height) <= 118]
+            height = self.pokemon_rng.choice(choices or heights[:3])
+            if index == 0 or index == len(slots) - 1:
+                height = self.pokemon_rng.choice((0, -64, -100))
+            previous_height = height
+            platforms.append({"x": x + self.pokemon_rng.randint(-55, 55),
+                              "width": self.pokemon_rng.randint(104, 190),
+                              "height": height, "material": self.pokemon_rng.choice(materials.get(style, materials["meadow"])),
+                              "shape": self.pokemon_rng.choice(("flat", "broken", "rounded"))})
         return platforms
 
     def begin_pokemon_battle(self, pokemon_id, trainer=None, wild=None):
@@ -1866,8 +1877,10 @@ class LegacyGame:
         self.save_current()
         habitat=biome_at(self.life.scene,self.life.x,self.life.y)
         arena_style=("water" if habitat in ("coast","swamp","deepsea") else "sky" if habitat=="sky"
-                     else "cave" if habitat in ("cave","crystal","volcano","dragon_valley") else "meadow")
+                     else "volcano" if habitat=="volcano"
+                     else "cave" if habitat in ("cave","crystal","dragon_valley") else "meadow")
         battle_weather=weather_for(self.life.scene,self.life.x,self.life.y,self.life.day,self.life.hour,self.life.weather_override)
+        self._building_arena_style = arena_style
         self.battle = {"wild_id": pokemon_id, "opponent_lineup": opponent_lineup, "opponent_index": 0,
                        "music_track": ("team_rocket_motto.mp3" if trainer and trainer.get("rocket_event")
                                        else self.choose_battle_music()),
@@ -1890,6 +1903,7 @@ class LegacyGame:
                        "fruits": [],
                        "platforms": self.random_battle_platforms(),
                        "arena_style": arena_style, "battle_weather": battle_weather, "api_moves": [],
+                       "ambient_hazards": [], "hazard_timer": self.pokemon_rng.uniform(8.0, 13.0),
                        "intro": {"step": "player", "timer": 1.35, "index": 0, "cry_requested": False, "cry_played": False},
                        "rewarded": False}
         if trainer and trainer.get("rival"):
@@ -2247,6 +2261,8 @@ class LegacyGame:
                 "grunt_02": "grunt_02.ogg", "fire": "fire.ogg", "water": "water.ogg",
                 "earth": "earth.ogg", "wind": "wind.ogg", "punch": "punch.ogg",
                 "sleep": "sleep.wav",
+                "portal-online": "portal-online.wav", "server-created": "server-created.wav",
+                "server-started": "server-started.wav",
             }.get(sound_name, f"{sound_name}.wav")
         path = ROOT / "assets" / "audio" / "sfx" / "actions" / filename
         if not path.is_file():
@@ -2458,7 +2474,82 @@ class LegacyGame:
         self.notify(message)
         if message.startswith(("Makan selesai", "Minuman disajikan", "Menginap selesai")):
             self.play_action_sound({"meal": "eat", "drink": "drink"}.get(option, "sleep"), .36)
-            self.mode = "game"
+            self.mode = "service_interior" if self.service_interior_kind else "game"
+
+    def open_service_interior(self, kind):
+        self.service_interior_kind = kind
+        self.service_menu_selected = 0
+        self.service_interior_return_mode = None
+        self.mode = "service_interior"
+        self.play_action_sound("menu-open", .24)
+
+    def open_center_services(self):
+        self.service_interior_return_mode = "service_interior"
+        self.center_selected = max(0, min(self.center_selected, len(self.life.pokemon_party) - 1))
+        self.center_message = "Perawat siap memeriksa dan memulihkan timmu."
+        for pokemon_id in self.life.pokemon_party[:8]:
+            self.pokedex.request(pokemon_id)
+            self.pokedex.request_species(pokemon_id)
+        self.mode = "center"
+
+    def service_action(self, action):
+        kind = self.service_interior_kind
+        if kind == "center":
+            if action == "heal":
+                self.heal_pokemon_party()
+            elif action == "buy_balls":
+                self.trade("Pokeball", True, 5)
+            else:
+                self.open_center_services()
+        elif kind == "restaurant":
+            self.hospitality_order(action)
+        elif kind == "hotel":
+            self.hospitality_order("hotel")
+
+    def draw_service_interior(self):
+        kind = self.service_interior_kind or "center"
+        self.art.gba.interior(self.canvas, kind)
+        title, npc, subtitle = {
+            "center": ("POKÉMON CENTER", "Perawat", "Rawat Pokémon dan atur tim bersama perawat."),
+            "restaurant": ("RESTORAN", "Pelayan", "Makanan hangat untuk memulihkan kebutuhanmu."),
+            "hotel": ("POKÉMON HOTEL", "Resepsionis", "Beristirahatlah sebelum perjalanan berikutnya."),
+        }.get(kind, ("POKÉMON CENTER", "Perawat", "Selamat datang!"))
+        self.box((52, 35, 1176, 102), INK, 14, retro.EDGE)
+        self.text(title, 82, 51, retro.GOLD, self.medium)
+        self.text(subtitle, 85, 105, CREAM, self.small)
+        # FireRed-style overworld people sprites, enlarged with nearest-neighbor scaling.
+        person = {"center": "Woman", "restaurant": "Villager4", "hotel": "Woman"}[kind]
+        self.art.character(self.canvas, 902, 450, 0, 3.3, int(self.life.elapsed * 4), False,
+                           "down", npc=person)
+        self.box((784, 500, 242, 55), (35, 61, 62), 9, retro.EDGE)
+        self.text(npc, 905, 514, CREAM, self.small, True)
+        self.text({"center": "Ada yang bisa saya bantu?", "restaurant": "Silakan pilih hidangan!",
+                   "hotel": "Selamat datang, Trainer!"}[kind], 905, 537, MUTED, self.tiny, True)
+        self.box((66, 190, 524, 422), (20, 39, 43), 14, retro.EDGE)
+        self.text("LAYANAN", 94, 207, GREEN, self.small)
+        if kind == "center":
+            options = [("Periksa tim & atur Pokémon", "team"),
+                       ("Pulihkan semua Pokémon", "heal"),
+                       (f"Beli Poké Ball ×5 · {BUY['Pokeball'] * 5} koin", "buy_balls")]
+        elif kind == "restaurant":
+            options = [("Makan hangat · 10 koin", "meal"), ("Minum segar · 5 koin", "drink")]
+        else:
+            options = [("Menginap 8 jam · 15 koin", "hotel")]
+        for index, (label, action) in enumerate(options):
+            y = 256 + index * 64
+            self.button(label, (94, y, 464, 54), lambda value=action: self.service_action(value),
+                        index == self.service_menu_selected)
+            self.text("01" if index == 0 else "02", 108, y + 17, retro.GOLD, self.tiny)
+        if kind == "center":
+            self.text("Tim Pokémon", 96, 460, CREAM, self.small)
+            for index, pokemon_id in enumerate(self.life.pokemon_party[:4]):
+                name = (self.pokemon_data(pokemon_id) or {}).get("name", f"Pokémon {pokemon_id}").title()
+                self.text(f"{index + 1}. {name}", 105, 488 + index * 25, MUTED, self.tiny)
+        else:
+            self.text(f"Koin tersedia: {self.life.money}", 96, 430, CREAM, self.small)
+            self.text("Pilihan layanan akan diproses oleh NPC.", 96, 466, MUTED, self.tiny)
+        self.text("↑ ↓ pilih   Enter bicara   Esc keluar", 94, 570, GREEN, self.tiny)
+        self.button("Keluar · Esc", (858, 681, 280, 54), self.back, True)
 
     def draw_hospitality(self):
         restaurant = self.hospitality_kind == "restaurant"
@@ -3264,42 +3355,8 @@ class LegacyGame:
         size = (max(1, round(surface.get_width() * scale)), max(1, round(surface.get_height() * scale)))
         return pg.transform.scale(surface, size)
 
-    def load_gba_pokemon_sprites(self):
-        """Load the complete local FireRed sprite set by canonical species id.
-
-        FireRed covers the original 386 species. Later-generation Pokémon
-        retain the app's existing cache fallback, while every GBA-era sprite
-        is rendered from the extracted local source without a network request.
-        """
-        root = ROOT / "assets" / "gba" / "pokemon"
-        by_name = {entry["name"]: int(entry["id"]) for entry in pokemon_db.catalog()}
-        sprites = {}
-        if not root.is_dir():
-            return sprites
-        for path in root.glob("*/front.png"):
-            # FireRed's folder spelling uses underscores where PokéAPI uses
-            # hyphens (for example nidoran_f and mr_mime).
-            ident = by_name.get(path.parent.name.replace("_", "-"))
-            if ident is None:
-                continue
-            try:
-                sprites[ident] = pg.image.load(path).convert_alpha()
-            except (OSError, pg.error):
-                continue
-        return sprites
-
     def pokemon_surface(self, pokemon_id, target_size=96):
         ident = int(pokemon_id)
-        gba_source = self.gba_poke_surfaces.get(ident)
-        if gba_source is not None:
-            key = (ident, int(target_size), "gba")
-            cached = self.pokemon_render_cache.get(key)
-            if cached is not None:
-                return cached
-            surface = self.fit_pokemon_sprite(gba_source, target_size)
-            retro.pixelate(surface, 2)
-            self.pokemon_render_cache[key] = surface
-            return surface
         frames = self.poke_animations.get(ident)
         frame_index = -1
         source = None
@@ -3501,13 +3558,7 @@ class LegacyGame:
         if self.life.scene != "reserve" or math.hypot(self.life.x - 160, self.life.y - 690) > 115:
             self.notify("Pusat Pokémon berada di bangunan putih-merah dekat pintu masuk suaka.")
             return
-        self.center_selected = max(0, min(self.center_selected, len(self.life.pokemon_party) - 1))
-        self.play_action_sound("menu-open", .24)
-        self.center_message = "Pemeriksaan siap. Pilih anggota tim di kiri."
-        for pokemon_id in self.life.pokemon_party:
-            self.pokedex.request(pokemon_id)
-            self.pokedex.request_species(pokemon_id)
-        self.mode = "center"
+        self.open_service_interior("center")
 
     def center_pokemon_id(self):
         if not self.life.pokemon_party:
@@ -3946,7 +3997,7 @@ class LegacyGame:
         self.art.house(self.canvas)
         self.draw_home_furnishings()
         for title, x, y in [("RUMAH / RUANG KELUARGA", 640, 167), ("AIR", 248, 294),
-                            ("DAPUR", 361, 294), ("MEJA MAKAN", 625, 577), ("SOFA", 919, 503),
+                            ("DAPUR", 361, 294), ("MEJA MAKAN", 625, 577), ("KURSI", 919, 503),
                             ("KAMAR", 1015, 273), ("DEKORASI · E", 680, 265), ("E · KELUAR", 640, 679)]:
             self.label(title, x, y)
 
@@ -4211,6 +4262,9 @@ class LegacyGame:
             self.label(title, x, y)
 
     def draw_world(self):
+        if self.mode == "service_interior":
+            self.canvas.fill((18, 27, 23))
+            return
         if self.life.scene == "reserve":
             self.draw_reserve_world()
             return
@@ -4246,13 +4300,8 @@ class LegacyGame:
         for action, x, y, _ in self.stations():
             if action not in ("restaurant", "hotel"):
                 continue
-            roof = (205, 116, 69) if action == "restaurant" else (79, 127, 174)
-            pg.draw.ellipse(self.canvas, (62, 70, 54), (x - 46, y + 17, 92, 16))
-            pg.draw.rect(self.canvas, (222, 207, 170), (x - 38, y - 30, 76, 49))
-            pg.draw.rect(self.canvas, (105, 74, 54), (x - 47, y - 39, 94, 15))
-            pg.draw.polygon(self.canvas, roof, [(x - 48, y - 33), (x, y - 58), (x + 48, y - 33)])
-            pg.draw.rect(self.canvas, (105, 74, 54), (x - 7, y - 11, 14, 30))
-            self.label("RESTORAN" if action == "restaurant" else "HOTEL", x, y - 65)
+            self.art.gba.object(self.canvas, action, x, y + 19, 112)
+            self.label("RESTORAN" if action == "restaurant" else "HOTEL", x, y - 100)
         station = self.nearest()
         if station:
             pg.draw.ellipse(self.canvas, (241, 227, 168), (station[1] - 24, station[2] - 7, 48, 17), 3)
@@ -4497,7 +4546,6 @@ class LegacyGame:
             self.label("POKÉMON CENTER · E", sx(zone["x"] + RESERVE_ZONE_W // 2),
                        sy(zone["y"] + RESERVE_ZONE_H // 2 + 155) - 114)
         self.label("ARENA TANTANGAN", sx(1280), sy(800) - 150)
-        self.label("< KEMBALI", sx(92), sy(800) - 26)
         if station:
             pg.draw.ellipse(self.canvas, (241, 227, 168), (sx(station[1]) - 24, sy(station[2]) - 7, 48, 17), 3)
         view = copy.copy(self.life)
@@ -4861,7 +4909,8 @@ class LegacyGame:
 
     def hud(self, station):
         self.box((24, 18, 1232, 113), INK, 15)
-        self.text("OPENRPG", 44, 30, CREAM, self.medium)
+        self.text("OPENRPG", 44, 28, CREAM, self.medium)
+        self.text("FIELD JOURNAL", 231, 23, GREEN, self.tiny)
         location = {"outdoors": "Rumah & peternakan", "house": "Ruang keluarga", "bedroom": "Kamar", "forest": "Hutan liar", "market": "Market", "reserve": f"Suaka Pokémon · {len(RESERVE_ZONES)} bioma", "coast": "Pantai pasang surut", "mountain": "Pegunungan kabut", "dungeon_hub": "Hub utara · Gym & dungeon", "local_dungeon": self.local_dungeon_name(min(10, max(1, self.life.local_dungeon_tier)))}[self.life.scene]
         # Keep the location subtitle in its own header column so it never
         # collides with the date and weather fields beside it.
@@ -4870,18 +4919,25 @@ class LegacyGame:
         self.text(location, 45, 64, MUTED, self.tiny)
         self.text(f"${self.life.money} / {'KUDA' if self.life.mounted else 'JALAN'}", 45, 92, retro.GOLD, self.small)
         minute = int(self.life.minutes)
-        self.text(f"Hari {self.life.day:02} · {minute // 60:02}:{minute % 60:02}", 230, 31, CREAM)
-        self.text(self.life.period + " · " + self.life.weather, 230, 60, MUTED, self.small)
+        self.text(f"Hari {self.life.day:02} · {minute // 60:02}:{minute % 60:02}", 230, 47, CREAM, self.small)
+        self.text(self.life.period + " · " + self.life.weather, 230, 72, MUTED, self.small)
         values = [("HP", self.life.health)] + list(self.life.stats.items())
         for i, (name, value) in enumerate(values):
             x = 456 + i * 121
-            self.text(name, x, 35, CREAM, self.small)
-            self.text(str(int(value)), x + 80, 35, CREAM, self.small)
-            retro.meter(self.canvas, (x, 65, 107, 12), value, 100, retro.RED if name == "HP" else GREEN)
-        weapon = self.life.weapon or "Tanpa senjata"
-        self.text(f"{weapon} · SPACE serang · B terminal", 456, 94, CREAM, self.tiny)
+            self.text(name, x, 32, MUTED, self.tiny)
+            self.text(str(int(value)), x + 79, 30, CREAM, self.small)
+            retro.meter(self.canvas, (x, 57, 107, 10), value, 100, retro.RED if name == "HP" else GREEN)
+        self.text("SPACE · aksi     B · terminal", 456, 94, MUTED, self.tiny)
         status = "PC AKTIF" if self.terminal.running else "PROMPT JALAN" if self.phone_terminal.phone_marker else "PC SIAP"
-        self.text(status, 1100, 36, GREEN if self.terminal.running or self.phone_terminal.phone_marker else MUTED, self.small)
+        self.text(status, 982, 36, GREEN if self.terminal.running or self.phone_terminal.phone_marker else MUTED, self.small)
+        self.box((1073, 58, 76, 66), retro.PANEL, 7, retro.EDGE)
+        ball_x, ball_y = 1111, 81
+        pg.draw.circle(self.canvas, (218, 76, 79), (ball_x, ball_y), 16)
+        pg.draw.rect(self.canvas, (244, 237, 216), (ball_x - 15, ball_y, 30, 12))
+        pg.draw.line(self.canvas, (54, 48, 39), (ball_x - 15, ball_y), (ball_x + 15, ball_y), 3)
+        pg.draw.circle(self.canvas, (239, 218, 165), (ball_x, ball_y), 5)
+        pg.draw.circle(self.canvas, (54, 48, 39), (ball_x, ball_y), 5, 2)
+        self.text(f"×{self.life.bag.get('Pokeball', 0)}", 1111, 108, CREAM, self.tiny, True)
         companion_id = int(getattr(self.life, "companion_id", 0) or 0)
         companion_sprite = (self.pokemon_surface(companion_id, 42)
                             if companion_id in self.life.pokemon_party else None)
@@ -4896,9 +4952,9 @@ class LegacyGame:
         if self.phone_unread:
             self.text("HP · PESAN BARU", 985, 61, GREEN, self.small)
         if self.mode == "game":
-            self.button("Profil · U", (792, 81, 105, 35), lambda: self.open_overlay("player_profile"))
-            self.button("Misi · J", (902, 81, 105, 35), lambda: self.open_overlay("daily_quests"))
-            self.button("Jurnal · L", (1012, 81, 105, 35), lambda: self.open_overlay("journal"))
+            self.button("Profil · U", (732, 81, 105, 35), lambda: self.open_overlay("player_profile"))
+            self.button("Misi · J", (842, 81, 105, 35), lambda: self.open_overlay("daily_quests"))
+            self.button("Jurnal · L", (952, 81, 105, 35), lambda: self.open_overlay("journal"))
             # Time/map/weather controls live together in the bottom toolbar.
         objective = self.tutorial_objective() if self.life.tutorial_active else None
         if objective:
@@ -5254,6 +5310,9 @@ class LegacyGame:
 
     def overlay(self):
         self.buttons = []
+        if self.mode == "service_interior":
+            self.draw_service_interior()
+            return
         if self.mode == "gate_trial":
             self.draw_gate_trial()
             return
@@ -5994,7 +6053,7 @@ class LegacyGame:
         team = self.pokemon_data(battle["player_id"])
         b = battle
         arena = b.get("arena_style", "meadow")
-        retro.arena(self.canvas, arena)
+        self.art.gba.arena(self.canvas, arena)
         weather = b.get("battle_weather", "Cerah")
         # Compact animated weather pass over the already cached stage art.
         if weather in ("Hujan", "Badai"):
@@ -6079,22 +6138,80 @@ class LegacyGame:
         ground = 606
         for platform in b.get("platforms", []):
             px, py = int(platform["x"]), ground + int(platform["height"])
-            left = px - platform["width"] // 2
-            wall_width = max(24, platform["width"] // 3)
-            wall_x = left + platform["width"] // 2 - wall_width // 2
-            pg.draw.rect(self.canvas, (100, 83, 65), (wall_x, py + 4, wall_width, ground - py + 2))
-            pg.draw.polygon(self.canvas, (137, 118, 88),
-                            [(wall_x - 6, py + 7), (wall_x + wall_width // 3, py - 5),
-                             (wall_x + wall_width + 7, py + 5), (wall_x + wall_width, ground)])
-            pg.draw.rect(self.canvas, (193, 157, 105), (left, py, platform["width"], 12), border_radius=0)
-            pg.draw.rect(self.canvas, (231, 205, 145), (left, py, platform["width"], 4), border_radius=0)
-            for rung_y in range(py + 22, ground - 5, 22):
-                pg.draw.line(self.canvas, (197, 166, 119), (wall_x + 3, rung_y),
-                             (wall_x + wall_width - 3, rung_y), 3)
+            width = platform["width"]
+            left, right = px - width // 2, px + width // 2
+            material = platform.get("material", "rock")
+            palette = {"log": ((105, 75, 47), (172, 132, 76), (89, 125, 61)),
+                       "moss": ((88, 112, 66), (153, 174, 101), (73, 103, 54)),
+                       "earth": ((111, 79, 54), (177, 137, 88), (111, 137, 75)),
+                       "reef": ((55, 105, 119), (104, 183, 181), (46, 129, 146)),
+                       "driftwood": ((111, 88, 66), (191, 156, 105), (76, 143, 153)),
+                       "ice": ((107, 158, 180), (211, 237, 242), (127, 195, 215)),
+                       "rock": ((74, 85, 94), (142, 153, 158), (68, 79, 89)),
+                       "crystal": ((78, 82, 143), (164, 170, 231), (102, 185, 216)),
+                       "ledge": ((90, 89, 82), (174, 158, 126), (109, 102, 91)),
+                       "basalt": ((63, 64, 69), (137, 104, 95), (209, 83, 53)),
+                       "lava": ((96, 53, 44), (228, 104, 53), (255, 176, 67)),
+                       "cloud": ((116, 153, 168), (229, 239, 232), (168, 202, 206)),
+                       "stone": ((109, 122, 130), (200, 211, 201), (132, 163, 172))}
+            shadow, face, accent = palette.get(material, palette["rock"])
+            bottom = max(py + 18, min(ground + 4, py + 52 + (width % 21)))
+            taper = max(8, width // 5)
+            pg.draw.polygon(self.canvas, shadow, ((left + taper, py + 9), (right - taper, py + 9),
+                                                  (right + taper // 2, bottom), (left - taper // 2, bottom)))
+            if platform.get("shape") == "broken":
+                cap=((left+4,py+7),(left+width//5,py-2),(left+width//3,py+5),
+                     (left+width//2,py-3),(left+width*2//3,py+4),(right-7,py-1),(right-3,py+12))
+                top_line=[(left+5,py+6),(left+width//5,py-3),(left+width//3,py+4),
+                          (left+width//2,py-4),(left+width*2//3,py+3),(right-8,py-2)]
+            else:
+                cap=((left+5,py+3),(right-5,py+3),(right-taper,py+18),(left+taper,py+18))
+                top_line=[(left+4,py+2),(right-4,py+2)]
+            pg.draw.polygon(self.canvas, face, cap)
+            if platform.get("shape") == "rounded":
+                pg.draw.ellipse(self.canvas, accent, (left+8,py-1,width-16,9))
+            else:
+                pg.draw.lines(self.canvas, accent, False, top_line, 5)
+            for notch in range(2):
+                nx = left + width * (notch + 1) // 3
+                pg.draw.line(self.canvas, shadow, (nx, py + 20), (nx - 5, min(bottom, py + 80)), 3)
         # Seven-second elemental marks live on the arena itself.  They render
         # before fighters, so water, flame, bushes and stone walls feel like
         # part of the stage rather than an icon glued over a Pokémon.
         self.draw_arena_effects(b, ground)
+        # Natural hazards are telegraphed first, then animate across the stage.
+        for hazard in b.get("ambient_hazards", []):
+            hx = int(hazard["x"])
+            if hazard["phase"] == "warning":
+                pulse = 42 + int(5 * math.sin(self.frame * .35))
+                warning = (247, 195, 84) if hazard["kind"] != "flood" else (106, 216, 239)
+                pg.draw.ellipse(self.canvas, warning, (hx-pulse, ground-17, pulse*2, 20), 3)
+                pg.draw.line(self.canvas, warning, (hx, ground-70), (hx, ground-21), 2)
+                self.text(hazard["kind"].replace("rockfall", "BATU JATUH").upper(),
+                          hx, ground-83, warning, self.tiny, True)
+                continue
+            kind = hazard["kind"]
+            if kind in ("rockfall", "meteor"):
+                progress = 1-min(1, hazard["timer"]/(1.65 if kind == "meteor" else 1.65))
+                y = int(-55 + progress * 605)
+                color = (222, 119, 76) if kind == "meteor" else (121, 126, 124)
+                pg.draw.ellipse(self.canvas, (48, 50, 52), (hx-47, ground-10, 94, 18))
+                if kind == "meteor":
+                    pg.draw.line(self.canvas, (255, 174, 93), (hx+14, y-65), (hx, y), 10)
+                    pg.draw.circle(self.canvas, (255, 206, 127), (hx, y), 20)
+                else:
+                    pg.draw.polygon(self.canvas, color, ((hx-20,y-24),(hx+12,y-32),(hx+27,y-8),
+                                                         (hx+12,y+21),(hx-18,y+17),(hx-29,y-3)))
+                    pg.draw.line(self.canvas, (176, 177, 164), (hx-12,y-12), (hx+5,y-19), 3)
+            elif kind == "gust":
+                for row in range(7):
+                    drift = int((self.frame*13 + row*37) % 90)
+                    y = ground - 55 - row*36
+                    pg.draw.arc(self.canvas, (162, 215, 224), (hx-55+drift, y-12, 128, 32), .3, 2.8, 3)
+            elif kind == "flood":
+                for row in range(4):
+                    y = ground - row*13
+                    pg.draw.arc(self.canvas, (90, 197, 224), (hx-85, y-26, 170, 54), .1, 3.0, 5)
         for fruit in b.get("fruits", []):
             fx, fy = int(fruit["x"]), ground + int(fruit.get("y", 0)) - 20
             pg.draw.circle(self.canvas, (255, 238, 165), (fx, fy), 14, 2)
@@ -6690,7 +6807,14 @@ class LegacyGame:
 
     def back(self):
         self.play_action_sound("ui-back", .2)
-        self.mode = self.settings_return_mode if self.mode == "settings" else "game"
+        if self.mode == "service_interior":
+            self.mode = "game"
+            self.service_interior_kind = None
+        elif self.mode in ("center", "hospitality") and self.service_interior_return_mode == "service_interior":
+            self.mode = "service_interior"
+            self.service_interior_return_mode = None
+        else:
+            self.mode = self.settings_return_mode if self.mode == "settings" else "game"
         pg.key.stop_text_input()
         pg.key.set_repeat()
 
@@ -6824,7 +6948,7 @@ class LegacyGame:
                         return
         if event.type == pg.KEYDOWN:
             if self.mode in ("inventory", "shop", "weather", "dex", "center", "encounter",
-                             "pokemon_info", "daily_quests", "journal", "secret_puzzle", "evolution", "settings", "hospitality", "home_decor", "map", "gate_trial"):
+                             "pokemon_info", "daily_quests", "journal", "secret_puzzle", "evolution", "settings", "hospitality", "service_interior", "home_decor", "map", "gate_trial"):
                 if event.key in (pg.K_UP, pg.K_DOWN, pg.K_LEFT, pg.K_RIGHT, pg.K_1, pg.K_2, pg.K_3,
                                  pg.K_TAB, pg.K_PAGEUP, pg.K_PAGEDOWN):
                     self.play_action_sound("ui-click", .16)
@@ -6943,6 +7067,21 @@ class LegacyGame:
                     self.hospitality_order("drink")
                 elif event.key in (pg.K_ESCAPE, pg.K_RETURN):
                     self.back()
+            elif self.mode == "service_interior":
+                option_count = (3 if self.service_interior_kind == "center" else
+                                2 if self.service_interior_kind == "restaurant" else 1)
+                if event.key in (pg.K_UP, pg.K_DOWN):
+                    delta = -1 if event.key == pg.K_UP else 1
+                    self.service_menu_selected = (self.service_menu_selected + delta) % option_count
+                elif event.key in (pg.K_ESCAPE, pg.K_b):
+                    self.back()
+                elif event.key in (pg.K_RETURN, pg.K_KP_ENTER):
+                    if self.service_interior_kind == "center":
+                        self.service_action(("team", "heal", "buy_balls")[self.service_menu_selected])
+                    elif self.service_interior_kind == "restaurant":
+                        self.service_action("meal" if self.service_menu_selected == 0 else "drink")
+                    else:
+                        self.service_action("hotel")
             elif self.mode == "daily_quests":
                 if event.key in (pg.K_ESCAPE, pg.K_j, pg.K_RETURN):
                     self.back()

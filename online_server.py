@@ -12,6 +12,10 @@ import threading
 import time
 from online_combat import Battle, creature
 from world_regions import online_step
+try:
+    from webrtc_transport import WebRTCBridge, AVAILABLE as WEBRTC_AVAILABLE
+except ImportError:
+    WEBRTC_AVAILABLE = False
 
 
 class World:
@@ -24,6 +28,10 @@ class World:
         self.chat = deque(maxlen=100)
         self.offers = {}
         self.matches = {}
+        # Session servers are intentionally ephemeral: their owner controls
+        # the room and they disappear when that owner leaves. Account progress
+        # remains in the normal persistent account database.
+        self.servers = {}
         self.join_code = join_code
         self.closed = threading.Event()
 
@@ -53,7 +61,7 @@ class World:
         u=self.users[key]
         u.setdefault('wins',0)
         self.leave_match(u['id']);self.cancel_offers(u['id'])
-        self.presence[u['id']] = dict(room='gym',x=240.,y=410.,last=time.monotonic(),match=None,ready=False,keys={},chat_at=0,offer_at=0)
+        self.presence[u['id']] = dict(room='lobby',x=240.,y=410.,last=time.monotonic(),match=None,ready=False,keys={},chat_at=0,offer_at=0)
         return dict(token=token, **self.snapshot(u))
 
     def user(self, uid):
@@ -80,7 +88,55 @@ class World:
                           level=int(row.get('trainer_level',1))) for row in ranking]
         return dict(me=u,room=p['room'],players=people,chat=[c for c in self.chat if c['room']==p['room']][-7:],
                     offers=[dict(o,id=k) for k,o in self.offers.items() if u['id'] in (o['from'],o['to'])],
-                    battle=match['battle'].snapshot() if match else None,leaderboard=leaderboard)
+                    battle=match['battle'].snapshot() if match else None,leaderboard=leaderboard,
+                    servers=self.server_list(),webrtc=True)
+
+    def server_list(self):
+        rows=[]
+        for ident, server in sorted(self.servers.items(), key=lambda item: item[1]['created']):
+            owner=self.user(server['owner'])
+            if not owner:
+                continue
+            count=sum(v['room']=='server:'+ident for v in self.presence.values())
+            rows.append(dict(id=ident,name=server['name'],owner=owner['name'],owner_id=server['owner'],private=server['private'],
+                             players=count,max_players=server['max_players'],started=server['started']))
+        return rows[:40]
+
+    def close_owned_servers(self, uid):
+        for ident, server in list(self.servers.items()):
+            if server['owner'] != uid:
+                continue
+            for peer_id, presence in self.presence.items():
+                if presence['room'] == 'server:'+ident:
+                    presence.update(room='lobby',x=240.,y=410.,ready=False,keys={})
+            del self.servers[ident]
+
+    def create_server(self, u, body):
+        name=' '.join(str(body.get('name','')).split())[:28]
+        code=str(body.get('room_code',''))[:48]
+        private=bool(body.get('private',False))
+        if len(name)<3: raise ValueError('Server name must have at least 3 characters')
+        if private and len(code)<4: raise ValueError('Private server code must have at least 4 characters')
+        self.close_owned_servers(u['id'])
+        ident=secrets.token_urlsafe(6)
+        self.servers[ident]=dict(name=name,owner=u['id'],private=private,
+                                 code_hash=hashlib.sha256(code.encode()).hexdigest() if code else '',
+                                 created=time.monotonic(),started=False,max_players=16)
+        p=self.presence[u['id']]
+        p.update(room='server:'+ident,x=240.,y=410.,ready=False,keys={})
+
+    def join_server(self, u, body):
+        ident=str(body.get('server',''))
+        server=self.servers.get(ident)
+        if not server: raise ValueError('Server is no longer available')
+        p=self.presence[u['id']]
+        if self.busy(u['id']): raise ValueError('Finish or leave the battle first')
+        if sum(v['room']=='server:'+ident for v in self.presence.values())>=server['max_players']:
+            raise ValueError('Server is full')
+        if server['private']:
+            candidate=hashlib.sha256(str(body.get('room_code','')).encode()).hexdigest()
+            if not secrets.compare_digest(candidate,server['code_hash']):raise ValueError('Incorrect room code')
+        p.update(room='server:'+ident,x=240.,y=410.,ready=False,keys={})
 
     def cancel_offers(self,uid):
         self.offers={k:o for k,o in self.offers.items() if uid not in (o['from'],o['to'])}
@@ -133,6 +189,21 @@ class World:
             if time.monotonic()-p['chat_at'] < .7:raise ValueError('Please slow down')
             msg=''.join(c for c in str(b.get('text','')) if c.isprintable())[:160].strip()
             if msg:self.chat.append(dict(room=p['room'],name=u['name'],text=msg));p['chat_at']=time.monotonic()
+        elif kind=='create_server':
+            self.create_server(u,b)
+        elif kind=='join_server':
+            self.join_server(u,b)
+        elif kind=='start_server':
+            room=p['room']
+            if not room.startswith('server:'):raise ValueError('Join your server first')
+            server=self.servers.get(room.split(':',1)[1])
+            if not server or server['owner']!=uid:raise ValueError('Only the server owner can start')
+            server['started']=True
+        elif kind=='leave_server':
+            if p['room'].startswith('server:'):
+                server_id=p['room'].split(':',1)[1]
+                if self.servers.get(server_id,{}).get('owner')==uid:self.close_owned_servers(uid)
+                p.update(room='lobby',x=240.,y=410.,ready=False,keys={})
         elif kind=='room':
             if self.busy(uid):raise ValueError('Finish or leave the battle first')
             room=str(b.get('room','gym'))
@@ -199,7 +270,7 @@ class World:
             self.start(ids,int(p['room'].split(':')[1]))
         elif kind=='leave_battle':self.leave_match(uid)
         elif kind=='disconnect':
-            self.leave_match(uid);self.cancel_offers(uid);self.presence.pop(uid,None)
+            self.leave_match(uid);self.cancel_offers(uid);self.close_owned_servers(uid);self.presence.pop(uid,None)
         elif kind!='poll':raise ValueError('Unknown action')
 
     def leave_match(self,uid):
@@ -216,7 +287,7 @@ class World:
         now=time.monotonic()
         for uid,p in list(self.presence.items()):
             if now-p['last']>15:
-                self.leave_match(uid);self.cancel_offers(uid);del self.presence[uid];continue
+                self.leave_match(uid);self.cancel_offers(uid);self.close_owned_servers(uid);del self.presence[uid];continue
             if not p['match'] and now-p['last']<.8:
                 keys=p['keys'];dx=int(keys.get('right',False))-int(keys.get('left',False));dy=int(keys.get('down',False))-int(keys.get('up',False))
                 if dx or dy:p['facing']='right' if dx>0 else 'left' if dx<0 else 'down' if dy>0 else 'up'
@@ -254,7 +325,7 @@ class World:
                     step=min(.05,elapsed);self.tick(step);elapsed-=step
 
 
-def make_server(host,port,world):
+def make_server(host,port,world,webrtc=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):pass  # Never log bearer tokens or chat.
         def cors(self):
@@ -265,7 +336,10 @@ def make_server(host,port,world):
         def do_OPTIONS(self):
             self.send_response(204);self.cors();self.send_header('Content-Length','0');self.end_headers()
         def do_GET(self):
-            self.respond(200,dict(name='OpenRPG',protocol=1)) if self.path=='/health' else self.respond(404,dict(error='Not found'))
+            if self.path=='/health':self.respond(200,dict(name='OpenRPG',protocol=2,webrtc=bool(webrtc)))
+            elif self.path=='/servers':
+                with world.lock:self.respond(200,dict(servers=world.server_list(),webrtc=bool(webrtc)))
+            else:self.respond(404,dict(error='Not found'))
         def respond(self,status,data):
             payload=json.dumps(data).encode();self.send_response(status);self.cors();self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(payload)));self.end_headers()
             try:self.wfile.write(payload)
@@ -278,7 +352,10 @@ def make_server(host,port,world):
                 body=json.loads(self.rfile.read(size))
                 if not isinstance(body,dict):raise ValueError('Invalid request')
                 with world.lock:
-                    if self.path=='/connect':result=world.connect(body)
+                    if self.path=='/webrtc/offer':
+                        if not webrtc:raise ValueError('WebRTC is disabled on this server')
+                        result=webrtc.answer(body)
+                    elif self.path=='/connect':result=world.connect(body)
                     elif self.path=='/action':
                         u=world.auth(self.headers.get('Authorization','').removeprefix('Bearer '));world.action(u,body)
                         result=world.snapshot(u) if u['id'] in world.presence else {'disconnected':True}
@@ -294,12 +371,18 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host',default='0.0.0.0');parser.add_argument('--port',type=int,default=8765)
     parser.add_argument('--database',default='.openrpg/server.sqlite3');parser.add_argument('--join-code',default=os.environ.get('OPENRPG_JOIN_CODE',''))
+    parser.add_argument('--stun',default=os.environ.get('OPENRPG_STUN_URL',''),help='optional STUN URL, e.g. stun:stun.l.google.com:19302')
     args=parser.parse_args();Path(args.database).parent.mkdir(parents=True,exist_ok=True)
-    world=World(args.database,args.join_code);server=make_server(args.host,args.port,world)
+    world=World(args.database,args.join_code)
+    bridge=WebRTCBridge(world,args.stun) if WEBRTC_AVAILABLE else None
+    server=make_server(args.host,args.port,world,bridge)
     threading.Thread(target=world.run,daemon=True).start()
     print(f'OpenRPG server listening on {args.host}:{args.port}',flush=True)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
-    finally:world.closed.set();server.server_close();world.db.close()
+    finally:
+        world.closed.set();server.server_close()
+        if bridge:bridge.close()
+        world.db.close()
 
 if __name__=='__main__':main()

@@ -2,13 +2,19 @@
 
 ## Start a server
 
-The server uses Python's standard library and the bundled Pokédex database. It does not need Pygame, a display, downloaded sprites, or an API key.
+The server uses the bundled Pokédex database and **WebRTC DataChannels** for game traffic. HTTP(S) is only used for initial WebRTC offer/answer signalling. It does not need Pygame, a display, downloaded sprites, or an API key.
 
 ```sh
 python3 online_server.py --host 0.0.0.0 --port 8765 --join-code YOUR_ROOM_CODE
 ```
 
-On the same computer, connect to `http://127.0.0.1:8765`. Friends use `http://YOUR_SERVER_IP:8765` and the same room code. Allow inbound TCP 8765 on the host/router. `GET /health` returns the server name and protocol version.
+On the same computer, connect to `http://127.0.0.1:8765`. Friends use `http://YOUR_SERVER_IP:8765` and the same room code. Allow inbound TCP 8765 on the host/router. `GET /health` returns the server name, protocol version, and WebRTC availability.
+
+For friends across different networks, give the server a STUN address (and use a TURN service where direct peer paths are blocked):
+
+```sh
+python3 online_server.py --port 8765 --stun stun:stun.l.google.com:19302
+```
 
 Alternatively:
 
@@ -19,16 +25,17 @@ docker compose -f compose.online.yml up --build -d
 
 The Docker volume `openrpg-online` stores accounts, collections, coins, team health, and dungeon unlocks. Back it up before moving servers. Native installations save this data in `.openrpg/server.sqlite3`; use `--database PATH` to change it.
 
-Use an HTTPS reverse proxy for an internet-facing server: plain HTTP sends session credentials and chat unencrypted. This release is intended for a trusted friend group: the first connection imports a local save, so initial inventory/levels are trusted. It is not a cheat-resistant public economy. The server validates subsequent combat, ownership, payments, and unlocks.
+Use an HTTPS reverse proxy for an internet-facing server: the signal exchange still needs TLS. This release is intended for a trusted friend group: the first connection imports a local save, so initial inventory/levels are trusted. It is not a cheat-resistant public economy. The server validates subsequent combat, ownership, payments, and unlocks.
 
 ## Join from the game
 
 1. Load your profile and walk north from the home/farm clearing to **ONLINE GYM**.
-2. Press **E**, enter the server URL, enter its optional room code, then **Connect**.
-3. **Arrow keys** move. **E** interacts with the nearby center/exit. **Tab + Enter** or the mouse operates buttons.
-4. **T** opens chat; Enter sends; Escape cancels typing. **B** opens the existing real terminal from the lobby. Escape returns to the online room. The terminal continues running while you explore.
-5. Choose a player, then **PvP** or **Trade**. Invitations expire after 45 seconds; the recipient can accept or decline.
-6. Walk east to the dungeon road. The road spans 3,200 world pixels and the camera follows you. Stand near a gate and press **E**.
+2. Press **E**, enter the server URL, enter its optional gateway code, then **Connect · WebRTC**.
+3. In **Server Lobby**, the table shows the server name, host, public/private access, player count, and whether its owner has started it. Create a room with a name and room code, or choose **Connect** on an existing room. Only its creator sees **Start Server**.
+4. **Arrow keys** move. **E** interacts with the nearby center/exit. **Tab + Enter** or the mouse operates buttons.
+5. **T** opens chat; Enter sends; Escape cancels typing. **B** opens the existing real terminal from the room. Escape returns to the server lobby. The terminal continues running while you explore.
+6. Choose a player, then **PvP** or **Trade**. Invitations expire after 45 seconds; the recipient can accept or decline.
+7. Walk east to the dungeon road. The road spans 3,200 world pixels and the camera follows you. Stand near a gate and press **E**.
 
 ### Profiles and trading
 

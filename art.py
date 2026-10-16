@@ -7,6 +7,7 @@ import threading
 from collections import OrderedDict
 import pygame as pg
 from scenery import Scenery
+from gba_world import GBAWorld, walking_pose
 from world_regions import (RESERVE_GRID_POSITIONS, RESERVE_COLUMNS, RESERVE_ROWS,
                             reserve_index_at, reserve_layout, reserve_solids, scene_layout)
 
@@ -98,6 +99,7 @@ class RPGArt:
     def __init__(self):
         self.tiles = {}
         self.scaled = {}
+        self.gba = GBAWorld()
         for pack in ("tiny-town", "tiny-farm", "tiny-dungeon"):
             for path in (ROOT / pack / "Tiles").glob("*.png"):
                 self.tiles[pack, int(path.stem.split("_")[1])] = pg.image.load(path).convert_alpha()
@@ -116,9 +118,10 @@ class RPGArt:
             "player-0": "red_normal.png", "player-1": "green_normal.png",
             "player-2": "lass.png", "Woman": "woman_1.png",
             "Hunter": "youngster.png", "OldMan": "old_man_1.png",
-            "Villager4": "gentleman.png", "Samurai": "ninja_boy.png",
+            "Villager4": "gentleman.png",
             "Princess": "beauty.png", "Cavegirl": "picnicker.png",
-            "EggGirl": "girl.png",
+            "EggGirl": "lass.png", "Boy": "boy.png",
+            "Samurai": "youngster.png",
         }.items():
             path = people / filename
             if path.is_file():
@@ -294,8 +297,7 @@ class RPGArt:
                     self.tile(target, pack, index, x + col * size, y + row * size, size)
 
     def tree(self, target, x, y, autumn=False, variant=0):
-        pg.draw.ellipse(target, (106, 153, 77), (x - 40, y - 15, 80, 20))
-        target.blit(self.tree_sprites[variant % len(self.tree_sprites)], (x - 56, y - 112))
+        self.gba.tree(target,x,y,88)
 
     def tree_obstacles(self, scene):
         return [pg.Rect(x - 13, y - 17, 26, 22) for x, y in self.trees.get(scene, [])]
@@ -306,37 +308,7 @@ class RPGArt:
             self.tile(target, "tiny-town", 44 if i == 0 else 46 if i == count - 1 else 45, x + i * 32, y, 32)
 
     def build_outdoors(self, target):
-        self.fill(target, "tiny-town", 0, (0, 0, 1280, 800))
-        for i in range(150):
-            x, y = (i * 137 + 51) % 1240, 125 + (i * 83) % 571
-            self.tile(target, "tiny-town", 2 if i % 11 == 0 else 1, x, y, 32)
-        self.grid(target, "tiny-town", [
-            [52, 53, 53, 55, 53, 53, 54],
-            [64, 65, 65, 65, 65, 65, 66],
-            [72, 73, 73, 73, 73, 73, 75],
-            [84, 73, 84, 85, 73, 84, 73],
-        ], 182, 158)
-        self.grid(target, "tiny-town", [[48, 49, 51, 49, 50], [60, 61, 61, 61, 62]], 812, 158)
-        self.grid(target, "tiny-farm", [[102, 103, 103, 103, 104], [114, 115, 115, 115, 116]], 812, 254)
-        self.tile(target, "tiny-town", 78, 908, 302)
-        self.fence(target, 798, 326, 110)
-        self.fence(target, 973, 326, 110)
-        self.fence(target, 797, 399, 300)
-        self.tile(target, "tiny-farm", 73, 1029, 362, 32)
-        self.tile(target, "tiny-farm", 122, 841, 363, 32)
-        # Water edges and terrain are actual shoreline tiles.
-        self.grid(target, "rpg", [
-            [(2, 0), (3, 0), (3, 0), (3, 0), (3, 0), (4, 0)],
-            [(2, 1), (0, 0), (1, 0), (0, 0), (1, 0), (4, 1)],
-            [(2, 1), (1, 0), (0, 0), (1, 0), (0, 0), (4, 1)],
-            [(2, 2), (3, 2), (3, 2), (3, 2), (3, 2), (4, 2)],
-        ], 930, 477)
-        self.fill(target, "rpg", (8, 2), (930, 573, 96, 48))
-        self.tile(target, "tiny-farm", 84, 1015, 547, 32)
-        self.grid(target, "tiny-farm", [[98, 99]], 251, 563)
-        for x, y, tile in [(172, 462, 29), (428, 365, 28), (742, 543, 78), (1131, 665, 77)]:
-            self.tile(target, "tiny-farm", tile, x, y, 32)
-        self.scenery.local_overlay(target, "outdoors")
+        self.gba.outdoors(target,self.scenery)
 
     def outdoors(self, target, life, frame):
         if self.background is None:
@@ -357,18 +329,7 @@ class RPGArt:
             self.animal(target, "Ayam", x, y, 32, "down", frame, True)
 
     def build_forest(self, target):
-        self.fill(target, "tiny-town", 0, (0, 0, 1280, 800))
-        rng = random.Random(208)
-        paths = [pg.Rect(0, 375, 1280, 76), pg.Rect(605, 285, 80, 298)]
-        for i in range(120):
-            x, y = rng.randrange(35, 1220), rng.randrange(168, 660)
-            if any(rect.collidepoint(x, y) for rect in paths):
-                continue
-            self.tile(target, "tiny-town", 2 if i % 9 == 0 else 1, x, y, 32)
-        tint = pg.Surface(target.get_size(), pg.SRCALPHA)
-        tint.fill((22, 66, 34, 28)); target.blit(tint, (0, 0))
-        self.tile(target, "tiny-town", 83, 1182, 439, 48)
-        self.scenery.local_overlay(target, "forest")
+        self.gba.forest(target,self.scenery)
 
     def forest(self, target):
         if self.forest_background is None:
@@ -617,21 +578,7 @@ class RPGArt:
         target.blit(background, (0, 0))
 
     def build_market(self, target):
-        self.fill(target, "tiny-town", 0, (0, 0, 1280, 800))
-        self.fill(target, "rpg", (6, 2), (211, 185, 870, 442))
-        self.scenery.local_overlay(target, "market")
-        for x, y, color in [(327, 271, (193, 115, 92)), (816, 271, (90, 137, 162)), (586, 543, (183, 149, 79))]:
-            # Pixel stall frame around genuine asset counters and produce.
-            pg.draw.rect(target, (78, 59, 43), (x - 10, y - 50, 194, 66))
-            for i in range(6):
-                pg.draw.rect(target, color if i % 2 else (239, 219, 174), (x + i * 29, y - 45, 29, 50))
-            for px in (x + 6, x + 165):
-                pg.draw.rect(target, (104, 74, 50), (px, y - 44, 7, 128))
-            self.grid(target, "rpg", [[(26, 3), (27, 3), (27, 5)]], x, y + 46, 58)
-            for i, tile in enumerate((23, 35, 47)):
-                self.tile(target, "tiny-farm", tile, x + i * 52 + 8, y + 31, 32)
-        self.fence(target, 218, 665, 820)
-        self.tile(target, "tiny-town", 104, 700, 340, 48)
+        self.gba.market(target,self.scenery)
 
     def market(self, target):
         if self.market_background is None:
@@ -648,36 +595,10 @@ class RPGArt:
         self.tile(target, "rpg", (33, 0), 611, 647, 58)
 
     def house(self, target):
-        self.room(target)
-        self.tile(target, "rpg", (28, 0), 211, 215, 80)
-        self.tile(target, "rpg", (33, 2), 315, 214, 80)
-        self.tile(target, "rpg", (31, 0), 402, 215, 80)
-        self.grid(target, "rpg", [[(28, 1), (29, 2)], [(28, 2), (28, 3)]], 464, 171, 40)
-        # Carpet: green nine-slice tiles.
-        self.grid(target, "rpg", [[(10, 16), (11, 16), (11, 16), (11, 16), (12, 16)],
-                                  [(10, 17), (11, 17), (11, 17), (11, 17), (12, 17)],
-                                  [(10, 18), (11, 18), (11, 18), (11, 18), (12, 18)]], 500, 361)
-        self.grid(target, "rpg", [[(26, 3), (27, 3), (27, 5)]], 532, 389, 64)
-        for x in (548, 648):
-            self.tile(target, "rpg", (19, 4), x, 500, 48)
-        self.tile(target, "tiny-farm", 124, 561, 389, 32)
-        self.tile(target, "tiny-farm", 125, 658, 389, 32)
-        self.grid(target, "rpg", [[(23, 3), (24, 3)]], 823, 380, 96)
-        self.tile(target, "rpg", (32, 0), 983, 181, 72)
-        self.plant(target, 762, 279)
-        self.tile(target, "rpg", (26, 8), 715, 187, 48)
-        self.scenery.interior(target, "house")
+        self.gba.interior(target,"house")
 
     def bedroom(self, target):
-        self.room(target)
-        self.tile(target, "rpg", (17, 2), 284, 213, 176)
-        self.grid(target, "rpg", [[(28, 1)], [(28, 2)], [(28, 3)]], 504, 200, 48)
-        self.grid(target, "rpg", [[(23, 4), (24, 4)]], 788, 244, 144)
-        self.tile(target, "rpg", (19, 4), 897, 363, 64)
-        self.plant(target, 740, 304)
-        for x in (564, 660):
-            self.grid(target, "rpg", [[(44, 2)], [(44, 3)]], x, 154, 48)
-        self.scenery.interior(target, "bedroom")
+        self.gba.interior(target,"bedroom")
 
     def plant(self, target, x, y):
         self.tile(target, "tiny-farm", 76, x - 16, y - 32, 32)
@@ -687,15 +608,11 @@ class RPGArt:
         gba_key = npc or f"player-{index % 3}"
         gba_source = self.gba_people.get(gba_key)
         if gba_source is not None and gba_source.get_width() >= 16 and gba_source.get_height() >= 32:
-            # Object-event sheets are a horizontal row of 16×32 poses.  The
-            # original order starts with the four facing poses, followed by
-            # their stepping variants.  Keep the frame selection deterministic
-            # for both the native game and the headless integration check.
-            cells = gba_source.get_width() // 16
-            base = {"down": 0, "up": 1, "left": 2, "right": 3}.get(facing, 0) % max(1, cells)
-            pose = (base + (1 + int(frame / 7) % max(1, cells - 4) if walking and cells > 4 else 0)) % cells
+            pose, flip = walking_pose(facing, frame, walking)
             sprite = gba_source.subsurface((pose * 16, 0, 16, 32))
-            size = max(24, round(16 * scale * 2.05))
+            if flip:
+                sprite = pg.transform.flip(sprite, True, False)
+            size = max(16, round(16 * scale * 1.25))
             height = size * 2
             pg.draw.ellipse(target, (32, 48, 43), (x - size * .32, y - 7, size * .64, 10))
             target.blit(pg.transform.scale(sprite, (size, height)), (x - size / 2, y - height))

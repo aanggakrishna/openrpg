@@ -9,7 +9,7 @@ import traceback
 import pygame as pg
 import retro
 import pokemon_db
-from online_client import OnlineClient
+from online_client import OnlineClient, WebRTCClient
 
 ROOT=Path(__file__).resolve().parent
 C,G,M,GOLD=retro.CREAM,retro.GREEN,retro.MUTED,retro.GOLD
@@ -29,6 +29,8 @@ class OnlineMixin:
         self.online_battle_error_log_at={}
         self.online_guard_click=False
         self.online_room_background=None;self.online_room_background_key=None
+        self.online_server_name='';self.online_server_code='';self.online_server_private=False
+        self.online_transport='webrtc';self.online_join_server=None
         super().__init__(*args,**kwargs)
         try:self.online_url=json.loads((ROOT/'.openrpg/online/preferences.json').read_text()).get('url',self.online_url)
         except (OSError,ValueError):pass
@@ -91,9 +93,23 @@ class OnlineMixin:
         profile=dict(token=token,join_code=self.online_code,name=self.life.player_name,character=self.life.character,
                      roster={str(i):self.life.pokemon_levels.get(str(i),5) for i in self.life.pokemon_party},active=self.active_pokemon_team(),money=self.life.money,
                      trainer_xp=getattr(self.life,'trainer_xp',0),trainer_level=getattr(self.life,'trainer_level',1))
-        try:self.net=OnlineClient(self.online_url,profile)
+        try:
+            # WebRTC is the normal game transport.  The old HTTP transport
+            # stays available as a deliberate compatibility fallback.
+            client=WebRTCClient if self.online_transport=='webrtc' else OnlineClient
+            self.net=client(self.online_url,profile)
         except ValueError as exc:self.online_error=str(exc);return
-        self.online_state={};self.online_error=self.words('Menghubungkan...','Connecting...');self.set_mode('online_room')
+        self.online_state={};self.online_error=self.words('Membuka kanal WebRTC...','Opening WebRTC channel...');self.set_mode('online_lobby')
+        self.play_online_lobby_music()
+
+    def play_online_lobby_music(self):
+        if not pg.mixer.get_init():return
+        path=ROOT/'assets/audio/music/online_lobby.wav'
+        if not path.is_file() or getattr(self,'_music_key',None)=='online-lobby':return
+        try:
+            pg.mixer.music.load(str(path));pg.mixer.music.play(-1,fade_ms=350)
+            pg.mixer.music.set_volume(.24*getattr(self.life,'music_volume',1));self._music_key='online-lobby'
+        except pg.error:pass
 
     def online_send(self,action,**kwargs):
         if self.net and self.net.connected:self.net.send(action,**kwargs)
@@ -111,6 +127,7 @@ class OnlineMixin:
     def leave_online(self):
         if self.net:self.net.close();self.net=None
         self.online_state={};self.online_input=None;pg.key.stop_text_input();self.set_mode('game')
+        self._music_key=None;self.update_location_audio()
 
     def online_people(self):
         me=self.online_state.get('me',{}).get('id')
@@ -154,15 +171,19 @@ class OnlineMixin:
                             elif self.online_input=='url':self.online_url=self.online_input_text.strip()
                             elif self.online_input=='code':self.online_code=self.online_input_text
                             elif self.online_input=='price':self.trade_price=min(100000,int(self.online_input_text)) if self.online_input_text.isdigit() else 0
+                            elif self.online_input=='server_name':self.online_server_name=self.online_input_text.strip()[:28]
+                            elif self.online_input=='server_code':
+                                if self.online_join_server:self.submit_private_join()
+                                else:self.online_server_code=self.online_input_text[:48]
                         self.online_input=None;pg.key.stop_text_input()
                 return
             if event.type==pg.KEYDOWN:
                 if event.key==pg.K_b and self.mode=='online_room' and not self.online_state.get('battle'):
                     self.online_terminal=True;self.open_phone();return
                 if event.key==pg.K_ESCAPE:
-                    if self.mode=='online_room':self.leave_online()
+                    if self.mode in ('online_room','online_lobby'):self.leave_online()
                     elif self.mode=='online_connect':self.set_mode('game')
-                    else:self.set_mode('online_room')
+                    else:self.set_mode('online_lobby')
                     return
                 if self.mode=='online_room' and self.online_state.get('battle'):
                     skill_slots={pg.K_a:0,pg.K_q:1,pg.K_w:2,pg.K_e:3,pg.K_r:4}
@@ -312,6 +333,7 @@ class OnlineMixin:
         if not self.mode.startswith('online_'):return super().overlay()
         self.buttons=[]
         if self.mode=='online_connect':self.draw_online_connect()
+        elif self.mode=='online_lobby' or self.online_state.get('room')=='lobby':self.draw_online_lobby()
         elif self.mode=='online_trade':self.draw_online_trade()
         elif self.mode=='online_center':self.draw_online_center()
         elif self.online_state.get('battle'):self.draw_online_battle()
@@ -320,7 +342,8 @@ class OnlineMixin:
         if self.online_input:
             self.box((70,635,1140,82),retro.PANEL)
             self.text(self.online_input.upper()+' / Enter: OK / Esc: cancel',90,643,G,self.small)
-            self.text(('*'*len(self.online_input_text) if self.online_input=='code' else self.online_input_text)[-95:]+'_',90,671,C,self.small)
+            hidden=self.online_input in ('code','server_code')
+            self.text(('*'*len(self.online_input_text) if hidden else self.online_input_text)[-95:]+'_',90,671,C,self.small)
 
     def draw_online_connect(self):
         self.box((170,120,940,545),retro.PANEL)
@@ -328,17 +351,74 @@ class OnlineMixin:
         self.text(self.words('Satu dunia bersama teman','A shared world with friends'),640,220,C,self.font,True)
         self.button(self.online_url,(240,270,800,52),lambda:self.online_edit('url',self.online_url))
         self.button(self.words('Kode server (opsional)','Server code (optional)'),(240,340,390,48),lambda:self.online_edit('code',self.online_code))
-        self.button(self.words('Hubungkan','Connect'),(650,340,390,48),self.connect_online)
+        self.button(self.words('Hubungkan · WebRTC','Connect · WebRTC'),(650,340,390,48),self.connect_online)
         self.text(self.words('Pertama masuk: salin tim dan koin ke profil server.','First connection: copy your collection and coins to a server profile.'),225,425,M,self.small)
         self.text(self.words('Progres online tersimpan di server, terpisah dari offline.','Online progress is saved on the server, separate from offline.'),225,453,M,self.small)
-        self.text('Chat / PvP / Trade / Co-op dungeons Lv.1–100',225,498,G,self.font)
+        self.text('WebRTC / Chat / PvP / Trade / Co-op dungeons Lv.1–100',225,498,G,self.font)
+        self.button('HTTP fallback',(650,410,390,42),lambda:setattr(self,'online_transport','http'))
         self.button(self.words('Kembali','Back'),(440,560,400,48),lambda:self.set_mode('game'))
+
+    def create_online_server(self):
+        self.online_join_server=None
+        self.online_send('create_server',name=self.online_server_name,room_code=self.online_server_code,
+                         private=self.online_server_private)
+        self.set_mode('online_room')
+        self.play_action_sound('server-created',.42)
+
+    def join_online_server(self, server):
+        self.online_join_server=server['id']
+        if server.get('private'):
+            self.online_edit('server_code','')
+        else:
+            self.online_send('join_server',server=server['id'],room_code='')
+            self.set_mode('online_room')
+
+    def submit_private_join(self):
+        if self.online_join_server:
+            self.online_send('join_server',server=self.online_join_server,room_code=self.online_input_text)
+            self.set_mode('online_room')
+
+    def edit_new_server_code(self):
+        self.online_join_server=None
+        self.online_edit('server_code',self.online_server_code)
+
+    def draw_online_lobby(self):
+        self.canvas.fill((13,31,39))
+        self.box((24,20,1232,92),retro.PANEL,12,retro.EDGE)
+        self.text('ONLINE SERVER LOBBY',48,39,GOLD,self.big)
+        self.text('WebRTC DATA CHANNEL · pilih server atau buat room sendiri',48,82,G,self.small)
+        self.box((24,132,790,530),retro.PANEL,10,retro.EDGE)
+        self.text('SERVER',52,151,GOLD,self.tiny);self.text('HOST',318,151,GOLD,self.tiny)
+        self.text('ACCESS',475,151,GOLD,self.tiny);self.text('PEMAIN',592,151,GOLD,self.tiny);self.text('STATUS',690,151,GOLD,self.tiny)
+        rows=self.online_state.get('servers',[])
+        if not rows:self.text('Belum ada server aktif. Jadilah host pertama.',52,205,M,self.small)
+        for index,server in enumerate(rows[:7]):
+            y=180+index*60
+            self.box((42,y,754,50),(27,55,60),6,retro.EDGE)
+            self.text(server['name'][:24],56,y+13,C,self.small)
+            self.text(server['owner'][:14],318,y+13,G,self.small)
+            self.text('PRIVATE' if server['private'] else 'PUBLIC',475,y+13,GOLD if server['private'] else G,self.tiny)
+            self.text(f"{server['players']}/{server['max_players']}",592,y+13,C,self.tiny)
+            self.text('STARTED' if server['started'] else 'WAITING',690,y+13,G if server['started'] else M,self.tiny)
+            self.button('CONNECT',(704,y+5,82,40),lambda server=server:self.join_online_server(server))
+        self.box((838,132,418,530),retro.PANEL,10,retro.EDGE)
+        self.text('CREATE SERVER',866,158,GOLD,self.font)
+        self.text('Nama server',866,201,M,self.tiny)
+        self.button(self.online_server_name or 'Isi nama server',(866,220,360,48),lambda:self.online_edit('server_name',self.online_server_name))
+        self.text('Room code',866,292,M,self.tiny)
+        self.button('••••' if self.online_server_code else 'Isi room code',(866,310,360,48),self.edit_new_server_code)
+        privacy='PRIVATE · kode wajib' if self.online_server_private else 'PUBLIC · kode opsional'
+        self.button(privacy,(866,382,360,48),lambda:setattr(self,'online_server_private',not self.online_server_private))
+        self.button('CREATE & HOST',(866,450,360,52),self.create_online_server)
+        self.text('Host mengendalikan START. Maks. 16 pemain.',866,530,M,self.tiny)
+        self.button('Disconnect',(866,590,360,44),self.leave_online)
+        self.text('Tab/Enter: navigasi · Esc: keluar',40,700,M,self.small)
 
     def online_room_backdrop(self,room):
         """Bake static tile layers once per room; only players/UI animate."""
         if self.online_room_background_key==room and self.online_room_background is not None:
             return self.online_room_background
-        surface=self.art.scenery.online(room)
+        surface=self.art.scenery.online('gym' if room.startswith('server:') else room)
         self.online_room_background=surface
         self.online_room_background_key=room
         return surface
@@ -350,10 +430,11 @@ class OnlineMixin:
         backdrop=self.online_room_backdrop(room)
         self.canvas.blit(backdrop,(-int(camera),0))
         self.box((25,25,1230,100),retro.PANEL)
-        title='ONLINE GYM' if room=='gym' else 'DUNGEON ROAD' if room=='hall' else 'DUNGEON '+room.split(':')[-1]
+        server=next((item for item in state.get('servers',[]) if room=='server:'+item['id']),None)
+        title=(server['name'].upper() if server else ('ONLINE GYM' if room=='gym' else 'DUNGEON ROAD' if room=='hall' else 'DUNGEON '+room.split(':')[-1]))
         self.text(title,48,43,GOLD,self.big);self.text(f"{me.get('name','...')}   $ {me.get('money',0)}   Trainer Lv.{me.get('trainer_level',1)} XP {me.get('trainer_xp',0)}   Tier {me.get('unlocked',1)}/10",48,90,G,self.small)
-        if room=='gym':pg.draw.line(self.canvas,(74,102,125),(0,450),(1280,450),3)
-        if room=='gym':
+        if room in ('gym',) or room.startswith('server:'):pg.draw.line(self.canvas,(74,102,125),(0,450),(1280,450),3)
+        if room=='gym' or room.startswith('server:'):
             pg.draw.rect(self.canvas,(52,74,91),(470,290,500,210),5)
             pg.draw.rect(self.canvas,(108,152,145),(490,310,460,170),2)
             pg.draw.circle(self.canvas,(74,102,125),(720,395),86,4)
@@ -382,6 +463,12 @@ class OnlineMixin:
             if room=='gym':
                 self.box((1040,240,220,70),retro.PANEL);self.text('DUNGEONS > E',1150,270,GOLD,self.small,True)
                 self.button('Dungeons >',(1030,140,215,44),lambda:self.online_send('room',room='hall'))
+            elif room.startswith('server:'):
+                owner=server and server.get('owner_id')==me.get('id')
+                self.text('ROOM '+('STARTED' if server and server['started'] else 'WAITING FOR HOST'),650,180,G if server and server['started'] else GOLD,self.font,True)
+                if owner and not server.get('started'):
+                    self.button('START SERVER',(770,220,235,44),lambda:(self.online_send('start_server'),self.play_action_sound('server-started',.42)))
+                self.button('LOBBY',(1030,140,215,44),lambda:(self.online_send('leave_server'),self.set_mode('online_lobby')))
             else:
                 self.text(self.words('3 gelombang + bos / sampai 4 pemain','3 waves + boss / up to 4 players'),650,180,G,self.font,True)
                 self.button('Ready',(770,220,170,44),lambda:self.online_send('ready'))

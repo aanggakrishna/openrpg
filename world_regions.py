@@ -162,9 +162,13 @@ def reserve_layout(index):
         paths.extend(road_between((x,y),junction))
     # Town square and service lane form an L-shaped, walkable cluster whose
     # location changes by biome and zone instead of repeating one template.
-    service_y=hub_y+220
+    # Place the service street well away from the central gate junction. The
+    # building sprites are much taller than their collision footprints, so a
+    # nearby hotel can visually crowd (or physically block) the exit approach.
+    service_y=hub_y+550 if hub_y<=800 else max(400,hub_y-530)
     paths.extend(road_between(junction,(hub_x,hub_y+18)))
-    paths.extend([(hub_x-road_w//2,hub_y+14,road_w,service_y-hub_y+24),
+    service_path_y=min(hub_y+14,service_y-road_w//2)
+    paths.extend([(hub_x-road_w//2,service_path_y,road_w,abs(service_y-hub_y)+24),
                   (hub_x-310,service_y-road_w//2,620,road_w)])
     # Alternate between a compact plaza, a loop street, and a second garden
     # lane. These are branches of the same connected road network.
@@ -177,14 +181,14 @@ def reserve_layout(index):
         spur_x=hub_x+(205 if index%2 else -205)
         paths.extend(road_between((hub_x,service_y),(spur_x,service_y+145),road_w-8))
         paths.append((spur_x-90,service_y+145-road_w//2,180,road_w-8))
-    restaurant_x,hotel_x=((hub_x-220,hub_x+220) if index%2==0 else
-                          (hub_x+220,hub_x-220))
+    restaurant_x,hotel_x=((hub_x-260,hub_x+260) if index%2==0 else
+                          (hub_x+260,hub_x-260))
     buildings=[('center',hub_x,hub_y),('restaurant',restaurant_x,service_y),
                ('hotel',hotel_x,service_y)]
     water=[];bridges=[];ice=[];lava=[];landmark_rect=None
     # Pool sites are selected away from roads, buildings and the landmark, so
     # bridges and shore paths never cover service entrances or gate approaches.
-    pool_candidates=[(165,350,220,150),(895,350,220,150),(165,1260,220,150),
+    pool_candidates=[(165,260,220,150),(895,350,220,150),(165,1260,220,150),
                      (895,1260,220,150),(190,570,190,145),(900,570,190,145)]
     rng=random.Random(8100+index)
     rng.shuffle(pool_candidates)

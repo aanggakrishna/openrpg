@@ -347,6 +347,70 @@ class FighterMixin:
                         else: b['result']=self.words('Tim KO / Esc kembali','Team KO / Esc to return')
             active.append(effect)
         b['arena_effects']=active
+        self.update_ambient_hazards(dt)
+
+    def update_ambient_hazards(self,dt):
+        """Telegraph and resolve biome-specific stage hazards."""
+        b=self.battle
+        if not b or b.get('result') or b.get('ko_anim'):return
+        hazards=b.setdefault('ambient_hazards',[])
+        b['hazard_timer']=b.get('hazard_timer',self.pokemon_rng.uniform(8,13))-dt
+        style=b.get('arena_style','meadow')
+        kinds={'meadow':('rockfall','gust'), 'water':('flood','gust'),
+               'cave':('rockfall','meteor'), 'volcano':('meteor','rockfall'),
+               'sky':('gust','meteor')}.get(style,('rockfall','gust'))
+        if b['hazard_timer']<=0 and not hazards:
+            kind=self.pokemon_rng.choice(kinds)
+            hazards.append({'kind':kind,'phase':'warning','timer':1.35,
+                            'x':self.pokemon_rng.randint(160,1120),
+                            'direction':self.pokemon_rng.choice((-1,1)),
+                            'hit':[]})
+            b['hazard_timer']=self.pokemon_rng.uniform(10,17)
+            b['phase']={'rockfall':'BATU JATUH · LOMPAT / MENJAUH',
+                        'meteor':'METEOR · AREA BAHAYA', 'gust':'ANGIN RIBUT · BERTAHAN',
+                        'flood':'BANJIR BANDANG · NAIK KE TEMPAT TINGGI'}[kind]
+        active=[]
+        for hazard in hazards:
+            hazard['timer']-=dt
+            if hazard['phase']=='warning' and hazard['timer']<=0:
+                hazard['phase']='active'
+                hazard['timer']=2.35 if hazard['kind'] in ('gust','flood') else 1.65
+            if hazard['phase']=='active':
+                kind=hazard['kind'];hx=hazard['x']
+                if kind in ('gust','flood'):
+                    hazard['x']+=hazard['direction']*(480 if kind=='gust' else 330)*dt
+                for target in ('player','enemy'):
+                    if target in hazard['hit']:continue
+                    x=b.get(target+'_x',350 if target=='player' else 760)
+                    y=b.get(target+'_y',0)
+                    if kind in ('rockfall','meteor'):
+                        danger=(abs(x-hx)<(70 if kind=='meteor' else 48) and y>-92
+                                and hazard['timer']<=.38)
+                    elif kind=='flood':
+                        danger=abs(x-hazard['x'])<76 and y>-36
+                    else:
+                        danger=abs(x-hazard['x'])<106 and y>-38
+                    if not danger:continue
+                    hazard['hit'].append(target)
+                    hpkey='player_hp' if target=='player' else 'wild_hp'
+                    maximum=b.get('player_max' if target=='player' else 'wild_max',100)
+                    damage=max(4,int(maximum*(.07 if kind in ('rockfall','meteor') else .055)))
+                    if target=='player' and getattr(self.life,'godmode',False):damage=0
+                    b[hpkey]=max(0,b.get(hpkey,0)-damage)
+                    b['hit_flash' if target=='player' else 'enemy_flash']=.22
+                    b[target+'_vx']=hazard['direction']*(290 if kind in ('gust','flood') else 180)
+                    b['phase']=f"{kind.upper()} · -{damage} HP"
+                    if target=='player':self.save_battle_player_hp()
+                    if b[hpkey]<=0 and not b.get('ko_anim'):
+                        ident=b['player_id'] if target=='player' else b['wild_id']
+                        b['ko_anim']={'owner':target,'pokemon_id':ident,
+                                      'timer':.82 if target=='player' else 1.0,
+                                      'duration':.82 if target=='player' else 1.0,'next_pokemon':None}
+                        b['shots']=[]
+                        if target=='enemy':self._win_battle()
+                        else:b['result']=self.words('Tim KO / Esc kembali','Team KO / Esc to return')
+            if hazard['timer']>0:active.append(hazard)
+        b['ambient_hazards']=active
 
     def draw_fighter_status(self, who, x, y, sprite_size):
         """Semi-transparent status overlays anchored directly on the fighter."""

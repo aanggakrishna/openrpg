@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import tempfile
 import unittest
+from unittest.mock import patch
 import pygame as pg
 from main import Game,RARE_POKEMON_IDS
 from art import RESERVE_ZONES
@@ -37,6 +38,12 @@ class OnlineUITests(unittest.TestCase):
             g.handle(pg.event.Event(pg.TEXTINPUT,text=c))
         self.assertEqual(g.mode,'online_connect')
         g.handle(pg.event.Event(pg.KEYDOWN,key=pg.K_RETURN));self.assertEqual(g.online_url,'http://my-server:8765')
+    def test_online_gym_portal_skips_connection_form(self):
+        g=self.game;g.set_mode('game');seen=[]
+        with patch.object(g,'play_action_sound'), patch.object(g,'connect_online',
+                side_effect=lambda: seen.append((g.online_transport,g.mode))):
+            g.interact_selected({'kind':'station','station':('online_gym',0,0,'Online Gym')})
+        self.assertEqual(seen,[('webrtc','game')])
     def test_keyboard_buttons(self):
         g=self.game;g.set_mode('online_connect');g.draw()
         g.handle(pg.event.Event(pg.KEYDOWN,key=pg.K_DOWN));self.assertEqual(g.nav_index,1)
