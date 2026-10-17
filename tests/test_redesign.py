@@ -214,6 +214,13 @@ class RedesignTests(unittest.TestCase):
         self.assertEqual(g.life.scene,'market')
         self.assertLess(math.hypot(g.life.x-700,g.life.y-610),40)
 
+    def test_saved_hotel_counter_position_is_recovered_to_the_door(self):
+        g=self.game;g.life=Life(scene='hotel',x=238,y=365)
+        g.terrain_location=None;g.mode='game'
+        g.ensure_walkable_position()
+        self.assertEqual((g.life.x,g.life.y),g.art.gba.service_anchors('hotel')['entry'])
+        self.assertEqual(g.nearest()[0],'service_exit')
+
     def test_center_heal_and_ball_flight_apply_only_after_animation(self):
         g=self.game;g.life=Life(scene='center',money=200,pokemon_party=[1,4],pokemon_active=[1,4])
         g.service_interior_kind='center';g.mode='service_interior'

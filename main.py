@@ -954,6 +954,18 @@ class LegacyGame:
         return [pg.Rect(284, 216, 176, 150), pg.Rect(804, 227, 253, 98)]
 
     def ensure_walkable_position(self):
+        if self.life.scene in ("center", "restaurant", "hotel"):
+            key=(self.life.scene,None)
+            if getattr(self,"terrain_location",None)==key:return
+            self.terrain_location=key
+            obstacles=self.obstacles(self.life.scene)
+            feet=pg.Rect(self.life.x-12,self.life.y-12,24,14)
+            if any(feet.colliderect(rect) for rect in obstacles):
+                entry=self.art.gba.service_anchors(self.life.scene)["entry"]
+                self.life.x,self.life.y=entry
+                self.notify(self.words("Posisi dipulihkan ke area aman.","Position restored to a safe spot."))
+                self.save_current()
+            return
         if self.life.scene not in OUTSIDE:return
         region=reserve_index_at(self.life.x,self.life.y) if self.life.scene=="reserve" else None
         key=(self.life.scene,region)
