@@ -293,11 +293,54 @@ body{display:grid;place-items:center}
 #fullscreen-toggle{position:fixed;z-index:20;right:14px;top:14px;min-width:44px;min-height:44px;padding:8px 12px;border:2px solid #85b8ae;border-radius:5px;background:#18383a;color:#fff4c8;font:700 12px/1 system-ui,sans-serif;letter-spacing:.04em;cursor:pointer;box-shadow:0 2px 0 #07191a}
 #fullscreen-toggle:hover,#fullscreen-toggle:focus-visible{background:#285458;outline:3px solid #ffd568;outline-offset:2px}
 @media (max-width:600px){#canvas{width:100vw!important;max-height:calc(100vh - env(safe-area-inset-bottom))!important}#fullscreen-toggle{right:8px;top:calc(8px + env(safe-area-inset-top));font-size:11px}}
+
+/* Touch controls are intentionally browser-only: the Pygame game still owns
+   the underlying WASD/arrow/E/space commands used on desktop. */
+#mobile-controls,#rotate-overlay{display:none}
+@media (max-width:900px), (pointer:coarse){
+  #mobile-controls{display:block;position:fixed;inset:0;z-index:30;pointer-events:none;touch-action:none;-webkit-user-select:none;user-select:none}
+  .touch-cluster{position:absolute;bottom:max(12px,env(safe-area-inset-bottom));display:grid;gap:8px;pointer-events:auto}
+  #touch-dpad{left:max(14px,env(safe-area-inset-left));grid-template-columns:repeat(3,52px);grid-template-rows:repeat(3,52px)}
+  #touch-actions{right:max(14px,env(safe-area-inset-right));grid-template-columns:repeat(2,58px);grid-template-rows:repeat(2,52px)}
+  .touch-button{display:grid;place-items:center;min-width:48px;min-height:48px;border:2px solid #9ad4c4;border-radius:50%;background:rgba(14,45,48,.84);color:#fff4c8;font:800 12px/1 system-ui,sans-serif;letter-spacing:.04em;box-shadow:0 3px 0 rgba(0,0,0,.42);touch-action:none;cursor:pointer}
+  #touch-actions .touch-button{border-radius:14px;background:rgba(28,69,70,.9)}
+  .touch-button:active,.touch-button.is-held{transform:translateY(2px);background:#3d7775;border-color:#ffd568;box-shadow:0 1px 0 rgba(0,0,0,.42)}
+  .touch-button svg{width:22px;height:22px;fill:currentColor;pointer-events:none}
+  .touch-up{grid-column:2;grid-row:1}.touch-left{grid-column:1;grid-row:2}.touch-right{grid-column:3;grid-row:2}.touch-down{grid-column:2;grid-row:3}
+  #touch-actions{align-items:end}.touch-hint{position:absolute;left:50%;bottom:max(3px,calc(env(safe-area-inset-bottom) / 2));transform:translateX(-50%);color:rgba(255,244,200,.82);font:700 10px/1 system-ui,sans-serif;text-shadow:0 1px 2px #001;white-space:nowrap}
+}
+@media (max-width:900px) and (max-aspect-ratio:1/1), (pointer:coarse) and (max-aspect-ratio:1/1){
+  #mobile-controls{display:none}
+  #rotate-overlay{display:flex;position:fixed;z-index:60;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:24px;background:#0e2527;color:#fff4c8;text-align:center;font:700 18px/1.35 system-ui,sans-serif}
+  #rotate-overlay small{display:block;max-width:260px;color:#b9d9d0;font-size:13px;font-weight:500}
+  #rotate-overlay button{min-width:176px;min-height:52px;border:2px solid #ffd568;border-radius:9px;background:#285458;color:#fff4c8;font:800 14px/1 system-ui,sans-serif;letter-spacing:.06em}
+}
+@media (prefers-reduced-motion:reduce){.touch-button{transition:none!important}}
 </style></head>
 
 <body>
 
     <button id="fullscreen-toggle" type="button" aria-label="Toggle fullscreen game" title="Toggle fullscreen">FULLSCREEN</button>
+    <div id="rotate-overlay" role="dialog" aria-modal="true" aria-label="Landscape mode required">
+        <strong>PLAY IN LANDSCAPE</strong>
+        <small>Rotate your phone for the full OpenRPG field view and touch controls.</small>
+        <button id="landscape-start" type="button">PLAY LANDSCAPE</button>
+    </div>
+    <div id="mobile-controls" aria-label="Touch game controls">
+        <div id="touch-dpad" class="touch-cluster" aria-label="Move character">
+            <button class="touch-button touch-up" data-key="ArrowUp" aria-label="Move up"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 4 13h5v7h6v-7h5z"/></svg></button>
+            <button class="touch-button touch-left" data-key="ArrowLeft" aria-label="Move left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l9-8v5h7v6h-7v5z"/></svg></button>
+            <button class="touch-button touch-right" data-key="ArrowRight" aria-label="Move right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20 12-9-8v5H4v6h7v5z"/></svg></button>
+            <button class="touch-button touch-down" data-key="ArrowDown" aria-label="Move down"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 20 8-9h-5V4H9v7H4z"/></svg></button>
+        </div>
+        <div id="touch-actions" class="touch-cluster" aria-label="Game actions">
+            <button class="touch-button" data-tap-key="e" aria-label="Interact">ACT</button>
+            <button class="touch-button" data-tap-key=" " aria-label="Attack">HIT</button>
+            <button class="touch-button" data-tap-key="i" aria-label="Open bag">BAG</button>
+            <button class="touch-button" data-tap-key="Escape" aria-label="Open menu">MENU</button>
+        </div>
+        <span class="touch-hint" aria-hidden="true">MOVE · ACT · HIT · BAG · MENU</span>
+    </div>
 
     <div id="transfer" align=center>
 <!--        <div class="spinner" id='spinner'></div> -->
@@ -383,6 +426,7 @@ frameborder="1"
     <script type="application/javascript">
 
     const fullscreenToggle = document.getElementById("fullscreen-toggle");
+    const gameCanvas = document.getElementById("canvas");
     const fullscreenLabel = () => {
         const active = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
         fullscreenToggle.textContent = active ? "EXIT FULLSCREEN" : "FULLSCREEN";
@@ -402,6 +446,53 @@ frameborder="1"
     });
     document.addEventListener("fullscreenchange", fullscreenLabel);
     document.addEventListener("webkitfullscreenchange", fullscreenLabel);
+
+    const sendGameKey = (key, type) => {
+        gameCanvas.focus({preventScroll:true});
+        gameCanvas.dispatchEvent(new KeyboardEvent(type, {
+            key, code: key === " " ? "Space" : key, bubbles:true, cancelable:true
+        }));
+    };
+    const releaseTouchKey = (button) => {
+        const key = button.dataset.key;
+        if (!key || !button.classList.contains("is-held")) return;
+        button.classList.remove("is-held");
+        sendGameKey(key, "keyup");
+    };
+    document.querySelectorAll("[data-key]").forEach((button) => {
+        button.addEventListener("pointerdown", (event) => {
+            event.preventDefault();
+            button.setPointerCapture?.(event.pointerId);
+            if (!button.classList.contains("is-held")) {
+                button.classList.add("is-held");
+                sendGameKey(button.dataset.key, "keydown");
+            }
+        });
+        ["pointerup", "pointercancel", "pointerleave"].forEach((type) =>
+            button.addEventListener(type, () => releaseTouchKey(button)));
+    });
+    document.querySelectorAll("[data-tap-key]").forEach((button) => {
+        button.addEventListener("pointerdown", (event) => {
+            event.preventDefault();
+            button.classList.add("is-held");
+            const key = button.dataset.tapKey;
+            sendGameKey(key, "keydown");
+            window.setTimeout(() => sendGameKey(key, "keyup"), 80);
+        });
+        ["pointerup", "pointercancel", "pointerleave"].forEach((type) =>
+            button.addEventListener(type, () => button.classList.remove("is-held")));
+    });
+    const enterMobileLandscape = async () => {
+        try {
+            if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+            await screen.orientation?.lock?.("landscape");
+        } catch (error) {
+            // iOS may reject orientation locks; its rotation prompt remains visible.
+            console.info("Landscape lock unavailable", error);
+        }
+        fullscreenLabel();
+    };
+    document.getElementById("landscape-start").addEventListener("click", enterMobileLandscape);
 
     globalThis.__canvas_resized = (self, ecw, ech) => {
         console.warn("TODO: panda3d canvas monitor", self, ecw, ech)
