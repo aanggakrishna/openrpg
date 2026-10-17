@@ -1,7 +1,7 @@
 {
   "engine": "Pygame WebAssembly / Pygbag",
   "desktop_main_sha256": "a3c1768fe2baafdea4c5c5199f6d285ebb1b650a5ed774c6e5f3d9bc0ffd92ff",
-  "browser_game_engine_sha256": "3a4ffd9f007f407b07c1583a2a4a2aeedb1d43b390af2209fda8850674fa83b1",
-  "generated_at": "2026-10-17T12:03:53.044568+00:00",
+  "browser_game_engine_sha256": "bf78205fe2d95e4db8695ef0ea2236d1f243041d8448880f10b5a60949882e04",
+  "generated_at": "2026-10-17T12:12:16.082702+00:00",
   "notes": "game_engine.py preserves desktop gameplay; only native terminal/TTS and browser transport adapters differ."
 }

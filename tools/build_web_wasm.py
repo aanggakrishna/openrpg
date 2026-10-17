@@ -102,6 +102,13 @@ def main() -> None:
         try:
             import json
             import platform
+            name_entry = bool(self.mode == "setup" and self.wizard.get("step") == 0)
+            if name_entry:
+                supplied_name = getattr(platform.window, "openrpgMobileNameInput", None)
+                if supplied_name is not None:
+                    clean_name = ''.join(char for char in str(supplied_name) if char.isprintable())[:18]
+                    if clean_name != self.wizard.get("name", ""):
+                        self.wizard["name"] = clean_name
             battle = self.battle if self.mode == "battle" else None
             if battle:
                 blocked = bool(battle.get("result") or battle.get("intro") or
@@ -119,6 +126,8 @@ def main() -> None:
                 }
             else:
                 snapshot = {"mode": self.mode, "battle": None}
+            snapshot["nameInput"] = name_entry
+            snapshot["name"] = self.wizard.get("name", "") if name_entry else ""
             platform.window.openrpgMobileState = json.dumps(snapshot)
         except Exception:
             pass

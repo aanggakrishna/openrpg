@@ -298,6 +298,7 @@ body{display:grid;place-items:center}
    Pygame keyboard loop.  The left stick deliberately emits arrow keys, so
    battle's A attack never conflicts with walking left. */
 #mobile-controls,#rotate-overlay{display:none}
+#mobile-name-input{display:none}
 @media (max-width:900px), (pointer:coarse){
   #mobile-controls{display:block;position:fixed;inset:0;z-index:30;pointer-events:none;touch-action:none;-webkit-user-select:none;user-select:none}
   #touch-analog{position:absolute;left:max(16px,env(safe-area-inset-left));bottom:max(16px,env(safe-area-inset-bottom));width:126px;height:126px;border:3px solid rgba(177,225,209,.8);border-radius:50%;background:radial-gradient(circle,rgba(58,119,117,.38),rgba(9,37,39,.72));box-shadow:inset 0 0 0 9px rgba(8,30,32,.4),0 4px 0 rgba(0,0,0,.38);pointer-events:auto;touch-action:none}
@@ -323,6 +324,10 @@ body{display:grid;place-items:center}
   .battle-button.cooling::after{content:"";position:absolute;inset:0;border-radius:50%;background:rgba(5,22,25,.42);pointer-events:none}
   .battle-button.cooling .cooldown,.battle-button.cooling .key,.battle-button.cooling small{position:relative;z-index:1}
   .touch-hint{position:absolute;left:50%;bottom:max(3px,calc(env(safe-area-inset-bottom) / 2));transform:translateX(-50%);color:rgba(255,244,200,.82);font:700 10px/1 system-ui,sans-serif;text-shadow:0 1px 2px #001;white-space:nowrap}
+  /* A real DOM input is required for iOS/Android to show their native
+     keyboard. It stays visually neutral because the canvas draws the field. */
+  #mobile-name-input{display:block;position:fixed;z-index:35;left:50%;top:50%;width:2px;height:2px;opacity:.01;border:0;padding:0;transform:translate(-50%,-50%);font-size:16px;caret-color:transparent;background:transparent;color:transparent}
+  #mobile-name-input.is-inactive{display:none}
 }
 @keyframes ultimate-ready{50%{transform:scale(1.06)}}
 @media (max-width:900px) and (max-aspect-ratio:1/1), (pointer:coarse) and (max-aspect-ratio:1/1){
@@ -361,6 +366,7 @@ body{display:grid;place-items:center}
         </div>
         <span class="touch-hint" id="touch-hint" aria-hidden="true">ANALOG · ACT · HIT · BAG · MENU</span>
     </div>
+    <input id="mobile-name-input" class="is-inactive" type="text" inputmode="text" enterkeyhint="next" autocomplete="nickname" autocapitalize="words" maxlength="18" aria-label="Character name">
 
     <div id="transfer" align=center>
 <!--        <div class="spinner" id='spinner'></div> -->
@@ -532,6 +538,7 @@ frameborder="1"
     });
     const touchActions = document.getElementById("touch-actions");
     const touchHint = document.getElementById("touch-hint");
+    const mobileNameInput = document.getElementById("mobile-name-input");
     const battleButtons = [...document.querySelectorAll("[data-battle-key]")];
     const tapBattleButton = (button, event) => {
         event.preventDefault();
@@ -559,6 +566,23 @@ frameborder="1"
     const updateMobileBattleUi = () => {
         let state;
         try { state = JSON.parse(window.openrpgMobileState || "{}"); } catch (_) { return; }
+        const wantsNameInput = Boolean(state.nameInput);
+        mobileNameInput.classList.toggle("is-inactive", !wantsNameInput);
+        if (wantsNameInput) {
+            const name = String(state.name || "");
+            if (mobileNameInput.value !== name && document.activeElement !== mobileNameInput) mobileNameInput.value = name;
+            // The user has just tapped New Game / the empty profile slot. A
+            // focus request here opens the native Android/iOS keyboard; the
+            // tiny input also remains tappable where a browser blocks auto-focus.
+            if (document.activeElement !== mobileNameInput) mobileNameInput.focus({preventScroll:true});
+        } else if (document.activeElement === mobileNameInput) {
+            mobileNameInput.blur();
+            mobileNameInput.value = "";
+            window.openrpgMobileNameInput = "";
+        } else if (!wantsNameInput) {
+            mobileNameInput.value = "";
+            window.openrpgMobileNameInput = "";
+        }
         const battle = state.battle;
         const active = state.mode === "battle" && battle && !battle.locked;
         touchActions.classList.toggle("is-battle", Boolean(active));
@@ -573,6 +597,15 @@ frameborder="1"
         setBattleButton("r", 0, ultimateReady, ultimateReady ? "READY" : `${meter}%`);
     };
     window.setInterval(updateMobileBattleUi, 100);
+    mobileNameInput.addEventListener("input", () => {
+        window.openrpgMobileNameInput = mobileNameInput.value.slice(0, 18);
+    });
+    mobileNameInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        sendGameKey("Enter", "keydown");
+        window.setTimeout(() => sendGameKey("Enter", "keyup"), 80);
+    });
     const enterMobileLandscape = async () => {
         try {
             if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
