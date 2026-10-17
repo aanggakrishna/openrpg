@@ -1,0 +1,69 @@
+Original prompt: Implement the agreed OpenRPG additions: biome stories and goals, periodic world events, weather gameplay effects, scheduled NPCs and story dialogue, secret locations, collection achievements, and randomized daily quests spanning different activities.
+
+## Work log
+- Existing save, daily quest, weather, biome, NPC, and collection systems were inspected before implementation.
+- Preserve existing downloaded assets and the current running game state.
+- Added persistent stories for all 16 biomes, collectible secret sites, periodic biome-themed events, scheduled market NPCs with bilingual hints, collection milestones, and varied daily quests.
+- Hidden caches now use retryable type-themed riddles. Collection milestones unlock visible trainer cosmetics as well as badges, coins, and gacha tickets.
+- Connected weather to Pokémon spawn weights, event and secret rewards to daily quests, and story completions to coins, badges, and trainer XP.
+- Added the Explorer Journal (`L`) and save version 5 defaults; existing profiles migrate with their existing fields intact.
+- Verified with `./.venv/bin/python -m unittest discover -s tests` (33 passing), a focused runtime smoke check, `py_compile`, and `git diff --check`.
+
+## TODO
+- Relaunch the desktop game to see the new journal, events, and secrets in the current session.
+- The smoke check used SDL's dummy video driver; normal-window visuals were not captured.
+
+## GBA visual overhaul — branch `gba`
+- Revision after visual feedback: restored the previous PokéAPI/animated Pokémon renderer, removed the GBA Pokémon override, and corrected native directional walking poses (east mirrors west).
+- Added decoded FireRed metatile terrain, full buildings/trees/rocks, interior tiles, native battle terrain, and a quieter teal/cream field-journal HUD. Adjusted home/furniture collision bounds to the new visuals.
+- Verified four new offline asset regressions, `tests/check_game.py`, compilation, whitespace checks, and review screenshots in `artifacts/gba-review`. `tests/check_retro.py` still fails its capture-probability assertion at line 111; the identical failure was reproduced by loading the unchanged HEAD modules.
+- GBA environment source is the existing local pret/pokefirered export, not direct extraction of the user's ROM. Custom animals/effects/home decorations without GBA equivalents remain unchanged. Desktop relaunched from `gba`.
+- The older bullets below describe the superseded first pass, not the current Pokémon renderer.
+- Added FireRed Rev 1's local Pokémon, overworld, trainer, item, and interface sprite package under `assets/gba/`.
+- The renderer now prioritizes 384 mapped FireRed Pokémon sprites locally, uses FireRed player/NPC sheets and trainer battle portraits, and retains the existing cache only as a fallback for post-GBA species.
+- Desktop startup now bypasses the decorative title/character screen; an existing profile enters the overworld immediately and a new user sees only required profile setup.
+- Replaced the startup sprite-download gate with background requests, so the world is playable immediately.
+- Verified with `tests/check_game.py`, a direct-launch GBA smoke check, and visual captures of the overworld and a Bulbasaur-vs-Charmander battle. The broad legacy suite retains pre-existing failures in profile setup (`select_gender` missing), reserve-trainer count, and world-region collision fixtures.
+
+## Web port — openrpg-vercel
+- Created the `openrpg-vercel` branch from the latest `main` revision.
+- Replaced the old JavaScript-only prototype with an authenticated Vercel shell that launches the shared Pygame engine through Pygbag/WebAssembly. The browser bundle uses the current desktop source, map, combat, and assets; the local terminal becomes a browser-only unavailable stub.
+- Added Neon/Postgres account APIs, signed cookie sessions, cloud save/load for the existing multi-profile save format, and configurable browser online-server URL (`NEXT_PUBLIC_ONLINE_SERVER_URL`).
+- Generated `public/desktop/openrpg-game.tar.gz` from the current engine. Pygbag's static browser build preserves gameplay code instead of maintaining a second game implementation.
+- Verified JavaScript and generated Python syntax. A Playwright capture of the login screen passed visually; its only console error is expected when static `python -m http.server` has no `/api/auth/me` endpoint.
+- Pygbag loader required BrowserFS from `https://pygame-web.github.io/archives/0.9/browserfs.min.js`; the previous CDN 0.9.3 path returned 404. The loader now reaches its click-to-start screen after the archive downloads.
+- Browser Pokedex requests use bundled sprite files and do not make a runtime TLS/PokéAPI request. Native `ssl`/urllib imports are excluded from the browser source.
+
+## GBA service animations
+- Added scripted restaurant service: the trainer walks to a table and eats/drinks before the corresponding needs, HP, and coins update.
+- Added hotel staircase route and FireRed-atlas bedroom cutaway; the trainer lies on the bed, sleeps through a darkened scene, then wakes to a dawn fade before the 8-hour stay is applied.
+- Added Pokémon Center healing gallery with bundled GBA front sprites, pulsing green pluses, progress bar, and a soft looping treatment chime. Healing and Poké Ball purchases are applied only after their animation; Poké Balls fly to the HUD counter.
+- All four actions are covered by deterministic service-animation tests. Full suite: 47 passing; Python compilation and `git diff --check` pass. Captured and visually inspected SDL screenshots in `/tmp/openrpg-{restaurant-eat,hotel-sleep,center-heal}.png`.
+- This checkout is the native Pygame game (no root `package.json` or browser entry point), so the browser-only Playwright client does not apply; validation used the deterministic Pygame update loop and screenshots instead.
+- TODO: relaunch the desktop game to try the restaurant, hotel, healing, and ball-purchase animations interactively.
+- Hotel route correction after playtest: the previous endpoint (238, 365) overlapped the reception counter and the service modal reopened after waking. The trainer now follows the public aisle to/from the stairs and ends at (384, 610), within range of the exit, in free-roam mode. Regression test verifies the full route never crosses the desk footprint and the exit returns to the prior scene.
+- Added recovery on load/scene transition for legacy saved positions inside service-room furniture; the hotel save from the earlier broken endpoint now relocates to the door entry and persists safely.
+- Restaurant meal/drink loading shows one large random food- or drink-category emoji per order; the chosen emoji gently rocks and bounces without changing until the service finishes. Regression coverage verifies category, persistence, icon scale, and rendering.
+- Interaction discovery now suppresses wild Pokémon and trainer battle invitations in non-outdoor room scenes, while retaining those interactions outdoors.
+- Tutorial intro now clearly offers “Ikuti tutorial” or “Lewati tutorial”; an always-visible skip button sits immediately beneath the active tutorial mission in the HUD and opens the existing confirmation dialog.
+- Home redesign now uses the original FireRed Pallet Town house ground-floor and bedroom maps, including the staircase, kitchen, dining set, PC, bed, and entry mat. The home meal/drink actions show one large randomly selected, wobbling food/drink emoji; sleeping darkens the GBA bedroom and fades back to dawn before restoring stats. Home decor was repositioned so it no longer covers the native dining table/carpet. Full suite: 54 tests passing; compilation and `git diff --check` pass.
+- Trainer HP is now level-scaled (level-ups raise max/current HP), drains slowly while walking, and takes greater post-duel damage against higher-level opponents. Gate obstacles now choose a weighted-random Pokémon-type trial, tile maze, dice guess, or rock-paper-scissors; wrong choices cost 10% of max Trainer HP. Team Rocket encounters use a saved pity-weighted random spawn (roughly one per few new zones, with guaranteed stolen-Pokémon rematches), rather than odd/even zone placement. Wild encounter levels now stay within each sanctuary's level band, and each boss is the strongest locally habitat-compatible non-legendary species early / legendary-eligible late. Verified UI screenshots and all 60 tests pass; `py_compile` and `git diff --check` pass.
+- Gate maze revision: expanded the board to a randomized 41×21 FireRed cave-tile maze with 461 walkable cells, branches and dead ends. Keyboard navigation, wall damage, solving, and rendered layout verified; all 60 tests still pass.
+- Gate quiz fairness pass: reduced the legacy type quiz from 38% to 16%; quiz choices are limited to up to six healthy Pokémon in the actual party (not Pokédex-only history), include a valid type answer, and fall back to a newer minigame when the party has no match. Verified quiz screenshot, fallback/ownership regression, all 61 tests, compilation, and whitespace checks. Existing desktop process still predates these edits and must be restarted to load them.
+- Restarted desktop from current `main.py` after the earlier process had exited; live Pygame process remains running with the latest gate changes.
+- Maze readability revision after screenshot review: reduced board from 41×21 to 29×17 GBA tiles, added clear S/E markers, Arrow/WASD controls, and an H hint that highlights the next five connected cells toward the exit. Added BFS route recovery from any dead end. Movement, hint route, solving, all 61 tests, compilation, whitespace, and screenshot verified.
+- Restarted the live Pygame desktop after saving through its normal `finally` shutdown path; the latest smaller maze and hint controls are active.
+- Follow-up maze route visibility: the screenshot showed that equal-colored corridor tiles still made the exit route hard to spot. The generated shortest path is now shown as a continuous GBA-style gold breadcrumb trail from S to E; branches remain open and the H hint works when exploring off-trail. All 61 tests pass and the route screenshot is visually verified.
+- Restarted the desktop again so the continuous marked route is active in the live game.
+- Removed the gate maze from the random challenge pool after playtesting showed the visuals remained confusing. Gate challenges now roll only the owned-party type quiz, dice, or rock-paper-scissors; if the quiz has no valid owned Pokémon answer, its fallback is restricted to dice/RPS. Updated regression coverage; all 61 tests pass, Python compilation and `git diff --check` pass.
+- Added three GBA-asset gate quizzes: choose the correctly ordered three-stage evolution from three randomized sequences; identify a darkened FireRed Pokémon sprite from A/B/C names; and identify a random FireRed sprite's type from A/B/C choices. Evolution/type sources use the local Pokédex database, and quiz sprites are bundled FireRed assets. Added keyboard A/B/C, arrows, and Enter selection plus regression tests for correct answer generation and rendering. All 63 tests pass; `py_compile`, `git diff --check`, and visual screenshots for each new quiz pass.
+- Started the updated Pygame game so the new gate challenges can be tried interactively.
+- Silhouette answer now has a dedicated reveal phase: a correct answer replaces the darkened FireRed sprite with its original-color sprite and Pokémon name for 1.35 seconds before the gate-opening animation. Added regression coverage for reveal text/timing and rechecked the reveal screenshot. All 63 tests pass; game restarted with this update.
+
+## Browser WebAssembly package
+- Rebuilt `public/desktop/pygbag-source.tar.gz` from the current OpenRPG source and full runtime artwork/audio. The browser build retains the desktop game flow, maps, UI, and assets; browser-only adapters isolate unavailable local services (shell terminal, native TTS, threaded pre-rendering, and byte-stream image decoding).
+- Added `tools/build_web_wasm.py` so later changes can be packaged reproducibly, and a manifest records desktop/browser engine checksums.
+- Fixed Pygbag startup by bundling BrowserFS at `public/desktop/browserfs.min.js` and loading it before the WebAssembly runtime.
+- Browser smoke test completed at `http://127.0.0.1:4173/desktop/`: profile selection rendered, Enter opened the real new-adventurer flow, and the visual UI matched the Pygame build. The WebAssembly runtime uses FireRed sprites locally for Pokémon previews because Pygame WebAssembly cannot decode PNG bytes through `BytesIO`.
+- Added a browser-only pixel-icon fallback for every existing emoji prompt and service animation. This removes the WebAssembly missing-system-emoji-font warning while preserving the original emoji meanings (food, drinks, dice, rock-paper-scissors, types, and gate icons).
+- Browser follow-up: Pokémon now load as local FireRed surfaces in the WebAssembly runtime (starter, companion, and wild rendering no longer waits for external image bytes). Added a browser-safe fullscreen control and responsive 16:10 canvas sizing that preserves pixel-art proportions.

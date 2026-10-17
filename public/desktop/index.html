@@ -286,9 +286,18 @@ function show_infobox() {
 
     <script src="browserfs.min.js"></script>
 
-<style id="openrpg-shared-engine-size">html,body{margin:0!important;overflow:hidden!important;background:#121b17!important}#canvas{image-rendering:pixelated}</style></head>
+<style id="openrpg-shared-engine-size">
+html,body{margin:0!important;min-height:100%;overflow:hidden!important;background:#121b17!important}
+body{display:grid;place-items:center}
+#canvas{display:block!important;width:min(100vw,160vh)!important;height:auto!important;max-height:100vh!important;image-rendering:pixelated;outline:0}
+#fullscreen-toggle{position:fixed;z-index:20;right:14px;top:14px;min-width:44px;min-height:44px;padding:8px 12px;border:2px solid #85b8ae;border-radius:5px;background:#18383a;color:#fff4c8;font:700 12px/1 system-ui,sans-serif;letter-spacing:.04em;cursor:pointer;box-shadow:0 2px 0 #07191a}
+#fullscreen-toggle:hover,#fullscreen-toggle:focus-visible{background:#285458;outline:3px solid #ffd568;outline-offset:2px}
+@media (max-width:600px){#canvas{width:100vw!important;max-height:calc(100vh - env(safe-area-inset-bottom))!important}#fullscreen-toggle{right:8px;top:calc(8px + env(safe-area-inset-top));font-size:11px}}
+</style></head>
 
 <body>
+
+    <button id="fullscreen-toggle" type="button" aria-label="Toggle fullscreen game" title="Toggle fullscreen">FULLSCREEN</button>
 
     <div id="transfer" align=center>
 <!--        <div class="spinner" id='spinner'></div> -->
@@ -372,6 +381,27 @@ frameborder="1"
     </div>
 
     <script type="application/javascript">
+
+    const fullscreenToggle = document.getElementById("fullscreen-toggle");
+    const fullscreenLabel = () => {
+        const active = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+        fullscreenToggle.textContent = active ? "EXIT FULLSCREEN" : "FULLSCREEN";
+        fullscreenToggle.setAttribute("aria-pressed", String(active));
+    };
+    fullscreenToggle.addEventListener("click", async () => {
+        try {
+            if (document.fullscreenElement || document.webkitFullscreenElement) {
+                await (document.exitFullscreen?.() || document.webkitExitFullscreen?.());
+            } else {
+                await (document.documentElement.requestFullscreen?.() || document.documentElement.webkitRequestFullscreen?.());
+            }
+        } catch (error) {
+            console.warn("Fullscreen unavailable", error);
+        }
+        fullscreenLabel();
+    });
+    document.addEventListener("fullscreenchange", fullscreenLabel);
+    document.addEventListener("webkitfullscreenchange", fullscreenLabel);
 
     globalThis.__canvas_resized = (self, ecw, ech) => {
         console.warn("TODO: panda3d canvas monitor", self, ecw, ech)
