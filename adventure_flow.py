@@ -682,6 +682,11 @@ class FlowMixin:
 
     def heal_pokemon_party(self):
         cost=self.center_cost()
+        if (not self.service_animation_finishing and cost > 0
+                and self.life.scene == 'center' and self.service_interior_kind == 'center'):
+            if self.life.money >= cost:
+                self.start_service_animation('center_heal', 'heal')
+                return
         if self.life.money<cost:
             self.center_message=self.words('Uang belum cukup. Istirahat di rumah atau jual hasil tani.','Not enough coins. Rest at home or sell farm goods.')
             return
@@ -699,6 +704,11 @@ class FlowMixin:
         if quantity<=0:
             self.center_message=self.words('Tas sudah penuh: maksimal 10 Poké Ball.','Bag is full: maximum 10 Poké Balls.')
             self.play_action_sound('not-enough-money',.25)
+            return
+        if (not self.service_animation_finishing and self.life.scene == 'center'
+                and self.service_interior_kind == 'center'
+                and self.life.money >= BUY['Pokeball'] * quantity):
+            self.start_service_animation('balls', 'buy_balls', quantity)
             return
         self.trade('Pokeball',True,quantity)
 

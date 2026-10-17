@@ -175,6 +175,59 @@ class RedesignTests(unittest.TestCase):
         self.assertEqual(g.life.bag['Pokeball'],5)
         self.assertEqual(g.life.money,10)
 
+    def test_service_animation_defers_meal_until_table_scene_finishes(self):
+        g=self.game;g.life=Life(scene='restaurant',money=80)
+        g.service_interior_kind='restaurant';g.mode='service_interior'
+        before=dict(g.life.stats);money=g.life.money
+        g.hospitality_order('meal')
+        self.assertEqual(g.mode,'service_animation')
+        self.assertEqual(g.life.money,money)
+        self.assertEqual(g.life.stats,before)
+        for _ in range(160):g.update_service_animation(.05)
+        self.assertEqual(g.mode,'service_interior')
+        self.assertEqual(g.life.money,money-10)
+        self.assertEqual(g.life.stats['Kenyang'],min(100,before['Kenyang']+58))
+
+    def test_hotel_service_animation_sleeps_before_advancing_world_time(self):
+        g=self.game;g.life=Life(scene='hotel',money=80,stats={'Kenyang':25,'Minum':30,'Energi':20,'Senang':40})
+        g.service_interior_kind='hotel';g.mode='service_interior'
+        day,minutes,money=g.life.day,g.life.minutes,g.life.money
+        g.hospitality_order('hotel')
+        self.assertEqual((g.life.day,g.life.minutes,g.life.money),(day,minutes,money))
+        phases=set()
+        for _ in range(220):
+            if g.service_animation:phases.add(g.service_animation['phase'])
+            g.update_service_animation(.05)
+        self.assertTrue({'walk','fade_room','sleep','wake','return'} <= phases)
+        self.assertEqual(g.mode,'service_interior')
+        self.assertEqual(g.life.money,money-15)
+        self.assertEqual(g.life.stats['Energi'],100)
+        self.assertNotEqual((g.life.day,g.life.minutes),(day,minutes))
+
+    def test_center_heal_and_ball_flight_apply_only_after_animation(self):
+        g=self.game;g.life=Life(scene='center',money=200,pokemon_party=[1,4],pokemon_active=[1,4])
+        g.service_interior_kind='center';g.mode='service_interior'
+        for ident in g.life.pokemon_active:g.life.pokemon_health[str(ident)]=1
+        money=g.life.money
+        g.heal_pokemon_party()
+        self.assertEqual(g.mode,'service_animation')
+        self.assertEqual(g.life.money,money)
+        self.assertEqual(g.life.pokemon_health['1'],1)
+        for _ in range(120):g.update_service_animation(.05)
+        self.assertEqual(g.mode,'service_interior')
+        self.assertLess(g.life.money,money)
+        self.assertGreater(g.life.pokemon_health['1'],1)
+
+        g.mode='service_interior';g.life.bag['Pokeball']=5;money=g.life.money
+        g.buy_center_pokeballs()
+        self.assertEqual(g.mode,'service_animation')
+        self.assertEqual(g.life.bag['Pokeball'],5)
+        self.assertEqual(g.life.money,money)
+        for _ in range(80):g.update_service_animation(.05)
+        self.assertEqual(g.mode,'service_interior')
+        self.assertEqual(g.life.bag['Pokeball'],10)
+        self.assertEqual(g.life.money,money-60)
+
     def test_05_combat_gravity_projectiles_and_ai(self):
         g=self.game;g.life=Life();g.begin_pokemon_battle(4);b=g.battle;b['intro']=None;b['platforms']=[]
         for ident in (1,4):

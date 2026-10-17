@@ -221,6 +221,10 @@ class LegacyGame:
         self.service_interior_kind = None
         self.service_interior_return_mode = None
         self.service_menu_selected = 0
+        self.service_animation = None
+        self.service_animation_finishing = False
+        self.service_gba_pokemon_cache = {}
+        self.service_heal_channel = pg.mixer.Channel(5) if pg.mixer.get_init() else None
         self.last_hit_cry = 0.0
         self._last_pokemon_cry = (None, 0.0)
         self._music_key = None
@@ -2511,6 +2515,18 @@ class LegacyGame:
         self.queue_pokemon_cry(pokemon_id)
 
     def hospitality_order(self, option):
+        if (self.service_interior_kind in ("restaurant", "hotel")
+                and self.life.scene == self.service_interior_kind
+                and not self.service_animation_finishing):
+            if option == "meal" and self.life.money >= 10:
+                self.start_service_animation("restaurant", option)
+                return
+            if option == "drink" and self.life.money >= 5:
+                self.start_service_animation("restaurant", option)
+                return
+            if option == "hotel" and self.life.money >= 15:
+                self.start_service_animation("hotel", option)
+                return
         if option == "meal":
             message = self.life.restaurant_meal()
         elif option == "drink":
@@ -2521,6 +2537,270 @@ class LegacyGame:
         if message.startswith(("Makan selesai", "Minuman disajikan", "Menginap selesai")):
             self.play_action_sound({"meal": "eat", "drink": "drink"}.get(option, "sleep"), .36)
             self.mode = "service_interior" if self.service_interior_kind else "game"
+
+    def start_service_animation(self, kind, action=None, quantity=0):
+        """Play a short GBA-styled service scene before applying its reward."""
+        if self.service_animation:
+            return
+        animation = {
+            "kind": kind, "action": action, "elapsed": 0.0,
+            "phase": "walk" if kind in ("restaurant", "hotel") else "play",
+            "phase_time": 0.0, "origin_mode": self.mode,
+            "quantity": quantity, "waypoint": 0, "sound_time": 0.0,
+        }
+        if kind == "restaurant":
+            animation["path"] = [(430.0, 552.0)]
+            animation["duration"] = 3.2 if action == "meal" else 2.0
+        elif kind == "hotel":
+            # Take the visible staircase route, then cut to the guest room.
+            animation["path"] = [(520.0, 602.0), (520.0, 485.0), (302.0, 485.0), (238.0, 365.0)]
+            animation["duration"] = 0.0
+        elif kind == "center_heal":
+            animation["duration"] = max(4.0, 1.5 + len(self.life.pokemon_active[:3]) * 1.05)
+            animation["pokemon"] = list(self.life.pokemon_active[:3])
+        elif kind == "balls":
+            animation["duration"] = 1.05 + max(1, quantity) * .16
+        self.service_animation = animation
+        if kind == "center_heal":
+            self.play_service_heal_loop()
+        self.moving = False
+        self.mode = "service_animation"
+        if kind == "restaurant":
+            self.play_action_sound("step-wood", .20)
+        elif kind == "hotel":
+            self.play_action_sound("step-wood", .20)
+        self.buttons = []
+
+    def play_service_heal_loop(self):
+        if not self.service_heal_channel or not pg.mixer.get_init():
+            return
+        try:
+            import array
+            sample_rate, _, channels = pg.mixer.get_init()
+            samples = array.array("h")
+            for index in range(int(sample_rate * .72)):
+                t = index / sample_rate
+                # Soft, looping two-note chime; envelope avoids a click at loop boundaries.
+                envelope = min(1.0, index / 500, (sample_rate * .72 - index) / 600)
+                frequency = 660 if t < .36 else 880
+                value = int(4200 * envelope * math.sin(math.tau * frequency * t))
+                samples.extend([value] * channels)
+            sound = pg.mixer.Sound(buffer=samples.tobytes())
+            sound.set_volume(.28 * self.life.effects_volume)
+            self.service_animation["heal_sound"] = sound
+            self.service_heal_channel.play(sound, loops=-1)
+        except (pg.error, ValueError, TypeError):
+            self.service_heal_channel = None
+
+    def update_service_animation(self, dt):
+        animation = self.service_animation
+        if not animation:
+            self.mode = "service_interior"
+            return
+        dt = min(.05, max(0.0, dt))
+        animation["elapsed"] += dt
+        animation["phase_time"] += dt
+        if animation["kind"] in ("restaurant", "hotel") and animation["phase"] == "walk":
+            path = animation["path"]
+            remaining = 210 * dt
+            self.moving = True
+            while remaining > 0 and animation["waypoint"] < len(path):
+                tx, ty = path[animation["waypoint"]]
+                dx, dy = tx - self.life.x, ty - self.life.y
+                distance = math.hypot(dx, dy)
+                if distance < 1:
+                    self.life.x, self.life.y = tx, ty
+                    animation["waypoint"] += 1
+                    continue
+                self.facing = ("right" if dx > 0 else "left") if abs(dx) >= abs(dy) else ("down" if dy > 0 else "up")
+                step = min(distance, remaining)
+                self.life.x += dx / distance * step
+                self.life.y += dy / distance * step
+                remaining -= step
+                if step >= distance:
+                    animation["waypoint"] += 1
+            if animation["waypoint"] >= len(path):
+                self.life.x, self.life.y = path[-1]
+                self.moving = False
+                animation["phase"] = "fade_room" if animation["kind"] == "hotel" else "eat"
+                animation["phase_time"] = 0.0
+                if animation["kind"] == "restaurant":
+                    self.play_action_sound("eat" if animation["action"] == "meal" else "drink", .32)
+        elif animation["kind"] == "hotel" and animation["phase"] == "fade_room" and animation["phase_time"] >= .65:
+            animation["phase"], animation["phase_time"] = "sleep", 0.0
+            self.play_action_sound("sleep", .3)
+        elif animation["kind"] == "hotel" and animation["phase"] == "sleep" and animation["phase_time"] >= 2.2:
+            animation["phase"], animation["phase_time"] = "wake", 0.0
+        elif animation["kind"] == "hotel" and animation["phase"] == "wake" and animation["phase_time"] >= 1.8:
+            animation["phase"], animation["phase_time"] = "return", 0.0
+        elif animation["kind"] == "restaurant" and animation["phase"] == "eat" and animation["phase_time"] >= animation["duration"]:
+            self.finish_service_animation()
+            return
+        elif animation["kind"] == "hotel" and animation["phase"] == "return" and animation["phase_time"] >= .55:
+            self.finish_service_animation()
+            return
+        elif animation["kind"] in ("center_heal", "balls") and animation["elapsed"] >= animation["duration"]:
+            self.finish_service_animation()
+            return
+        if animation["kind"] == "center_heal":
+            animation["sound_time"] += dt
+            # Keep the treatment audible without overlapping the healing loop.
+            if animation["sound_time"] >= 1.0:
+                animation["sound_time"] = 0.0
+        if animation["kind"] == "balls":
+            animation["phase"] = "flight"
+        elif animation["kind"] == "center_heal":
+            animation["phase"] = "healing"
+
+    def finish_service_animation(self):
+        animation = self.service_animation
+        if not animation:
+            return
+        origin_mode = animation.get("origin_mode", "service_interior")
+        if self.service_heal_channel:
+            self.service_heal_channel.stop()
+        self.service_animation_finishing = True
+        try:
+            if animation["kind"] == "restaurant":
+                self.hospitality_order(animation["action"])
+            elif animation["kind"] == "hotel":
+                self.life.x, self.life.y = 238.0, 365.0
+                self.hospitality_order("hotel")
+            elif animation["kind"] == "center_heal":
+                self.heal_pokemon_party()
+                self.notify(self.center_message)
+            elif animation["kind"] == "balls":
+                self.trade("Pokeball", True, animation["quantity"])
+        finally:
+            self.service_animation_finishing = False
+            self.service_animation = None
+        if self.mode == "service_animation":
+            self.mode = origin_mode if origin_mode in ("center", "service_interior") else "service_interior"
+
+    def draw_service_animation(self):
+        animation = self.service_animation
+        if not animation:
+            return
+        kind, phase = animation["kind"], animation["phase"]
+        if kind == "hotel" and phase in ("fade_room", "sleep", "wake"):
+            # Reuse the FireRed generic-building atlas for the guest-room cutaway.
+            self.art.gba.interior(self.canvas, "bedroom")
+            gba_player = self.art.gba_people.get(f"player-{self.life.character % 3}")
+            if gba_player is not None and gba_player.get_width() >= 16 and gba_player.get_height() >= 32:
+                sleeping = gba_player.subsurface((0, 0, 16, 32))
+                sleeping = pg.transform.rotate(pg.transform.scale(sleeping, (32, 64)), -90)
+                self.canvas.blit(sleeping, sleeping.get_rect(center=(371, 347)))
+            else:
+                self.art.character(self.canvas, 371, 366, self.life.character, 1.7,
+                                   self.frame + animation["phase_time"] * 60, False, "down")
+            self.label("KAMAR HOTEL", 640, 167)
+            if phase == "sleep":
+                bob = int(math.sin(self.frame / 12) * 8)
+                self.text("Z", 407, 400 + bob, (220, 242, 208), self.medium, True)
+                self.text("z", 428, 378 - bob, (220, 242, 208), self.small, True)
+            if phase == "fade_room":
+                alpha = int(255 * min(1, animation["phase_time"] / .65))
+            elif phase == "sleep":
+                alpha = 128
+            else:
+                progress = min(1.0, animation["phase_time"] / 1.8)
+                alpha = int(128 * (1 - progress))
+            veil = pg.Surface((W, H), pg.SRCALPHA)
+            veil.fill((9, 15, 28, alpha))
+            self.canvas.blit(veil, (0, 0))
+            if phase == "wake":
+                dawn = pg.Surface((W, H), pg.SRCALPHA)
+                dawn.fill((255, 220, 139, int(42 * min(1.0, animation["phase_time"] / 1.8))))
+                self.canvas.blit(dawn, (0, 0))
+        if kind == "restaurant" and phase == "eat":
+            x, y = int(self.life.x), int(self.life.y)
+            pulse = 1 + .04 * math.sin(self.frame / 4)
+            pg.draw.ellipse(self.canvas, (231, 226, 194), (x - 48, y - 86, 54, 15), 3)
+            pg.draw.circle(self.canvas, (244, 237, 211), (x - 21, y - 79), max(6, int(8 * pulse)))
+            for index in range(3):
+                steam_y = y - 110 - int((self.frame / 3 + index * 10) % 24)
+                pg.draw.circle(self.canvas, (238, 230, 197), (x - 21 + index * 8, steam_y), 3)
+        if kind == "center_heal":
+            shade = pg.Surface((W, H), pg.SRCALPHA)
+            shade.fill((13, 28, 34, 180))
+            self.canvas.blit(shade, (0, 0))
+            self.box((238, 184, 804, 407), (24, 54, 58), 15, (113, 191, 162))
+            self.text("POKÉMON CENTER", W / 2, 216, retro.GOLD, self.medium, True)
+            team = animation["pokemon"]
+            spacing = 195
+            start_x = W / 2 - (len(team) - 1) * spacing / 2
+            for index, ident in enumerate(team):
+                x, y = int(start_x + index * spacing), 397
+                pulse = .5 + .5 * math.sin(self.frame / 7 + index * 1.8)
+                radius = 49 + int(pulse * 11)
+                pg.draw.circle(self.canvas, (89, 202, 136), (x, y), radius, 3)
+                sprite = self.service_pokemon_surface(ident, 108)
+                if sprite:
+                    self.canvas.blit(sprite, sprite.get_rect(center=(x, y)))
+                for particle in range(4):
+                    angle = self.frame / 16 + particle * math.tau / 4 + index
+                    px = x + math.cos(angle) * (radius + 10)
+                    py = y + math.sin(angle) * (radius + 10)
+                    self.text("+", px, py, (111, 246, 145), self.small, True)
+                detail = self.pokemon_data(ident) or {}
+                self.text(detail.get("name", f"Pokémon #{ident}").title(), x, 472, CREAM, self.tiny, True)
+            progress = min(1.0, animation["elapsed"] / animation["duration"])
+            pg.draw.rect(self.canvas, (12, 31, 35), (385, 528, 510, 18), border_radius=7)
+            pg.draw.rect(self.canvas, (99, 219, 151), (389, 532, int(502 * progress), 10), border_radius=5)
+            self.text("Pemulihan berlangsung…", W / 2, 574, (170, 232, 196), self.small, True)
+        elif kind == "balls":
+            elapsed = animation["elapsed"]
+            for index in range(animation["quantity"]):
+                progress = (elapsed - index * .14) / .70
+                if not 0 <= progress <= 1:
+                    continue
+                eased = progress * progress * (3 - 2 * progress)
+                x = int(640 + (1111 - 640) * eased)
+                y = int(330 + (81 - 330) * eased - math.sin(progress * math.pi) * 85)
+                self.draw_service_ball(x, y, max(10, int(20 * (1 - .25 * progress))))
+            self.box((431, 641, 418, 62), (25, 54, 58), 10, (113, 191, 162))
+            self.text(f"Poké Ball ×{animation['quantity']}", W / 2, 662, CREAM, self.small, True)
+            self.text("Dikirim ke dalam tas…", W / 2, 684, (170, 232, 196), self.tiny, True)
+        if kind in ("restaurant", "hotel"):
+            label = ("Makan dulu…" if animation["action"] == "meal" else "Minum dulu…") if kind == "restaurant" else {
+                "walk": "Menuju kamar…", "fade_room": "Naik ke kamar…", "sleep": "Beristirahat…",
+                "wake": "Selamat pagi!", "return": "Bangun dan kembali",
+            }.get(phase, "")
+            if label and not (kind == "hotel" and phase in ("fade_room", "sleep", "wake")):
+                self.box((365, 655, 550, 58), (24, 54, 58), 9, (113, 191, 162))
+                self.text(label, W / 2, 676, CREAM, self.small, True)
+
+    def service_pokemon_surface(self, pokemon_id, target_size=108):
+        """Prefer the bundled FireRed front sprite for the healing gallery."""
+        ident = int(pokemon_id)
+        key = (ident, target_size)
+        if key in self.service_gba_pokemon_cache:
+            return self.service_gba_pokemon_cache[key]
+        detail = self.pokemon_data(ident) or {}
+        name = str(detail.get("name", "")).lower().replace(" ", "-")
+        source = None
+        if name:
+            path = ROOT / "assets" / "gba" / "pokemon" / name / "front.png"
+            if path.is_file():
+                try:
+                    source = pg.image.load(str(path)).convert_alpha()
+                except (pg.error, OSError):
+                    source = None
+        if source is not None:
+            sprite = self.fit_pokemon_sprite(source, target_size)
+        else:
+            sprite = self.pokemon_surface(ident, target_size)
+        self.service_gba_pokemon_cache[key] = sprite
+        return sprite
+
+    def draw_service_ball(self, x, y, radius):
+        pg.draw.circle(self.canvas, (54, 48, 39), (x, y + 2), radius + 2)
+        pg.draw.circle(self.canvas, (218, 76, 79), (x, y), radius)
+        pg.draw.rect(self.canvas, (244, 237, 216), (x - radius, y, radius * 2, radius),
+                     border_bottom_left_radius=radius, border_bottom_right_radius=radius)
+        pg.draw.line(self.canvas, (54, 48, 39), (x - radius, y), (x + radius, y), 3)
+        pg.draw.circle(self.canvas, (239, 218, 165), (x, y), max(3, radius // 3))
+        pg.draw.circle(self.canvas, (54, 48, 39), (x, y), max(2, radius // 5), 2)
 
     def open_service_interior(self, kind):
         self.service_interior_kind = kind
@@ -2548,7 +2828,7 @@ class LegacyGame:
             if action == "heal":
                 self.heal_pokemon_party()
             elif action == "buy_balls":
-                self.trade("Pokeball", True, 5)
+                self.buy_center_pokeballs()
             else:
                 self.open_center_services()
         elif kind == "restaurant":
@@ -5381,6 +5661,9 @@ class LegacyGame:
 
     def overlay(self):
         self.buttons = []
+        if self.mode == "service_animation":
+            self.draw_service_animation()
+            return
         if self.mode == "service_interior":
             self.draw_service_interior()
             return
@@ -6983,6 +7266,8 @@ class LegacyGame:
                 self.mode = "menu"
                 pg.key.stop_text_input()
             return
+        if self.mode == "service_animation":
+            return
         if event.type == pg.TEXTINPUT and self.mode == "terminal":
             # Keyboard shortcuts have already been forwarded by KEYDOWN.
             if not pg.key.get_mods() & (pg.KMOD_CTRL | pg.KMOD_GUI):
@@ -7322,6 +7607,9 @@ class LegacyGame:
             self.notify("PONSEL: OpenCode selesai merespons · notifikasi baru diterima.")
         self.environment.update(dt)
         self.moving = False
+        if self.mode == "service_animation":
+            self.update_service_animation(dt)
+            return
         active = self.mode in ("game", "map", "tutorial_map", "terminal", "inventory", "shop", "weather", "phone", "dex", "center", "companion_picker", "battle", "encounter", "pokemon_info", "interaction_picker", "daily_quests", "journal", "secret_puzzle", "evolution", "settings", "hospitality", "home_decor", "dead")
         if active:
             if self.mode == "game":self.ensure_walkable_position()
