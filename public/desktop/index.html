@@ -294,21 +294,37 @@ body{display:grid;place-items:center}
 #fullscreen-toggle:hover,#fullscreen-toggle:focus-visible{background:#285458;outline:3px solid #ffd568;outline-offset:2px}
 @media (max-width:600px){#canvas{width:100vw!important;max-height:calc(100vh - env(safe-area-inset-bottom))!important}#fullscreen-toggle{right:8px;top:calc(8px + env(safe-area-inset-top));font-size:11px}}
 
-/* Touch controls are intentionally browser-only: the Pygame game still owns
-   the underlying WASD/arrow/E/space commands used on desktop. */
+/* Touch controls are browser-only: they forward input to the original
+   Pygame keyboard loop.  The left stick deliberately emits arrow keys, so
+   battle's A attack never conflicts with walking left. */
 #mobile-controls,#rotate-overlay{display:none}
 @media (max-width:900px), (pointer:coarse){
   #mobile-controls{display:block;position:fixed;inset:0;z-index:30;pointer-events:none;touch-action:none;-webkit-user-select:none;user-select:none}
-  .touch-cluster{position:absolute;bottom:max(12px,env(safe-area-inset-bottom));display:grid;gap:8px;pointer-events:auto}
-  #touch-dpad{left:max(14px,env(safe-area-inset-left));grid-template-columns:repeat(3,52px);grid-template-rows:repeat(3,52px)}
-  #touch-actions{right:max(14px,env(safe-area-inset-right));grid-template-columns:repeat(2,58px);grid-template-rows:repeat(2,52px)}
-  .touch-button{display:grid;place-items:center;min-width:48px;min-height:48px;border:2px solid #9ad4c4;border-radius:50%;background:rgba(14,45,48,.84);color:#fff4c8;font:800 12px/1 system-ui,sans-serif;letter-spacing:.04em;box-shadow:0 3px 0 rgba(0,0,0,.42);touch-action:none;cursor:pointer}
-  #touch-actions .touch-button{border-radius:14px;background:rgba(28,69,70,.9)}
+  #touch-analog{position:absolute;left:max(16px,env(safe-area-inset-left));bottom:max(16px,env(safe-area-inset-bottom));width:126px;height:126px;border:3px solid rgba(177,225,209,.8);border-radius:50%;background:radial-gradient(circle,rgba(58,119,117,.38),rgba(9,37,39,.72));box-shadow:inset 0 0 0 9px rgba(8,30,32,.4),0 4px 0 rgba(0,0,0,.38);pointer-events:auto;touch-action:none}
+  #analog-knob{position:absolute;left:50%;top:50%;width:54px;height:54px;border:3px solid #ffe091;border-radius:50%;background:radial-gradient(circle at 35% 30%,#5ba19a,#1f5356 72%);box-shadow:0 3px 0 rgba(0,0,0,.42);transform:translate(-50%,-50%);pointer-events:none;transition:transform 70ms linear}
+  .touch-button{display:grid;place-items:center;min-width:48px;min-height:48px;border:2px solid #9ad4c4;border-radius:50%;background:rgba(14,45,48,.9);color:#fff4c8;font:900 13px/1 system-ui,sans-serif;letter-spacing:.04em;box-shadow:0 3px 0 rgba(0,0,0,.42);touch-action:none;cursor:pointer}
   .touch-button:active,.touch-button.is-held{transform:translateY(2px);background:#3d7775;border-color:#ffd568;box-shadow:0 1px 0 rgba(0,0,0,.42)}
-  .touch-button svg{width:22px;height:22px;fill:currentColor;pointer-events:none}
-  .touch-up{grid-column:2;grid-row:1}.touch-left{grid-column:1;grid-row:2}.touch-right{grid-column:3;grid-row:2}.touch-down{grid-column:2;grid-row:3}
-  #touch-actions{align-items:end}.touch-hint{position:absolute;left:50%;bottom:max(3px,calc(env(safe-area-inset-bottom) / 2));transform:translateX(-50%);color:rgba(255,244,200,.82);font:700 10px/1 system-ui,sans-serif;text-shadow:0 1px 2px #001;white-space:nowrap}
+  #touch-actions{position:absolute;right:max(16px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));width:228px;height:176px;pointer-events:auto}
+  #world-actions,#battle-actions{position:absolute;inset:0;transition:opacity 120ms ease,transform 120ms ease}
+  #battle-actions{opacity:0;pointer-events:none;transform:scale(.92)}
+  #touch-actions.is-battle #world-actions{opacity:0;pointer-events:none;transform:scale(.92)}
+  #touch-actions.is-battle #battle-actions{opacity:1;pointer-events:auto;transform:scale(1)}
+  #world-actions{display:grid;grid-template-columns:repeat(2,58px);grid-template-rows:repeat(2,52px);gap:8px;justify-content:end;align-content:end}
+  #world-actions .touch-button{border-radius:14px;background:rgba(28,69,70,.92)}
+  .battle-button{position:absolute;border-radius:50%;overflow:hidden}
+  .battle-button .key{display:block;font-size:20px;line-height:1}
+  .battle-button small{display:block;margin-top:3px;color:#b9d9d0;font:800 8px/1 system-ui,sans-serif;letter-spacing:.04em}
+  .battle-basic{right:0;bottom:0;width:96px;height:96px;border-width:3px;background:radial-gradient(circle at 35% 30%,#d36b50,#842e32 72%);border-color:#ffe091;font-size:20px}
+  .battle-basic .key{font-size:28px}.battle-basic small{color:#fff1c2}
+  .skill-q{right:96px;bottom:12px;width:58px;height:58px}.skill-w{right:61px;bottom:91px;width:58px;height:58px}.skill-e{right:143px;bottom:81px;width:54px;height:54px}
+  .battle-ultimate{right:154px;bottom:0;width:70px;height:70px;border-color:#7b9aa0;background:radial-gradient(circle at 35% 30%,#405a65,#172f39 72%);opacity:.68}
+  .battle-ultimate.ready{width:88px;height:88px;right:141px;border-color:#ffe06b;background:radial-gradient(circle at 35% 30%,#ffd66d,#d06a32 72%);opacity:1;box-shadow:0 0 0 3px rgba(255,211,83,.22),0 3px 0 rgba(0,0,0,.42);animation:ultimate-ready 1.15s ease-in-out infinite}
+  .battle-ultimate:disabled{filter:saturate(.65);cursor:not-allowed}.battle-ultimate .cooldown{display:block;margin-top:3px;color:#e5f5f0;font:900 11px/1 system-ui,sans-serif}
+  .battle-button.cooling::after{content:"";position:absolute;inset:0;border-radius:50%;background:rgba(5,22,25,.42);pointer-events:none}
+  .battle-button.cooling .cooldown,.battle-button.cooling .key,.battle-button.cooling small{position:relative;z-index:1}
+  .touch-hint{position:absolute;left:50%;bottom:max(3px,calc(env(safe-area-inset-bottom) / 2));transform:translateX(-50%);color:rgba(255,244,200,.82);font:700 10px/1 system-ui,sans-serif;text-shadow:0 1px 2px #001;white-space:nowrap}
 }
+@keyframes ultimate-ready{50%{transform:scale(1.06)}}
 @media (max-width:900px) and (max-aspect-ratio:1/1), (pointer:coarse) and (max-aspect-ratio:1/1){
   #mobile-controls{display:none}
   #rotate-overlay{display:flex;position:fixed;z-index:60;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:24px;background:#0e2527;color:#fff4c8;text-align:center;font:700 18px/1.35 system-ui,sans-serif}
@@ -327,19 +343,23 @@ body{display:grid;place-items:center}
         <button id="landscape-start" type="button">PLAY LANDSCAPE</button>
     </div>
     <div id="mobile-controls" aria-label="Touch game controls">
-        <div id="touch-dpad" class="touch-cluster" aria-label="Move character">
-            <button class="touch-button touch-up" data-key="ArrowUp" aria-label="Move up"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 4 13h5v7h6v-7h5z"/></svg></button>
-            <button class="touch-button touch-left" data-key="ArrowLeft" aria-label="Move left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l9-8v5h7v6h-7v5z"/></svg></button>
-            <button class="touch-button touch-right" data-key="ArrowRight" aria-label="Move right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20 12-9-8v5H4v6h7v5z"/></svg></button>
-            <button class="touch-button touch-down" data-key="ArrowDown" aria-label="Move down"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 20 8-9h-5V4H9v7H4z"/></svg></button>
+        <div id="touch-analog" aria-label="Analog movement stick"><div id="analog-knob"></div></div>
+        <div id="touch-actions" aria-label="Game actions">
+            <div id="world-actions" aria-label="World actions">
+                <button class="touch-button" data-tap-key="e" aria-label="Interact">ACT</button>
+                <button class="touch-button" data-tap-key=" " aria-label="Attack">HIT</button>
+                <button class="touch-button" data-tap-key="i" aria-label="Open bag">BAG</button>
+                <button class="touch-button" data-tap-key="Escape" aria-label="Open menu">MENU</button>
+            </div>
+            <div id="battle-actions" aria-label="Battle skills">
+                <button class="touch-button battle-button battle-basic" data-battle-key="a" aria-label="Basic attack A"><span class="key">A</span><small>ATTACK</small><span class="cooldown"></span></button>
+                <button class="touch-button battle-button skill-q" data-battle-key="q" aria-label="Skill Q"><span class="key">Q</span><span class="cooldown"></span></button>
+                <button class="touch-button battle-button skill-w" data-battle-key="w" aria-label="Skill W"><span class="key">W</span><span class="cooldown"></span></button>
+                <button class="touch-button battle-button skill-e" data-battle-key="e" aria-label="Skill E"><span class="key">E</span><span class="cooldown"></span></button>
+                <button class="touch-button battle-button battle-ultimate" data-battle-key="r" aria-label="Ultimate R" disabled><span class="key">R</span><small>ULT</small><span class="cooldown">0%</span></button>
+            </div>
         </div>
-        <div id="touch-actions" class="touch-cluster" aria-label="Game actions">
-            <button class="touch-button" data-tap-key="e" aria-label="Interact">ACT</button>
-            <button class="touch-button" data-tap-key=" " aria-label="Attack">HIT</button>
-            <button class="touch-button" data-tap-key="i" aria-label="Open bag">BAG</button>
-            <button class="touch-button" data-tap-key="Escape" aria-label="Open menu">MENU</button>
-        </div>
-        <span class="touch-hint" aria-hidden="true">MOVE · ACT · HIT · BAG · MENU</span>
+        <span class="touch-hint" id="touch-hint" aria-hidden="true">ANALOG · ACT · HIT · BAG · MENU</span>
     </div>
 
     <div id="transfer" align=center>
@@ -453,24 +473,52 @@ frameborder="1"
             key, code: key === " " ? "Space" : key, bubbles:true, cancelable:true
         }));
     };
-    const releaseTouchKey = (button) => {
-        const key = button.dataset.key;
-        if (!key || !button.classList.contains("is-held")) return;
-        button.classList.remove("is-held");
-        sendGameKey(key, "keyup");
+    // A real drag stick, not four D-pad buttons.  It uses arrow key holds so
+    // the battle's A button stays exclusively available for basic attacks.
+    const analog = document.getElementById("touch-analog");
+    const analogKnob = document.getElementById("analog-knob");
+    const heldAnalogKeys = new Set();
+    let analogPointer = null;
+    const setAnalogKeys = (nextKeys) => {
+        for (const key of heldAnalogKeys) if (!nextKeys.has(key)) sendGameKey(key, "keyup");
+        for (const key of nextKeys) if (!heldAnalogKeys.has(key)) sendGameKey(key, "keydown");
+        heldAnalogKeys.clear();
+        for (const key of nextKeys) heldAnalogKeys.add(key);
     };
-    document.querySelectorAll("[data-key]").forEach((button) => {
-        button.addEventListener("pointerdown", (event) => {
-            event.preventDefault();
-            button.setPointerCapture?.(event.pointerId);
-            if (!button.classList.contains("is-held")) {
-                button.classList.add("is-held");
-                sendGameKey(button.dataset.key, "keydown");
-            }
-        });
-        ["pointerup", "pointercancel", "pointerleave"].forEach((type) =>
-            button.addEventListener(type, () => releaseTouchKey(button)));
+    const moveAnalog = (event) => {
+        if (analogPointer !== event.pointerId) return;
+        const rect = analog.getBoundingClientRect();
+        const radius = rect.width / 2;
+        let dx = event.clientX - (rect.left + radius);
+        let dy = event.clientY - (rect.top + radius);
+        const limit = radius - 29;
+        const distance = Math.hypot(dx, dy);
+        if (distance > limit) { dx *= limit / distance; dy *= limit / distance; }
+        analogKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+        const keys = new Set();
+        const threshold = 18;
+        if (dx < -threshold) keys.add("ArrowLeft");
+        if (dx > threshold) keys.add("ArrowRight");
+        if (dy < -threshold) keys.add("ArrowUp");
+        if (dy > threshold) keys.add("ArrowDown");
+        setAnalogKeys(keys);
+    };
+    const releaseAnalog = (event) => {
+        if (event && analogPointer !== event.pointerId) return;
+        setAnalogKeys(new Set());
+        analogPointer = null;
+        analogKnob.style.transform = "translate(-50%,-50%)";
+    };
+    analog.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        analogPointer = event.pointerId;
+        analog.setPointerCapture?.(event.pointerId);
+        moveAnalog(event);
     });
+    analog.addEventListener("pointermove", moveAnalog);
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach((type) =>
+        analog.addEventListener(type, releaseAnalog));
+    window.addEventListener("blur", () => releaseAnalog());
     document.querySelectorAll("[data-tap-key]").forEach((button) => {
         button.addEventListener("pointerdown", (event) => {
             event.preventDefault();
@@ -482,6 +530,49 @@ frameborder="1"
         ["pointerup", "pointercancel", "pointerleave"].forEach((type) =>
             button.addEventListener(type, () => button.classList.remove("is-held")));
     });
+    const touchActions = document.getElementById("touch-actions");
+    const touchHint = document.getElementById("touch-hint");
+    const battleButtons = [...document.querySelectorAll("[data-battle-key]")];
+    const tapBattleButton = (button, event) => {
+        event.preventDefault();
+        if (button.disabled || button.classList.contains("cooling")) return;
+        button.classList.add("is-held");
+        const key = button.dataset.battleKey;
+        sendGameKey(key, "keydown");
+        window.setTimeout(() => sendGameKey(key, "keyup"), 80);
+        window.setTimeout(() => button.classList.remove("is-held"), 110);
+    };
+    battleButtons.forEach((button) => button.addEventListener("pointerdown", (event) => tapBattleButton(button, event)));
+
+    // game_engine.py publishes this small JSON snapshot from the real battle
+    // state. The UI therefore never invents a cooldown or ultimate-ready flag.
+    const setBattleButton = (key, cooldown, ready, label) => {
+        const button = document.querySelector(`[data-battle-key="${key}"]`);
+        if (!button) return;
+        const cooling = cooldown > .04;
+        button.classList.toggle("cooling", cooling);
+        button.disabled = key === "r" ? !ready : cooling;
+        if (key === "r") button.classList.toggle("ready", ready);
+        const output = button.querySelector(".cooldown");
+        if (output) output.textContent = label;
+    };
+    const updateMobileBattleUi = () => {
+        let state;
+        try { state = JSON.parse(window.openrpgMobileState || "{}"); } catch (_) { return; }
+        const battle = state.battle;
+        const active = state.mode === "battle" && battle && !battle.locked;
+        touchActions.classList.toggle("is-battle", Boolean(active));
+        touchHint.textContent = active ? "ANALOG · A ATTACK · Q / W / E SKILLS · R ULT" : "ANALOG · ACT · HIT · BAG · MENU";
+        if (!active) return;
+        const basicCooldown = Number(battle.basicCooldown || 0);
+        const skillCooldown = Number(battle.skillCooldown || 0);
+        const ultimateReady = Boolean(battle.ultimateReady);
+        const meter = Math.round(Number(battle.ultimateMeter || 0));
+        setBattleButton("a", basicCooldown, !basicCooldown, basicCooldown ? `${basicCooldown.toFixed(1)}s` : "READY");
+        ["q", "w", "e"].forEach((key) => setBattleButton(key, skillCooldown, !skillCooldown, skillCooldown ? `${skillCooldown.toFixed(1)}s` : "READY"));
+        setBattleButton("r", 0, ultimateReady, ultimateReady ? "READY" : `${meter}%`);
+    };
+    window.setInterval(updateMobileBattleUi, 100);
     const enterMobileLandscape = async () => {
         try {
             if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();

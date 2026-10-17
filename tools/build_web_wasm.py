@@ -95,6 +95,42 @@ def main() -> None:
         "            source = self.gate_quiz_sprite(ident, target_size)\n"
         "        if source is None:\n            return None\n        key = (ident, int(target_size), frame_index)\n",
     )
+    # Publish a tiny read-only snapshot for the browser touch layer. This is
+    # injected only into the WebAssembly copy: it lets the HTML controls show
+    # the real battle cooldown and Ultimate meter rather than inventing them.
+    browser_mobile_bridge = '''    def publish_browser_mobile_state(self):
+        try:
+            import json
+            import platform
+            battle = self.battle if self.mode == "battle" else None
+            if battle:
+                blocked = bool(battle.get("result") or battle.get("intro") or
+                               battle.get("boss_intro") or battle.get("capture") or
+                               battle.get("ultimate_cutin"))
+                snapshot = {
+                    "mode": self.mode,
+                    "battle": {
+                        "locked": blocked,
+                        "basicCooldown": round(max(0.0, float(battle.get("player_cooldown", 0.0))), 2),
+                        "skillCooldown": round(max(0.0, float(battle.get("type_cooldown", 0.0))), 2),
+                        "ultimateMeter": round(max(0.0, min(100.0, float(battle.get("super_meter", 0.0)))), 1),
+                        "ultimateReady": bool(not blocked and battle.get("super_meter", 0.0) >= 100),
+                    },
+                }
+            else:
+                snapshot = {"mode": self.mode, "battle": None}
+            platform.window.openrpgMobileState = json.dumps(snapshot)
+        except Exception:
+            pass
+
+'''
+    engine_source = engine_source.replace(
+        "    def update(self, dt):\n        self.frame += dt * 60\n",
+        browser_mobile_bridge + "    def update(self, dt):\n        self.publish_browser_mobile_state()\n        self.frame += dt * 60\n",
+        1,
+    )
+    if "def publish_browser_mobile_state" not in engine_source:
+        raise SystemExit("Could not inject the browser mobile control state bridge.")
     (APP / "game_engine.py").write_text(engine_source, encoding="utf-8")
     for name in RUNTIME_MODULES:
         shutil.copy2(ROOT / name, APP / name)
