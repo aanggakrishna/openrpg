@@ -184,25 +184,35 @@ class RedesignTests(unittest.TestCase):
         self.assertEqual(g.life.money,money)
         self.assertEqual(g.life.stats,before)
         for _ in range(160):g.update_service_animation(.05)
-        self.assertEqual(g.mode,'service_interior')
+        self.assertEqual(g.mode,'game')
         self.assertEqual(g.life.money,money-10)
         self.assertEqual(g.life.stats['Kenyang'],min(100,before['Kenyang']+58))
 
     def test_hotel_service_animation_sleeps_before_advancing_world_time(self):
-        g=self.game;g.life=Life(scene='hotel',money=80,stats={'Kenyang':25,'Minum':30,'Energi':20,'Senang':40})
+        # Start in the public space just south of the receptionist's desk.
+        g=self.game;g.life=Life(scene='hotel',x=448,y=450,money=80,stats={'Kenyang':25,'Minum':30,'Energi':20,'Senang':40})
         g.service_interior_kind='hotel';g.mode='service_interior'
+        g.life.service_return_scene='market';g.life.service_return_x=700;g.life.service_return_y=610
         day,minutes,money=g.life.day,g.life.minutes,g.life.money
         g.hospitality_order('hotel')
         self.assertEqual((g.life.day,g.life.minutes,g.life.money),(day,minutes,money))
         phases=set()
-        for _ in range(220):
+        for _ in range(420):
             if g.service_animation:phases.add(g.service_animation['phase'])
             g.update_service_animation(.05)
-        self.assertTrue({'walk','fade_room','sleep','wake','return'} <= phases)
-        self.assertEqual(g.mode,'service_interior')
+            self.assertFalse(160 <= g.life.x <= 595 and 355 <= g.life.y <= 443,
+                             'the scripted route must stay out of the reception desk footprint')
+        self.assertTrue({'walk','fade_room','sleep','wake','return_walk'} <= phases)
+        self.assertEqual(g.mode,'game')
+        self.assertAlmostEqual(g.life.x,384)
+        self.assertAlmostEqual(g.life.y,610)
+        self.assertEqual(g.nearest()[0],'service_exit')
         self.assertEqual(g.life.money,money-15)
         self.assertEqual(g.life.stats['Energi'],100)
         self.assertNotEqual((g.life.day,g.life.minutes),(day,minutes))
+        g.interact_selected()
+        self.assertEqual(g.life.scene,'market')
+        self.assertLess(math.hypot(g.life.x-700,g.life.y-610),40)
 
     def test_center_heal_and_ball_flight_apply_only_after_animation(self):
         g=self.game;g.life=Life(scene='center',money=200,pokemon_party=[1,4],pokemon_active=[1,4])

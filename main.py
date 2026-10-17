@@ -2552,8 +2552,12 @@ class LegacyGame:
             animation["path"] = [(430.0, 552.0)]
             animation["duration"] = 3.2 if action == "meal" else 2.0
         elif kind == "hotel":
-            # Take the visible staircase route, then cut to the guest room.
-            animation["path"] = [(520.0, 602.0), (520.0, 485.0), (302.0, 485.0), (238.0, 365.0)]
+            # Keep to the public aisle below the reception desk, then approach
+            # the stairs along the left wall. Reverse this safe route to return
+            # to the clear doorway after the room cutaway.
+            animation["path"] = [(700.0, 485.0), (150.0, 485.0), (150.0, 300.0)]
+            animation["return_path"] = [(150.0, 485.0), (700.0, 485.0),
+                                        (700.0, 610.0), (384.0, 610.0)]
             animation["duration"] = 0.0
         elif kind == "center_heal":
             animation["duration"] = max(4.0, 1.5 + len(self.life.pokemon_active[:3]) * 1.05)
@@ -2595,12 +2599,11 @@ class LegacyGame:
     def update_service_animation(self, dt):
         animation = self.service_animation
         if not animation:
-            self.mode = "service_interior"
             return
         dt = min(.05, max(0.0, dt))
         animation["elapsed"] += dt
         animation["phase_time"] += dt
-        if animation["kind"] in ("restaurant", "hotel") and animation["phase"] == "walk":
+        if animation["kind"] in ("restaurant", "hotel") and animation["phase"] in ("walk", "return_walk"):
             path = animation["path"]
             remaining = 210 * dt
             self.moving = True
@@ -2622,6 +2625,9 @@ class LegacyGame:
             if animation["waypoint"] >= len(path):
                 self.life.x, self.life.y = path[-1]
                 self.moving = False
+                if animation["phase"] == "return_walk":
+                    self.finish_service_animation()
+                    return
                 animation["phase"] = "fade_room" if animation["kind"] == "hotel" else "eat"
                 animation["phase_time"] = 0.0
                 if animation["kind"] == "restaurant":
@@ -2632,11 +2638,9 @@ class LegacyGame:
         elif animation["kind"] == "hotel" and animation["phase"] == "sleep" and animation["phase_time"] >= 2.2:
             animation["phase"], animation["phase_time"] = "wake", 0.0
         elif animation["kind"] == "hotel" and animation["phase"] == "wake" and animation["phase_time"] >= 1.8:
-            animation["phase"], animation["phase_time"] = "return", 0.0
+            animation["phase"], animation["phase_time"] = "return_walk", 0.0
+            animation["path"], animation["waypoint"] = animation["return_path"], 0
         elif animation["kind"] == "restaurant" and animation["phase"] == "eat" and animation["phase_time"] >= animation["duration"]:
-            self.finish_service_animation()
-            return
-        elif animation["kind"] == "hotel" and animation["phase"] == "return" and animation["phase_time"] >= .55:
             self.finish_service_animation()
             return
         elif animation["kind"] in ("center_heal", "balls") and animation["elapsed"] >= animation["duration"]:
@@ -2656,6 +2660,7 @@ class LegacyGame:
         animation = self.service_animation
         if not animation:
             return
+        hospitality_complete = animation["kind"] in ("restaurant", "hotel")
         origin_mode = animation.get("origin_mode", "service_interior")
         if self.service_heal_channel:
             self.service_heal_channel.stop()
@@ -2664,7 +2669,6 @@ class LegacyGame:
             if animation["kind"] == "restaurant":
                 self.hospitality_order(animation["action"])
             elif animation["kind"] == "hotel":
-                self.life.x, self.life.y = 238.0, 365.0
                 self.hospitality_order("hotel")
             elif animation["kind"] == "center_heal":
                 self.heal_pokemon_party()
@@ -2676,6 +2680,10 @@ class LegacyGame:
             self.service_animation = None
         if self.mode == "service_animation":
             self.mode = origin_mode if origin_mode in ("center", "service_interior") else "service_interior"
+        if hospitality_complete:
+            # Leave the player in control at the end of the service; the toast
+            # reports completion and the nearby door remains interactable.
+            self.mode = "game"
 
     def draw_service_animation(self):
         animation = self.service_animation
@@ -2763,8 +2771,8 @@ class LegacyGame:
             self.text("Dikirim ke dalam tas…", W / 2, 684, (170, 232, 196), self.tiny, True)
         if kind in ("restaurant", "hotel"):
             label = ("Makan dulu…" if animation["action"] == "meal" else "Minum dulu…") if kind == "restaurant" else {
-                "walk": "Menuju kamar…", "fade_room": "Naik ke kamar…", "sleep": "Beristirahat…",
-                "wake": "Selamat pagi!", "return": "Bangun dan kembali",
+                "walk": "Menuju tangga…", "fade_room": "Naik ke kamar…", "sleep": "Beristirahat…",
+                "wake": "Selamat pagi!", "return_walk": "Kembali ke pintu keluar…",
             }.get(phase, "")
             if label and not (kind == "hotel" and phase in ("fade_room", "sleep", "wake")):
                 self.box((365, 655, 550, 58), (24, 54, 58), 9, (113, 191, 162))
