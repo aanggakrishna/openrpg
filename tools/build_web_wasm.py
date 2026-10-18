@@ -358,6 +358,21 @@ def main() -> None:
         "STARTERS = (1,4,7,25,37,43,54,58,60,66,74,92,133,152,155,158,179,187,252,255,258,280,387,390,393,403)",
         "STARTERS = (1,4,7,25,37,43,54,58,60,66,74,92,133,152,155,158,179,187,252,255,258,280)",
     )
+    # Pygbag does not consistently emit TEXTINPUT from touch-driven virtual
+    # keys. Let the browser build accept ordinary A-Z keydown events only in
+    # the existing character-name step; desktop text input remains unchanged.
+    browser_flow = browser_flow.replace(
+        "            if event.type==pg.KEYDOWN:\n                if event.key==pg.K_BACKSPACE:\n"
+        "                    self.wizard['name']=self.wizard['name'][:-1]\n",
+        "            if event.type==pg.KEYDOWN:\n"
+        "                if pg.K_a <= event.key <= pg.K_z:\n"
+        "                    self.wizard['name']=(self.wizard['name']+chr(event.key))[:18];return\n"
+        "                if event.key==pg.K_SPACE:\n"
+        "                    self.wizard['name']=(self.wizard['name']+' ')[:18];return\n"
+        "                if event.key==pg.K_BACKSPACE:\n"
+        "                    self.wizard['name']=self.wizard['name'][:-1]\n",
+        1,
+    )
     (APP / "adventure_flow.py").write_text(browser_flow, encoding="utf-8")
 
     # Browser-only seams.  They expose the same interfaces as desktop modules.

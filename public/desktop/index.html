@@ -558,6 +558,7 @@ frameborder="1"
     const mobileNameInput = document.getElementById("mobile-name-input");
     let virtualNameDirty = false;
     let wasNameInput = false;
+    let forcedNameKeyboard = false;
     const battleButtons = [...document.querySelectorAll("[data-battle-key]")];
     const tapBattleButton = (button, event) => {
         event.preventDefault();
@@ -585,7 +586,7 @@ frameborder="1"
     const updateMobileBattleUi = () => {
         let state;
         try { state = JSON.parse(window.openrpgMobileState || "{}"); } catch (_) { return; }
-        const wantsNameInput = Boolean(state.nameInput);
+        const wantsNameInput = Boolean(state.nameInput) || forcedNameKeyboard;
         document.body.classList.toggle("name-entry", wantsNameInput);
         if (wantsNameInput) {
             const name = String(state.name || "");
@@ -629,13 +630,39 @@ frameborder="1"
         event.preventDefault();
         const key = button.dataset.nameKey;
         if (key === "done") {
+            forcedNameKeyboard = false;
             sendGameKey("Enter", "keydown");
             window.setTimeout(() => sendGameKey("Enter", "keyup"), 80);
             return;
         }
-        if (key === "backspace") setVirtualName(mobileNameInput.value.slice(0, -1));
-        else setVirtualName(mobileNameInput.value + (key === "space" ? " " : key));
+        if (key === "backspace") {
+            setVirtualName(mobileNameInput.value.slice(0, -1));
+            sendGameKey("Backspace", "keydown");
+            window.setTimeout(() => sendGameKey("Backspace", "keyup"), 80);
+        } else if (key === "space") {
+            setVirtualName(mobileNameInput.value + " ");
+            sendGameKey(" ", "keydown");
+            window.setTimeout(() => sendGameKey(" ", "keyup"), 80);
+        } else {
+            setVirtualName(mobileNameInput.value + key);
+            sendGameKey(key, "keydown");
+            window.setTimeout(() => sendGameKey(key, "keyup"), 80);
+        }
     }));
+    // The profile screen is the only canvas panel with five stacked save-slot
+    // buttons in this area. Touching one launches the original setup flow;
+    // opening the keyboard here avoids relying on browser text-input focus.
+    gameCanvas.addEventListener("pointerdown", (event) => {
+        const rect = gameCanvas.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * 1280 / rect.width;
+        const y = (event.clientY - rect.top) * 800 / rect.height;
+        const inProfileSlot = x >= 100 && x <= 660 && y >= 180 && y <= 660;
+        if (!inProfileSlot) return;
+        window.setTimeout(() => {
+            forcedNameKeyboard = true;
+            document.body.classList.add("name-entry");
+        }, 120);
+    }, true);
     const enterMobileLandscape = async () => {
         try {
             if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
