@@ -298,7 +298,7 @@ body{display:grid;place-items:center}
    Pygame keyboard loop.  The left stick deliberately emits arrow keys, so
    battle's A attack never conflicts with walking left. */
 #mobile-controls,#rotate-overlay{display:none}
-#mobile-name-input{display:none}
+#mobile-name-input,#virtual-name-keyboard{display:none}
 @media (max-width:900px), (pointer:coarse){
   #mobile-controls{display:block;position:fixed;inset:0;z-index:30;pointer-events:none;touch-action:none;-webkit-user-select:none;user-select:none}
   #touch-analog{position:absolute;left:max(16px,env(safe-area-inset-left));bottom:max(16px,env(safe-area-inset-bottom));width:126px;height:126px;border:3px solid rgba(177,225,209,.8);border-radius:50%;background:radial-gradient(circle,rgba(58,119,117,.38),rgba(9,37,39,.72));box-shadow:inset 0 0 0 9px rgba(8,30,32,.4),0 4px 0 rgba(0,0,0,.38);pointer-events:auto;touch-action:none}
@@ -324,10 +324,16 @@ body{display:grid;place-items:center}
   .battle-button.cooling::after{content:"";position:absolute;inset:0;border-radius:50%;background:rgba(5,22,25,.42);pointer-events:none}
   .battle-button.cooling .cooldown,.battle-button.cooling .key,.battle-button.cooling small{position:relative;z-index:1}
   .touch-hint{position:absolute;left:50%;bottom:max(3px,calc(env(safe-area-inset-bottom) / 2));transform:translateX(-50%);color:rgba(255,244,200,.82);font:700 10px/1 system-ui,sans-serif;text-shadow:0 1px 2px #001;white-space:nowrap}
-  /* A real DOM input is required for iOS/Android to show their native
-     keyboard. It stays visually neutral because the canvas draws the field. */
-  #mobile-name-input{display:block;position:fixed;z-index:35;left:50%;top:50%;width:2px;height:2px;opacity:.01;border:0;padding:0;transform:translate(-50%,-50%);font-size:16px;caret-color:transparent;background:transparent;color:transparent}
-  #mobile-name-input.is-inactive{display:none}
+  /* The name step owns the lower screen: the in-game keyboard is large
+     enough to tap in landscape and never asks mobile browsers to focus a
+     hidden input (which many browsers refuse). */
+  body.name-entry #mobile-controls{display:none!important}
+  #virtual-name-keyboard{position:fixed;z-index:45;left:50%;bottom:max(8px,env(safe-area-inset-bottom));width:min(690px,calc(100vw - 24px));padding:7px;border:2px solid #9ad4c4;border-radius:12px;background:rgba(11,39,42,.94);box-shadow:0 4px 0 rgba(0,0,0,.45);transform:translateX(-50%)}
+  body.name-entry #virtual-name-keyboard{display:block}
+  .virtual-key-row{display:flex;justify-content:center;gap:6px;margin:5px 0}
+  .virtual-key{min-width:42px;height:40px;padding:0 8px;border:2px solid #78b6aa;border-radius:8px;background:#214e51;color:#fff4c8;font:900 14px/1 system-ui,sans-serif;box-shadow:0 2px 0 #07191a;touch-action:manipulation}
+  .virtual-key:active{transform:translateY(2px);background:#3d7775;border-color:#ffd568;box-shadow:none}
+  .virtual-key.wide{min-width:112px}.virtual-key.done{background:#a65038;border-color:#ffe091}.virtual-key.backspace{font-size:18px}
 }
 @keyframes ultimate-ready{50%{transform:scale(1.06)}}
 @media (max-width:900px) and (max-aspect-ratio:1/1), (pointer:coarse) and (max-aspect-ratio:1/1){
@@ -367,6 +373,17 @@ body{display:grid;place-items:center}
         <span class="touch-hint" id="touch-hint" aria-hidden="true">ANALOG · ACT · HIT · BAG · MENU</span>
     </div>
     <input id="mobile-name-input" class="is-inactive" type="text" inputmode="text" enterkeyhint="next" autocomplete="nickname" autocapitalize="words" maxlength="18" aria-label="Character name">
+    <div id="virtual-name-keyboard" aria-label="Character name keyboard" role="group">
+        <div class="virtual-key-row">
+            <button class="virtual-key" data-name-key="q">Q</button><button class="virtual-key" data-name-key="w">W</button><button class="virtual-key" data-name-key="e">E</button><button class="virtual-key" data-name-key="r">R</button><button class="virtual-key" data-name-key="t">T</button><button class="virtual-key" data-name-key="y">Y</button><button class="virtual-key" data-name-key="u">U</button><button class="virtual-key" data-name-key="i">I</button><button class="virtual-key" data-name-key="o">O</button><button class="virtual-key" data-name-key="p">P</button>
+        </div>
+        <div class="virtual-key-row">
+            <button class="virtual-key" data-name-key="a">A</button><button class="virtual-key" data-name-key="s">S</button><button class="virtual-key" data-name-key="d">D</button><button class="virtual-key" data-name-key="f">F</button><button class="virtual-key" data-name-key="g">G</button><button class="virtual-key" data-name-key="h">H</button><button class="virtual-key" data-name-key="j">J</button><button class="virtual-key" data-name-key="k">K</button><button class="virtual-key" data-name-key="l">L</button>
+        </div>
+        <div class="virtual-key-row">
+            <button class="virtual-key" data-name-key="z">Z</button><button class="virtual-key" data-name-key="x">X</button><button class="virtual-key" data-name-key="c">C</button><button class="virtual-key" data-name-key="v">V</button><button class="virtual-key" data-name-key="b">B</button><button class="virtual-key" data-name-key="n">N</button><button class="virtual-key" data-name-key="m">M</button><button class="virtual-key wide" data-name-key="space">SPACE</button><button class="virtual-key backspace" data-name-key="backspace" aria-label="Delete letter">⌫</button><button class="virtual-key wide done" data-name-key="done">DONE</button>
+        </div>
+    </div>
 
     <div id="transfer" align=center>
 <!--        <div class="spinner" id='spinner'></div> -->
@@ -539,6 +556,8 @@ frameborder="1"
     const touchActions = document.getElementById("touch-actions");
     const touchHint = document.getElementById("touch-hint");
     const mobileNameInput = document.getElementById("mobile-name-input");
+    let virtualNameDirty = false;
+    let wasNameInput = false;
     const battleButtons = [...document.querySelectorAll("[data-battle-key]")];
     const tapBattleButton = (button, event) => {
         event.preventDefault();
@@ -567,22 +586,17 @@ frameborder="1"
         let state;
         try { state = JSON.parse(window.openrpgMobileState || "{}"); } catch (_) { return; }
         const wantsNameInput = Boolean(state.nameInput);
-        mobileNameInput.classList.toggle("is-inactive", !wantsNameInput);
+        document.body.classList.toggle("name-entry", wantsNameInput);
         if (wantsNameInput) {
             const name = String(state.name || "");
-            if (mobileNameInput.value !== name && document.activeElement !== mobileNameInput) mobileNameInput.value = name;
-            // The user has just tapped New Game / the empty profile slot. A
-            // focus request here opens the native Android/iOS keyboard; the
-            // tiny input also remains tappable where a browser blocks auto-focus.
-            if (document.activeElement !== mobileNameInput) mobileNameInput.focus({preventScroll:true});
-        } else if (document.activeElement === mobileNameInput) {
-            mobileNameInput.blur();
-            mobileNameInput.value = "";
-            window.openrpgMobileNameInput = "";
+            if (!wasNameInput || (!virtualNameDirty && mobileNameInput.value !== name)) mobileNameInput.value = name;
+            if (virtualNameDirty && mobileNameInput.value === name) virtualNameDirty = false;
         } else if (!wantsNameInput) {
             mobileNameInput.value = "";
             window.openrpgMobileNameInput = "";
+            virtualNameDirty = false;
         }
+        wasNameInput = wantsNameInput;
         const battle = state.battle;
         const active = state.mode === "battle" && battle && !battle.locked;
         touchActions.classList.toggle("is-battle", Boolean(active));
@@ -606,6 +620,22 @@ frameborder="1"
         sendGameKey("Enter", "keydown");
         window.setTimeout(() => sendGameKey("Enter", "keyup"), 80);
     });
+    const setVirtualName = (value) => {
+        mobileNameInput.value = value.slice(0, 18);
+        window.openrpgMobileNameInput = mobileNameInput.value;
+        virtualNameDirty = true;
+    };
+    document.querySelectorAll("[data-name-key]").forEach((button) => button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        const key = button.dataset.nameKey;
+        if (key === "done") {
+            sendGameKey("Enter", "keydown");
+            window.setTimeout(() => sendGameKey("Enter", "keyup"), 80);
+            return;
+        }
+        if (key === "backspace") setVirtualName(mobileNameInput.value.slice(0, -1));
+        else setVirtualName(mobileNameInput.value + (key === "space" ? " " : key));
+    }));
     const enterMobileLandscape = async () => {
         try {
             if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();

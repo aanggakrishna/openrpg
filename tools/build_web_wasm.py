@@ -98,6 +98,38 @@ def main() -> None:
     # Publish a tiny read-only snapshot for the browser touch layer. This is
     # injected only into the WebAssembly copy: it lets the HTML controls show
     # the real battle cooldown and Ultimate meter rather than inventing them.
+    browser_audio_bridge = '''    def request_browser_audio(self, path):
+        """Queue an optional audio file from the static site after boot."""
+        if sys.platform != "emscripten":
+            return
+        try:
+            from browser_media import request
+            audio_root = ROOT / "assets" / "audio"
+            relative = Path(path).relative_to(audio_root).as_posix()
+            request(relative, "/openrpg/assets/audio/" + relative, channel="audio")
+        except Exception:
+            pass
+
+    def pump_browser_audio(self):
+        """Place completed background downloads in Pygame's virtual FS."""
+        if sys.platform != "emscripten":
+            return
+        try:
+            from browser_media import poll
+            while True:
+                result = poll("audio")
+                if not result:
+                    break
+                relative, data, _error = result
+                if not data:
+                    continue
+                target = ROOT / "assets" / "audio" / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+        except Exception:
+            pass
+
+'''
     browser_mobile_bridge = '''    def publish_browser_mobile_state(self):
         try:
             import json
@@ -135,11 +167,39 @@ def main() -> None:
 '''
     engine_source = engine_source.replace(
         "    def update(self, dt):\n        self.frame += dt * 60\n",
-        browser_mobile_bridge + "    def update(self, dt):\n        self.publish_browser_mobile_state()\n        self.frame += dt * 60\n",
+        browser_audio_bridge + browser_mobile_bridge + "    def update(self, dt):\n        self.pump_browser_audio()\n        self.publish_browser_mobile_state()\n        self.frame += dt * 60\n",
         1,
     )
     if "def publish_browser_mobile_state" not in engine_source:
         raise SystemExit("Could not inject the browser mobile control state bridge.")
+    engine_source = engine_source.replace(
+        "        if path.is_file() and music_key != self._music_key:\n",
+        "        if not path.is_file():\n"
+        "            self.request_browser_audio(path)\n"
+        "        if path.is_file() and music_key != self._music_key:\n",
+    )
+    engine_source = engine_source.replace(
+        "        if not path.is_file():\n            return\n        try:\n            sound = self.action_sounds.get(filename)\n",
+        "        if not path.is_file():\n"
+        "            self.request_browser_audio(path)\n"
+        "            return\n"
+        "        try:\n            sound = self.action_sounds.get(filename)\n",
+        1,
+    )
+    engine_source = engine_source.replace(
+        "    def play_battle_sound(self, sound_name, volume=0.52):\n"
+        "        sound = self.battle_sounds.get(sound_name)\n"
+        "        if sound:\n"
+        "            sound.set_volume(volume)\n"
+        "            sound.play()\n",
+        "    def play_battle_sound(self, sound_name, volume=0.52):\n"
+        "        sound = self.battle_sounds.get(sound_name)\n"
+        "        if sound:\n"
+        "            sound.set_volume(volume)\n"
+        "            sound.play()\n"
+        "        elif sys.platform == 'emscripten':\n"
+        "            self.request_browser_audio(ROOT / 'assets' / 'audio' / 'sfx' / f'{sound_name}.ogg')\n",
+    )
     (APP / "game_engine.py").write_text(engine_source, encoding="utf-8")
     for name in RUNTIME_MODULES:
         shutil.copy2(ROOT / name, APP / name)
@@ -309,7 +369,10 @@ def main() -> None:
     # the archive.  Sprite files are served separately from public/assets so
     # they are fetched only when a species is actually needed.
     def ignored(directory: str, names: list[str]):
-        ignored_names = {".DS_Store", "pokemon-sprites", "__pycache__"}
+        # Audio is hosted as separate static files and downloaded only when a
+        # scene or action requests it. Keeping it out of the boot archive cuts
+        # the phone's mandatory first download by roughly 58 MiB.
+        ignored_names = {".DS_Store", "pokemon-sprites", "audio", "__pycache__"}
         return [name for name in names if name in ignored_names]
 
     copytree(ROOT / "assets", APP / "assets", ignore=ignored)
