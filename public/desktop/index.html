@@ -44,7 +44,7 @@ async def custom_site():
                 zip_ref.extractall(appdir.as_posix())
     else:
         import tarfile
-        async with platform.fopen("pygbag-source.tar.gz?rev=53dd99a", "rb") as archive:
+        async with platform.fopen("pygbag-source.tar.gz?rev=keyboard-field-2", "rb") as archive:
             tar = tarfile.open(fileobj=archive, mode="r:gz")
             tar.extractall(path=appdir.as_posix(), filter='tar')
             tar.close()
@@ -299,6 +299,13 @@ body{display:grid;place-items:center}
    battle's A attack never conflicts with walking left. */
 #mobile-controls,#rotate-overlay{display:none}
 #mobile-name-input,#virtual-name-keyboard{display:none}
+/* The virtual keyboard is also available on wide mobile/tablet viewports.
+   It is only made visible after the player touches the real name field. */
+body.name-entry #virtual-name-keyboard{display:block;position:fixed;z-index:45;left:50%;bottom:max(8px,env(safe-area-inset-bottom));width:min(690px,calc(100vw - 24px));padding:7px;border:2px solid #9ad4c4;border-radius:12px;background:rgba(11,39,42,.94);box-shadow:0 4px 0 rgba(0,0,0,.45);transform:translateX(-50%)}
+.virtual-key-row{display:flex;justify-content:center;gap:6px;margin:5px 0}
+.virtual-key{min-width:42px;height:40px;padding:0 8px;border:2px solid #78b6aa;border-radius:8px;background:#214e51;color:#fff4c8;font:900 14px/1 system-ui,sans-serif;box-shadow:0 2px 0 #07191a;touch-action:manipulation}
+.virtual-key:active{transform:translateY(2px);background:#3d7775;border-color:#ffd568;box-shadow:none}
+.virtual-key.wide{min-width:112px}.virtual-key.done{background:#a65038;border-color:#ffe091}.virtual-key.backspace{font-size:18px}
 @media (max-width:900px), (pointer:coarse){
   #mobile-controls{display:block;position:fixed;inset:0;z-index:30;pointer-events:none;touch-action:none;-webkit-user-select:none;user-select:none}
   #touch-analog{position:absolute;left:max(16px,env(safe-area-inset-left));bottom:max(16px,env(safe-area-inset-bottom));width:126px;height:126px;border:3px solid rgba(177,225,209,.8);border-radius:50%;background:radial-gradient(circle,rgba(58,119,117,.38),rgba(9,37,39,.72));box-shadow:inset 0 0 0 9px rgba(8,30,32,.4),0 4px 0 rgba(0,0,0,.38);pointer-events:auto;touch-action:none}
@@ -328,12 +335,6 @@ body{display:grid;place-items:center}
      enough to tap in landscape and never asks mobile browsers to focus a
      hidden input (which many browsers refuse). */
   body.name-entry #mobile-controls{display:none!important}
-  #virtual-name-keyboard{position:fixed;z-index:45;left:50%;bottom:max(8px,env(safe-area-inset-bottom));width:min(690px,calc(100vw - 24px));padding:7px;border:2px solid #9ad4c4;border-radius:12px;background:rgba(11,39,42,.94);box-shadow:0 4px 0 rgba(0,0,0,.45);transform:translateX(-50%)}
-  body.name-entry #virtual-name-keyboard{display:block}
-  .virtual-key-row{display:flex;justify-content:center;gap:6px;margin:5px 0}
-  .virtual-key{min-width:42px;height:40px;padding:0 8px;border:2px solid #78b6aa;border-radius:8px;background:#214e51;color:#fff4c8;font:900 14px/1 system-ui,sans-serif;box-shadow:0 2px 0 #07191a;touch-action:manipulation}
-  .virtual-key:active{transform:translateY(2px);background:#3d7775;border-color:#ffd568;box-shadow:none}
-  .virtual-key.wide{min-width:112px}.virtual-key.done{background:#a65038;border-color:#ffe091}.virtual-key.backspace{font-size:18px}
 }
 @keyframes ultimate-ready{50%{transform:scale(1.06)}}
 @media (max-width:900px) and (max-aspect-ratio:1/1), (pointer:coarse) and (max-aspect-ratio:1/1){
@@ -491,9 +492,14 @@ frameborder="1"
     document.addEventListener("webkitfullscreenchange", fullscreenLabel);
 
     const sendGameKey = (key, type) => {
+        // Pygbag maps physical letters through KeyboardEvent.code.  Supplying
+        // KeyA rather than just "a" makes touches on the in-game keyboard
+        // behave exactly like a hardware keyboard on Safari and Chrome.
+        const code = key === " " ? "Space" :
+            (/^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : key);
         gameCanvas.focus({preventScroll:true});
         gameCanvas.dispatchEvent(new KeyboardEvent(type, {
-            key, code: key === " " ? "Space" : key, bubbles:true, cancelable:true
+            key, code, bubbles:true, cancelable:true
         }));
     };
     // A real drag stick, not four D-pad buttons.  It uses arrow key holds so
@@ -657,7 +663,8 @@ frameborder="1"
         const x = (event.clientX - rect.left) * 1280 / rect.width;
         const y = (event.clientY - rect.top) * 800 / rect.height;
         const inProfileSlot = x >= 100 && x <= 660 && y >= 180 && y <= 660;
-        if (!inProfileSlot) return;
+        const inNameField = x >= 135 && x <= 1110 && y >= 320 && y <= 455;
+        if (!inProfileSlot && !inNameField) return;
         window.setTimeout(() => {
             forcedNameKeyboard = true;
             document.body.classList.add("name-entry");
