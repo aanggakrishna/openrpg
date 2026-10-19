@@ -44,7 +44,7 @@ async def custom_site():
                 zip_ref.extractall(appdir.as_posix())
     else:
         import tarfile
-        async with platform.fopen("pygbag-source.tar.gz?rev=keyboard-field-2", "rb") as archive:
+        async with platform.fopen("pygbag-source.tar.gz?rev=dom-bridge-7", "rb") as archive:
             tar = tarfile.open(fileobj=archive, mode="r:gz")
             tar.extractall(path=appdir.as_posix(), filter='tar')
             tar.close()
@@ -591,7 +591,7 @@ frameborder="1"
     };
     const updateMobileBattleUi = () => {
         let state;
-        try { state = JSON.parse(window.openrpgMobileState || "{}"); } catch (_) { return; }
+        try { state = JSON.parse(document.body.getAttribute("data-openrpg-mobile-state") || "{}"); } catch (_) { return; }
         const wantsNameInput = Boolean(state.nameInput) || forcedNameKeyboard;
         document.body.classList.toggle("name-entry", wantsNameInput);
         if (wantsNameInput) {
@@ -619,17 +619,15 @@ frameborder="1"
     };
     window.setInterval(updateMobileBattleUi, 100);
     mobileNameInput.addEventListener("input", () => {
-        window.openrpgMobileNameInput = mobileNameInput.value.slice(0, 18);
+        mobileNameInput.value = mobileNameInput.value.slice(0, 18);
     });
     mobileNameInput.addEventListener("keydown", (event) => {
         if (event.key !== "Enter") return;
         event.preventDefault();
-        sendGameKey("Enter", "keydown");
-        window.setTimeout(() => sendGameKey("Enter", "keyup"), 80);
+        document.body.setAttribute("data-openrpg-mobile-name-done", "true");
     });
     const setVirtualName = (value) => {
         mobileNameInput.value = value.slice(0, 18);
-        window.openrpgMobileNameInput = mobileNameInput.value;
         virtualNameDirty = true;
     };
     document.querySelectorAll("[data-name-key]").forEach((button) => button.addEventListener("pointerdown", (event) => {
@@ -637,22 +635,15 @@ frameborder="1"
         const key = button.dataset.nameKey;
         if (key === "done") {
             forcedNameKeyboard = false;
-            sendGameKey("Enter", "keydown");
-            window.setTimeout(() => sendGameKey("Enter", "keyup"), 80);
+            document.body.setAttribute("data-openrpg-mobile-name-done", "true");
             return;
         }
         if (key === "backspace") {
             setVirtualName(mobileNameInput.value.slice(0, -1));
-            sendGameKey("Backspace", "keydown");
-            window.setTimeout(() => sendGameKey("Backspace", "keyup"), 80);
         } else if (key === "space") {
             setVirtualName(mobileNameInput.value + " ");
-            sendGameKey(" ", "keydown");
-            window.setTimeout(() => sendGameKey(" ", "keyup"), 80);
         } else {
             setVirtualName(mobileNameInput.value + key);
-            sendGameKey(key, "keydown");
-            window.setTimeout(() => sendGameKey(key, "keyup"), 80);
         }
     }));
     // The profile screen is the only canvas panel with five stacked save-slot

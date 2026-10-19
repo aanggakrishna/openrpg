@@ -130,48 +130,11 @@ def main() -> None:
             pass
 
 '''
-    browser_mobile_bridge = '''    def publish_browser_mobile_state(self):
-        try:
-            import json
-            import platform
-            name_entry = bool(self.mode == "setup" and self.wizard.get("step") == 0)
-            if name_entry:
-                supplied_name = getattr(platform.window, "openrpgMobileNameInput", None)
-                if supplied_name is not None:
-                    clean_name = ''.join(char for char in str(supplied_name) if char.isprintable())[:18]
-                    if clean_name != self.wizard.get("name", ""):
-                        self.wizard["name"] = clean_name
-            battle = self.battle if self.mode == "battle" else None
-            if battle:
-                blocked = bool(battle.get("result") or battle.get("intro") or
-                               battle.get("boss_intro") or battle.get("capture") or
-                               battle.get("ultimate_cutin"))
-                snapshot = {
-                    "mode": self.mode,
-                    "battle": {
-                        "locked": blocked,
-                        "basicCooldown": round(max(0.0, float(battle.get("player_cooldown", 0.0))), 2),
-                        "skillCooldown": round(max(0.0, float(battle.get("type_cooldown", 0.0))), 2),
-                        "ultimateMeter": round(max(0.0, min(100.0, float(battle.get("super_meter", 0.0)))), 1),
-                        "ultimateReady": bool(not blocked and battle.get("super_meter", 0.0) >= 100),
-                    },
-                }
-            else:
-                snapshot = {"mode": self.mode, "battle": None}
-            snapshot["nameInput"] = name_entry
-            snapshot["name"] = self.wizard.get("name", "") if name_entry else ""
-            platform.window.openrpgMobileState = json.dumps(snapshot)
-        except Exception:
-            pass
-
-'''
     engine_source = engine_source.replace(
         "    def update(self, dt):\n        self.frame += dt * 60\n",
-        browser_audio_bridge + browser_mobile_bridge + "    def update(self, dt):\n        self.pump_browser_audio()\n        self.publish_browser_mobile_state()\n        self.frame += dt * 60\n",
+        browser_audio_bridge + "    def update(self, dt):\n        self.pump_browser_audio()\n        self.frame += dt * 60\n",
         1,
     )
-    if "def publish_browser_mobile_state" not in engine_source:
-        raise SystemExit("Could not inject the browser mobile control state bridge.")
     engine_source = engine_source.replace(
         "        if path.is_file() and music_key != self._music_key:\n",
         "        if not path.is_file():\n"
